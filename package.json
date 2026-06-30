@@ -1,6 +1,6 @@
 {
   "name": "@caslanqa/create-playwright-ai",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "description": "Scaffold a standalone Playwright test automation framework with AI Judge capability for LLM response evaluation",
   "author": "CaslanQA",
   "license": "MIT",
