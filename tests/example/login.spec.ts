@@ -7,7 +7,6 @@ test.describe('Login page', () => {
         const loginPage = new LoginPage(page);
         await loginPage.goto();
 
-        await expect(page).toHaveURL(/login/);
         expect(await loginPage.isFormVisible()).toBeTruthy();
     });
 
@@ -21,21 +20,23 @@ test.describe('Login page', () => {
 });
 
 test.describe('Authenticated session', () => {
-    // Reuse the 'admin' session — logged in lazily on first use, then cached to .auth/admin.json.
-    test.use({ session: 'admin' });
+    // Reuse the 'adminUser' session — logged in lazily on first use, then cached to .auth/adminUser.json.
+    test.use({ session: 'adminUser' });
     test('reaches a protected page without redirecting to login', async ({ page }) => {
-        await page.goto('/dashboard');
-        await expect(page).not.toHaveURL(/login/);
+        // baseURL is saucedemo.com; /inventory.html is gated — an unauthenticated visit bounces to
+        // the login page ('/'). With the session applied we stay on the protected page.
+        await page.goto('/inventory.html');
+        await expect(page).toHaveURL(/\/inventory\.html/);
     });
 });
 
 test.describe('Two roles in one test', () => {
     test('admin and customer side by side', async ({ browser }) => {
-        await ensureSession(browser, 'admin');
-        await ensureSession(browser, 'customer');
+        await ensureSession(browser, 'adminUser');
+        await ensureSession(browser, 'customerUser');
 
-        const adminCtx = await browser.newContext({ storageState: authState('admin') });
-        const customerCtx = await browser.newContext({ storageState: authState('customer') });
+        const adminCtx = await browser.newContext({ storageState: authState('adminUser') });
+        const customerCtx = await browser.newContext({ storageState: authState('customerUser') });
 
         const adminPage = await adminCtx.newPage();
         const customerPage = await customerCtx.newPage();

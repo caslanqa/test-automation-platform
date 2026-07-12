@@ -1,181 +1,50 @@
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 
 import { BasePage } from './BasePage';
 
 /**
- * Login Page Object - Generic template.
- * Customize selectors for your application.
+ * Login page object — a basic POM. Selectors, the login URL, and the post-login URL below are wired
+ * to the saucedemo.com example app (the scaffold's placeholder, set as BASE_URL in
+ * env/environments.json). For your own app, point BASE_URL at it and swap the four selectors +
+ * success URL here — the rest of the framework (lazy session auth, fixtures) stays the same.
  *
  * @example
- * test('user can login', async ({ page }) => {
- *   const loginPage = new LoginPage(page);
- *   await loginPage.goto();
- *   await loginPage.login('user@example.com', 'password');
- *   await expect(page).toHaveURL(/dashboard/);
- * });
+ * const login = new LoginPage(page);
+ * await login.signIn('standard_user', 'secret_sauce');
  */
 export class LoginPage extends BasePage {
-    // Common selectors - customize for your app
-    private readonly selectors = {
-        usernameInput: 'input[name="email"], input[name="username"], input[type="email"]',
-        passwordInput: 'input[name="password"], input[type="password"]',
-        submitButton: 'button[type="submit"], input[type="submit"]',
-        errorMessage: '[data-testid="error-message"], .error-message, .alert-error',
-        rememberMeCheckbox: 'input[name="remember"], input[type="checkbox"][name*="remember"]',
-        forgotPasswordLink: 'a[href*="forgot"], a[href*="reset"]',
-        registerLink: 'a[href*="register"], a[href*="signup"]',
-    };
+  readonly usernameInput: Locator;
+  readonly passwordInput: Locator;
+  readonly loginButton: Locator;
+  readonly errorMessage: Locator;
 
-    constructor(page: Page, loginPath: string = '/login') {
-        super(page, loginPath);
-    }
+  constructor(page: Page) {
+    super(page, '/'); // saucedemo serves the login form at the site root
+    this.usernameInput = page.locator('#user-name');
+    this.passwordInput = page.locator('#password');
+    this.loginButton = page.locator('#login-button');
+    this.errorMessage = page.locator('[data-test="error"]');
+  }
 
-    /**
-     * Get username/email input
-     */
-    get usernameInput() {
-        return this.page.locator(this.selectors.usernameInput).first();
-    }
+  /** Whether the login form is visible. */
+  async isFormVisible(): Promise<boolean> {
+    return this.usernameInput.isVisible();
+  }
 
-    /**
-     * Get password input
-     */
-    get passwordInput() {
-        return this.page.locator(this.selectors.passwordInput).first();
-    }
+  /** Fill the credentials and submit (without waiting for navigation). */
+  async login(username: string, password: string): Promise<void> {
+    await this.usernameInput.fill(username);
+    await this.passwordInput.fill(password);
+    await this.loginButton.click();
+  }
 
-    /**
-     * Get submit button
-     */
-    get submitButton() {
-        return this.page.locator(this.selectors.submitButton).first();
-    }
-
-    /**
-     * Get error message element
-     */
-    get errorMessage() {
-        return this.page.locator(this.selectors.errorMessage).first();
-    }
-
-    /**
-     * Get remember me checkbox
-     */
-    get rememberMeCheckbox() {
-        return this.page.locator(this.selectors.rememberMeCheckbox).first();
-    }
-
-    /**
-     * Get forgot password link
-     */
-    get forgotPasswordLink() {
-        return this.page.locator(this.selectors.forgotPasswordLink).first();
-    }
-
-    /**
-     * Get register/signup link
-     */
-    get registerLink() {
-        return this.page.locator(this.selectors.registerLink).first();
-    }
-
-    /**
-     * Fill username/email field
-     */
-    async fillUsername(username: string): Promise<void> {
-        await this.usernameInput.fill(username);
-    }
-
-    /**
-     * Fill password field
-     */
-    async fillPassword(password: string): Promise<void> {
-        await this.passwordInput.fill(password);
-    }
-
-    /**
-     * Click submit/login button
-     */
-    async submit(): Promise<void> {
-        await this.submitButton.click();
-    }
-
-    /**
-     * Complete login flow
-     */
-    async login(username: string, password: string): Promise<void> {
-        await this.fillUsername(username);
-        await this.fillPassword(password);
-        await this.submit();
-    }
-
-    /**
-     * Login and wait for specific URL pattern
-     */
-    async loginAndWaitForUrl(
-        username: string,
-        password: string,
-        urlPattern: string | RegExp = /\/(dashboard|home|app)/
-    ): Promise<void> {
-        await this.fillUsername(username);
-        await this.fillPassword(password);
-        await Promise.all([
-            this.page.waitForURL(urlPattern, { timeout: 30000 }),
-            this.submit(),
-        ]);
-    }
-
-    /**
-     * Navigate to the login page, sign in, and wait for the post-login URL. Single entry point the
-     * auth flow uses to establish a session (implements the fixtures' SessionLogin contract).
-     */
-    async signIn(username: string, password: string): Promise<void> {
-        await this.goto();
-        await this.loginAndWaitForUrl(username, password);
-    }
-
-    /**
-     * Check remember me checkbox
-     */
-    async checkRememberMe(): Promise<void> {
-        await this.rememberMeCheckbox.check();
-    }
-
-    /**
-     * Click forgot password link
-     */
-    async clickForgotPassword(): Promise<void> {
-        await this.forgotPasswordLink.click();
-    }
-
-    /**
-     * Click register/signup link
-     */
-    async clickRegister(): Promise<void> {
-        await this.registerLink.click();
-    }
-
-    /**
-     * Get error message text
-     */
-    async getErrorText(): Promise<string> {
-        if (await this.errorMessage.isVisible()) {
-            return (await this.errorMessage.textContent()) ?? '';
-        }
-        return '';
-    }
-
-    /**
-     * Check if error message is displayed
-     */
-    async hasError(): Promise<boolean> {
-        return await this.errorMessage.isVisible();
-    }
-
-    /**
-     * Check if login form is visible
-     */
-    async isFormVisible(): Promise<boolean> {
-        return await this.usernameInput.isVisible();
-    }
+  /**
+   * Navigate to the login page, sign in, and wait for the post-login page. This is the single entry
+   * point the lazy auth flow (fixtures/auth.ts) calls to establish a session.
+   */
+  async signIn(username: string, password: string): Promise<void> {
+    await this.goto();
+    await this.login(username, password);
+    await this.page.waitForURL(/\/inventory\.html/);
+  }
 }

@@ -4,7 +4,6 @@ import path from 'path';
 import type { Browser, Page } from '@playwright/test';
 
 import { LoginPage } from '@pages/LoginPage';
-import { SauceDemoLoginPage } from '@pages/SauceDemoLoginPage';
 
 /** Directory where per-session storage-state files are cached. */
 export const AUTH_DIR = '.auth';
@@ -108,12 +107,10 @@ export interface SessionLogin {
 export type CreateLoginPage = (page: Page, key: string) => SessionLogin;
 
 /**
- * Default session → login page object mapping. Override the `createLoginPage` fixture (or edit
- * here) to wire your app's login page objects. The `demoUser` branch drives the saucedemo demo;
- * delete it once you have your own app.
+ * Default factory: every session logs in through the one LoginPage. Override the `createLoginPage`
+ * fixture only if different sessions need different login page objects.
  */
-export const defaultCreateLoginPage: CreateLoginPage = (page, key) =>
-  key === 'demoUser' ? new SauceDemoLoginPage(page) : new LoginPage(page);
+export const defaultCreateLoginPage: CreateLoginPage = page => new LoginPage(page);
 
 /**
  * Ensure `.auth/<key>.json` exists: reuse it if already cached, otherwise log in once (worker-safe)
@@ -141,7 +138,7 @@ export async function ensureSession(
         `[auth] no credentials for session '${key}' — add it to testData/users.json.`
       );
     }
-    const context = await browser.newContext({ baseURL: process.env.API_HOST });
+    const context = await browser.newContext({ baseURL: process.env.BASE_URL });
     try {
       const page = await context.newPage();
       await createLoginPage(page, key).signIn(creds.username, creds.password);

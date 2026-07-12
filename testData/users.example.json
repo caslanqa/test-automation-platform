@@ -1,17 +1,17 @@
 {
-  "_note": "Named login sessions. Copy to testData/users.json (gitignored) and fill real credentials. Sessions are logged in lazily on first use (fixtures/auth.ts + the createLoginPage factory) and cached to .auth/<key>.json; select one in a test with test.use({ session: '<key>' }). 'demoUser' drives the runnable saucedemo.com example (public creds) — delete it for your app.",
+  "_note": "Named login sessions. Copy to testData/users.json (gitignored). Sessions are logged in lazily on first use (via pages/LoginPage) and cached to .auth/<key>.json; select one in a test with test.use({ session: '<key>' }). Values below are the public saucedemo.com placeholder creds so the examples run out of the box — replace with your app's users.",
   "users": {
     "demoUser": {
       "username": "standard_user",
       "password": "secret_sauce"
     },
-    "admin": {
-      "username": "admin@example.com",
-      "password": "changeme"
+    "adminUser": {
+      "username": "standard_user",
+      "password": "secret_sauce"
     },
-    "customer": {
-      "username": "customer@example.com",
-      "password": "changeme"
+    "customerUser": {
+      "username": "standard_user",
+      "password": "secret_sauce"
     }
   }
 }

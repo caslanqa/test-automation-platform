@@ -71,7 +71,7 @@ Edit `env/environments.json` to configure your test environments:
   },
   "environments": {
     "dev": {
-      "API_HOST": "http://localhost:3000",
+      "BASE_URL": "http://localhost:3000",
       "myapp": {
         "baseUrl": "http://localhost:3000"
       }

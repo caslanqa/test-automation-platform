@@ -71,7 +71,7 @@ export default defineConfig({
     // Shared settings for all projects
     use: {
         // Base URL from environment configuration
-        baseURL: process.env.API_HOST || 'http://localhost:3000',
+        baseURL: process.env.BASE_URL || 'http://localhost:3000',
 
         // Browser options
         headless: false,
@@ -153,7 +153,7 @@ export default defineConfig({
             testMatch: /.*\.api\.ts/,
             use: {
                 // API tests don't need a browser
-                baseURL: process.env.API_HOST || 'http://localhost:3000',
+                baseURL: process.env.BASE_URL || 'http://localhost:3000',
             },
             // No browser setup dependency
         },*/

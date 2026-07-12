@@ -4,7 +4,7 @@ import { loadEnv } from '@config/loadEnv';
 
 import { authState, defaultCreateLoginPage, ensureSession, type CreateLoginPage } from './auth';
 
-// Load the selected environment (TEST_ENV, JUDGE_*, API_HOST → baseURL) before any test runs.
+// Load the selected environment (TEST_ENV, JUDGE_*, BASE_URL → baseURL) before any test runs.
 loadEnv();
 
 /** Options this test object adds on top of the built-in Playwright fixtures. */

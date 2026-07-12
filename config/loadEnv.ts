@@ -7,11 +7,11 @@ import path from 'path';
 // All config lives in env/environments.json with two blocks:
 //   {
 //     "common":       { ...shared string keys, may contain ${TEST_ENV.X} tokens... },
-//     "environments": { "<env>": { "API_HOST": "...", ...other per-env scalars... } }
+//     "environments": { "<env>": { "BASE_URL": "...", ...other per-env scalars... } }
 //   }
 // The environment is selected via TEST_ENV (falls back to common.DEFAULT_TEST_ENV). loadEnv flattens
 // every string scalar (from `common` and the selected environment block) into process.env, e.g.
-// common.JUDGE_OLLAMA_BASE_URL and environments.dev.API_HOST both become process.env keys.
+// common.JUDGE_OLLAMA_BASE_URL and environments.dev.BASE_URL both become process.env keys.
 //
 // Login credentials do NOT live here — named sessions are in testData/users.json and consumed
 // directly by the auth fixtures (fixtures/auth.ts) when a session is first used.
@@ -19,7 +19,7 @@ import path from 'path';
 const ENV_FILE = 'environments.json';
 
 // Matches ${TEST_ENV.SOME_KEY} placeholders inside common string values; the key is resolved
-// against the selected environment block (e.g. ${TEST_ENV.API_HOST}).
+// against the selected environment block (e.g. ${TEST_ENV.BASE_URL}).
 const TEST_ENV_TOKEN = /\$\{TEST_ENV\.([A-Za-z0-9_]+)\}/g;
 
 let loaded = false;
@@ -98,7 +98,7 @@ export function loadEnv(): string {
     }
   }
 
-  // 2. Flatten the selected environment block's string scalars (API_HOST, etc.).
+  // 2. Flatten the selected environment block's string scalars (BASE_URL, etc.).
   for (const [key, val] of Object.entries(envBlock)) {
     if (typeof val === 'string') {
       setEnv(toEnvKey(key), val);
