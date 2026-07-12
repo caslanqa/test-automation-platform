@@ -63,6 +63,11 @@ start_ollama() {
     log_info "Ollama is already running"
   else
     log_info "Starting Ollama server..."
+    # Keep only one model resident and process one request at a time, so parallel judge workers
+    # can't make Ollama load several large models at once (memory thrash). The framework's model
+    # gate enforces the same invariant client-side; these make the server cooperate too.
+    export OLLAMA_MAX_LOADED_MODELS="${OLLAMA_MAX_LOADED_MODELS:-1}"
+    export OLLAMA_NUM_PARALLEL="${OLLAMA_NUM_PARALLEL:-1}"
     ollama serve > /dev/null 2>&1 &
     wait_for_ollama
   fi
@@ -141,11 +146,11 @@ check_status() {
   fi
   
   # 9Router status (if configured)
-  if [ -n "${JUDGE_BASE_URL:-}" ]; then
-    if curl -s "${JUDGE_BASE_URL}/models" > /dev/null 2>&1; then
-      echo -e "9Router: ${GREEN}Running${NC} (${JUDGE_BASE_URL})"
+  if [ -n "${JUDGE_GATEWAY_BASE_URL:-}" ]; then
+    if curl -s "${JUDGE_GATEWAY_BASE_URL}/models" > /dev/null 2>&1; then
+      echo -e "9Router: ${GREEN}Running${NC} (${JUDGE_GATEWAY_BASE_URL})"
     else
-      echo -e "9Router: ${YELLOW}Not reachable${NC} (${JUDGE_BASE_URL})"
+      echo -e "9Router: ${YELLOW}Not reachable${NC} (${JUDGE_GATEWAY_BASE_URL})"
     fi
   else
     echo -e "9Router: ${YELLOW}Not configured${NC}"

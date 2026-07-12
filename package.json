@@ -1,7 +1,7 @@
 {
   "name": "@caslanqa/create-playwright-ai",
-  "version": "2.0.0",
-  "description": "Scaffold a standalone Playwright test automation framework with AI Judge capability for LLM response evaluation",
+  "version": "1.2.0",
+  "description": "Scaffold a ready-to-run Playwright + TypeScript test framework: AI Judge for LLM evaluation, layered API testing, lazy session auth, and full tooling (ESLint, Prettier, husky, commitlint)",
   "author": "CaslanQA",
   "license": "MIT",
   "type": "module",
@@ -15,6 +15,7 @@
     "automation",
     "ollama",
     "chatbot-testing",
+    "api-testing",
     "create",
     "scaffold",
     "starter"
@@ -34,15 +35,17 @@
     "create-playwright-ai": "bin/create-project.cjs"
   },
   "files": [
+    "api/",
     "bin/",
     "config/",
-    "docs/",
-    "env/",
+    "docs/AI_JUDGE.md",
+    "docs/API_TESTING.md",
+    "env/environments.example.json",
     "fixtures/",
     "pages/",
     "scripts/",
     "templates/",
-    "testData/",
+    "testData/users.example.json",
     "tests/",
     "utils/",
     ".github/",
@@ -61,10 +64,10 @@
     "test:ui": "playwright test --ui",
     "test:parallel": "playwright test --workers=4",
     "test:serial": "playwright test --workers=1",
-    "test:tag": "playwright test --workers=1 --project chromium --retries=0 --grep",
-    "report": "playwright show-report",
-    "report:allure": "allure serve allure-results",
-    "report:generate": "allure generate allure-results --output allure-report",
+    "test:api": "playwright test --project=api",
+    "test:tag": "playwright test --workers=1 --project chromium --retries=0 --grep @wip",
+    "report:playwright": "playwright show-report",
+    "report:allure": "allure generate allure-results --output allure-report && allure serve allure-results",
     "codegen": "playwright codegen",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
@@ -72,11 +75,7 @@
     "format:check": "prettier --check \"**/*.{ts,js,json,md}\"",
     "type-check": "tsc --noEmit",
     "commit": "cz",
-    "prepare": "husky",
-    "judge:start": "./scripts/ci/judge-services.sh start",
-    "judge:stop": "./scripts/ci/judge-services.sh stop",
-    "judge:status": "./scripts/ci/judge-services.sh status",
-    "judge:warm": "./scripts/ci/judge-services.sh warm"
+    "prepare": "husky"
   },
   "lint-staged": {
     "*.{ts,tsx,js}": [

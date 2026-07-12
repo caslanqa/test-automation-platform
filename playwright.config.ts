@@ -10,7 +10,7 @@ loadEnv();
  *
  * Key features:
  * - Multi-project setup for different browsers
- * - Auth setup project runs first to create storage states
+ * - Lazy session auth: storage states created on first use and cached (fixtures/auth.ts)
  * - Environment-driven baseURL from loadEnv
  * - Parallel execution with worker isolation
  * - Multiple reporters (HTML, Allure, JSON)
@@ -70,11 +70,11 @@ export default defineConfig({
 
     // Shared settings for all projects
     use: {
-        // Base URL from environment configuration
-        baseURL: process.env.API_HOST || 'http://localhost:3000',
+        // Base URL — single source of truth: env/environments.json → loadEnv → process.env.BASE_URL.
+        baseURL: process.env.BASE_URL,
 
         // Browser options
-        headless: true,
+        headless: false,
         viewport: { width: 1280, height: 720 },
         ignoreHTTPSErrors: true,
 
@@ -97,28 +97,31 @@ export default defineConfig({
     // Project definitions
     projects: [
         // ============================================
-        // SETUP PROJECT - Runs first to create auth states
-        // ============================================
-        {
-            name: 'setup',
-            testDir: './tests/setup',
-            testMatch: /.*\.setup\.ts/,
-        },
-
-        // ============================================
-        // BROWSER PROJECTS - Depend on setup
+        // BROWSER PROJECTS
         // ============================================
         {
             name: 'chromium',
             use: {
                 ...devices['Desktop Chrome'],
-                // Use storage state created by setup project
-                // storageState: '.auth/myapp_qa.json',
+                // Auth is per-test and lazy: opt in with `test.use({ session: 'admin' })`. The first
+                // test using a session logs in once and caches .auth/<session>.json; later tests and
+                // runs reuse it — no setup project or global storageState needed.
             },
-            dependencies: ['setup'],
         },
 
+        // ============================================
+        // API TESTS - No browser; layered client/service (see api/ + fixtures/apiFixtures.ts)
+        // ============================================
         {
+            // Pure API project — no `use` block: the base URL and default headers live in the layered
+            // client (api/core/ApiClient.ts, wired via fixtures/apiFixtures.ts from API_BASE_URL), so
+            // there is nothing browser- or HTTP-specific to configure here.
+            name: 'api',
+            testDir: './tests/api',
+            testMatch: /.*\.api\.ts$/,
+        },
+
+        /*{
             name: 'firefox',
             use: {
                 ...devices['Desktop Firefox'],
@@ -151,21 +154,7 @@ export default defineConfig({
                 ...devices['iPhone 12'],
             },
             dependencies: ['setup'],
-        },
-
-        // ============================================
-        // API TESTS - No browser needed
-        // ============================================
-        {
-            name: 'api',
-            testDir: './tests/api',
-            testMatch: /.*\.api\.ts/,
-            use: {
-                // API tests don't need a browser
-                baseURL: process.env.API_HOST || 'http://localhost:3000',
-            },
-            // No browser setup dependency
-        },
+        },*/
     ],
 
     // Web server configuration (optional - start your app before tests)

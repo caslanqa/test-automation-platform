@@ -1,6 +1,8 @@
 # NPM'e Yayınlama Kılavuzu
 
-Bu dokümanda `create-playwright-ai-distro` paketini npm'e nasıl yayınlayacağınız ve başka bir makinede nasıl kullanacağınız anlatılmaktadır.
+Bu doküman `@caslanqa/create-playwright-ai` paketini npm'e nasıl yayınlayacağınızı ve son
+kullanıcıların nasıl kuracağını anlatır. (Bu, framework'ü dağıtan **scaffolder** paketidir; son
+kullanıcı `npm init` ile kullanır.)
 
 ## 🚀 GitHub Actions ile Otomatik Yayınlama (Önerilen)
 
@@ -12,203 +14,89 @@ Bu dokümanda `create-playwright-ai-distro` paketini npm'e nasıl yayınlayacağ
 
 ### 2. GitHub Secret Ekleme
 
-1. GitHub repo → Settings → Secrets and variables → Actions
-2. "New repository secret" tıklayın
-3. Name: `NPM_TOKEN`
-4. Value: npm token'ınızı yapıştırın
-5. "Add secret" tıklayın
+1. GitHub repo → Settings → Secrets and variables → Actions → "New repository secret"
+2. Name: `NPM_TOKEN`, Value: npm token'ınız → "Add secret"
 
 ### 3. Yayınlama (Manuel Trigger)
 
-1. GitHub repo → Actions → "Publish to npm"
-2. "Run workflow" tıklayın
-3. Seçenekleri belirleyin:
+1. GitHub repo → Actions → **"Publish to npm"** → "Run workflow"
+2. Seçenekleri belirleyin:
    - **version_type**: `patch` / `minor` / `major`
-   - **dry_run**: Test için `true`, gerçek yayın için `false`
+   - **dry_run**: test için `true`, gerçek yayın için `false`
    - **tag**: `latest` / `beta` / `next`
-4. "Run workflow" tıklayın
+3. "Run workflow" tıklayın
 
 ```
-patch: 1.0.0 → 1.0.1 (bug fix)
-minor: 1.0.0 → 1.1.0 (yeni özellik)
-major: 1.0.0 → 2.0.0 (breaking change)
+patch: 1.2.0 → 1.2.1 (bug fix)
+minor: 1.2.0 → 1.3.0 (yeni özellik)
+major: 1.2.0 → 2.0.0 (breaking change)
 ```
 
-### Workflow Ne Yapar?
-
-1. ✅ Testleri çalıştırır
-2. ✅ Lint kontrolü yapar
-3. ✅ Versiyon numarasını artırır
-4. ✅ CHANGELOG.md günceller
-5. ✅ Git commit + tag oluşturur
-6. ✅ npm'e yayınlar
-7. ✅ GitHub Release oluşturur
+`.github/workflows/publish.yml` ne yapar: lint + type-check → versiyon bump → CHANGELOG güncelle →
+git commit + tag → `npm publish --access public` → GitHub Release.
 
 ---
 
 ## 📦 Manuel Yayınlama (Alternatif)
 
-### NPM Hesabı
-
 ```bash
-# npm hesabı oluştur (veya npmjs.com'dan kayıt olun)
-npm adduser
+npm login                 # npmjs hesabınızla giriş
+npm run lint              # kontroller
+npm run type-check
+npm pack --dry-run        # tarball içeriğini gözden geçirin
+npm version patch         # veya minor / major
+npm publish --access public   # scoped paket → --access public şart
 ```
 
-### NPM'e Giriş
-
-```bash
-npm login
-# Kullanıcı adı, şifre ve email girmeniz istenecek
-```
-
-### Yayınlamadan Önce Test
-
-```bash
-# Paket içeriğini kontrol et
-npm pack --dry-run
-```
-
-### NPM'e Yayınlama
-
-```bash
-# Versiyon artır ve yayınla
-npm version patch  # veya minor / major
-npm publish --access public
-```
+> **Not:** Yayınlamadan önce `npm pack --dry-run` çıktısında `env/environments.json` veya
+> `testData/users.json` gibi **local** dosyaların OLMADIĞINI doğrulayın — yalnızca `*.example.json`
+> gönderilir (`package.json` `files` bunu sağlar).
 
 ---
 
-## 🖥️ Başka Makinede Kurulum
+## 🖥️ Son Kullanıcı Kurulumu
 
-Yayınladıktan sonra herhangi bir makinede:
-
-### Yöntem 1: npx (Önerilen)
+Yayınlandıktan sonra herhangi bir makinede tek komutla kullanıma hazır proje:
 
 ```bash
-# Yeni proje oluştur
-npx create-playwright-ai-distro my-test-project
+# npm, scoped "create" paketini otomatik @caslanqa/create-playwright-ai'a çözer
+npm init @caslanqa/playwright-ai@latest my-project
 
-# Klasöre gir ve bağımlılıkları yükle
-cd my-test-project
-npm install
-npx playwright install --with-deps
-
-# Test çalıştır
-npm test
-```
-
-### Yöntem 2: npm init
-
-```bash
-npm init playwright-ai-distro my-test-project
-cd my-test-project
-npm install
-npx playwright install --with-deps
-```
-
-### Yöntem 3: Global Kurulum
-
-```bash
-# Global olarak kur
-npm install -g create-playwright-ai-distro
-
-# Artık her yerde kullanabilirsin
-create-playwright-ai-distro my-project
-```
-
-## 6. Versiyon Yönetimi
-
-```bash
-# Mevcut versiyonu gör
-npm view create-playwright-ai-distro version
-
-# Tüm versiyonları gör
-npm view create-playwright-ai-distro versions
-
-# Beta yayınlama
-npm version prerelease --preid=beta
-npm publish --tag beta
-
-# Beta kurulum
-npx create-playwright-ai-distro@beta my-project
-```
-
-## 7. Özel/Private Registry (Opsiyonel)
-
-GitHub Packages veya özel npm registry kullanmak için:
-
-### GitHub Packages
-
-```bash
-# .npmrc dosyası oluştur
-echo "@datanoesiscp:registry=https://npm.pkg.github.com" >> .npmrc
-echo "//npm.pkg.github.com/:_authToken=YOUR_GITHUB_TOKEN" >> .npmrc
-
-# package.json'da name'i güncelle
-# "name": "@datanoesiscp/create-playwright-ai-distro"
-
-# Yayınla
-npm publish
-```
-
-### Kurulum (GitHub Packages)
-
-```bash
-# .npmrc ayarla
-echo "@datanoesiscp:registry=https://npm.pkg.github.com" >> ~/.npmrc
-echo "//npm.pkg.github.com/:_authToken=YOUR_GITHUB_TOKEN" >> ~/.npmrc
-
-# Kur
-npx @datanoesiscp/create-playwright-ai-distro my-project
-```
-
-## 📌 Hızlı Başlangıç Özeti
-
-### GitHub Actions ile (Önerilen)
-
-1. GitHub'a `NPM_TOKEN` secret ekle
-2. Actions → "Publish to npm" → Run workflow
-3. Version type seç → Run
-
-### Manuel
-
-```bash
-npm login
-npm version patch
-npm publish --access public
-```
-
-### Başka Makinede Kullan
-
-```bash
-npx create-playwright-ai-distro my-project
 cd my-project
-npm install
-npx playwright install --with-deps
-npm test
+npm test                       # çalışır durumda
+npx playwright install         # UI testleri için tarayıcılar (API/AI-judge için gerekmez)
+```
+
+Eşdeğer formlar:
+
+```bash
+npm  create @caslanqa/playwright-ai@latest my-project
+npx  @caslanqa/create-playwright-ai my-project
+yarn create @caslanqa/playwright-ai my-project
+pnpm create @caslanqa/playwright-ai my-project
+```
+
+Flag'ler: `--no-install`, `--no-browsers`, `--no-gha`, `-y/--yes`.
+
+---
+
+## 🔢 Versiyon Yönetimi
+
+```bash
+npm view @caslanqa/create-playwright-ai version     # yayındaki sürüm
+npm view @caslanqa/create-playwright-ai versions    # tüm sürümler
+
+# Beta
+npm version prerelease --preid=beta
+npm publish --tag beta --access public
+npx @caslanqa/create-playwright-ai@beta my-project
 ```
 
 ---
 
 ## ❓ Sorun Giderme
 
-### "Package name already exists"
-
-```bash
-npm publish --access public
-```
-
-### "You must be logged in"
-
-```bash
-npm login
-npm whoami  # Giriş kontrolü
-```
-
-### "Permission denied"
-
-```bash
-# Scoped package için
-npm publish --access public
-```
+- **"You must be logged in"** → `npm login` (kontrol: `npm whoami`).
+- **"Permission denied" / scoped paket** → `npm publish --access public`.
+- **Yanlış dosyalar yayınlanıyor** → `package.json` `files` alanını ve `npm pack --dry-run` çıktısını
+  kontrol edin.

@@ -2,13 +2,26 @@
 
 A production-ready, standalone Playwright test automation framework with built-in **AI Judge** capabilities for LLM-powered response evaluation.
 
+[![npm version](https://img.shields.io/npm/v/@caslanqa/create-playwright-ai)](https://www.npmjs.com/package/@caslanqa/create-playwright-ai)
+[![license](https://img.shields.io/npm/l/@caslanqa/create-playwright-ai)](https://github.com/caslanqa/playwright-ai-distro/blob/main/LICENSE)
+[![node](https://img.shields.io/node/v/@caslanqa/create-playwright-ai)](https://nodejs.org)
+
+> **This is a scaffolder (`create-*`), not a library.** The `npm i …` box at the top of this npm page
+> is auto-generated — **don't use it.** Create a ready-to-run project with `npm init` / `npm create`:
+
+```bash
+npm init @caslanqa/playwright-ai@latest my-project
+```
+
 ## 🚀 Key Features
 
 - **AI Judge System** - Evaluate chatbot/LLM responses using local or cloud models
 - **Dual LLM Routing** - Ollama (local, free) or 9Router gateway (Claude, GPT)
-- **Multi-Worker Auth** - File-based mutex for parallel authentication
+- **Layered API Testing** - `ApiClient` → service → test structure (Petstore v3 example)
+- **Lazy Session Auth** - Cached storageState per session, worker-safe, opt-in
 - **Page Object Model** - Clean, maintainable test structure
 - **Environment-Driven** - JSON-based configuration, zero hardcoded values
+- **Full Tooling** - ESLint, Prettier, husky + lint-staged, commitlint out of the box
 - **Full CI/CD** - GitHub Actions with Ollama setup
 
 ## 📦 Create a new project
@@ -29,16 +42,25 @@ yarn create @caslanqa/playwright-ai my-project
 pnpm create @caslanqa/playwright-ai my-project
 ```
 
-This copies the template, generates `package.json`, then automatically runs
-`npm install` and installs the Playwright browsers. When it finishes:
+The scaffolder copies the framework, generates `package.json`, runs `npm install`, installs the
+Playwright browsers, and initializes git (so husky hooks activate). **After it finishes:**
 
 ```bash
 cd my-project
-npm test
+
+# 1. Point the config at your app:
+#    env/environments.json  → BASE_URL (UI) + API_BASE_URL (API)
+#    testData/users.json    → your login sessions (optional)
+
+# 2. Run the tests:
+npm test              # everything
+npm run test:api      # API only (no browser needed)
+npm run test:ui       # interactive UI mode
 ```
 
-Flags: `--no-install` (skip `npm install`), `--no-browsers` (skip browser
-download). Omit the project name to scaffold into the current directory.
+Flags: `--no-install` (skip `npm install`), `--no-browsers` (skip browser download), `--no-gha` (skip
+the GitHub Actions workflow), `-y/--yes` (accept defaults). Omit the project name to scaffold into the
+current directory.
 
 ## 🛠️ Develop this framework (contributors)
 
@@ -66,49 +88,46 @@ Edit `env/environments.json` to configure your test environments:
 
 ```json
 {
-  "common": {
-    "DEFAULT_TEST_ENV": "dev",
-    "JUDGE_MODEL": "local/qwen3.5:9b"
-  },
+  "common": { "DEFAULT_TEST_ENV": "dev" },
   "environments": {
     "dev": {
-      "API_HOST": "http://localhost:3000",
-      "myapp": {
-        "baseUrl": "http://localhost:3000"
-      }
+      "BASE_URL": "http://localhost:3000",
+      "API_BASE_URL": "http://localhost:3000/api"
     }
   }
 }
 ```
+
+- `BASE_URL` — the UI base URL (Playwright `baseURL`).
+- `API_BASE_URL` — the API base URL (used by the API client, see [API Testing](#-api-testing)). Kept
+  separate from `BASE_URL` so UI and API targets never collide.
+- Every string scalar is flattened to a `process.env` key by `config/loadEnv.ts`. Select an
+  environment with `TEST_ENV` (e.g. `TEST_ENV=staging npm test`).
 
 ### User Credentials
 
-Edit `testData/users.json` for test user credentials:
+Edit `testData/users.json` to declare named login sessions:
 
 ```json
 {
-  "environments": {
-    "dev": {
-      "apptype": {
-        "myapp": {
-          "roleType": {
-            "qa": {
-              "username": "qa@example.com",
-              "password": "your_password"
-            }
-          }
-        }
-      }
-    }
+  "users": {
+    "admin": { "username": "admin@example.com", "password": "your_password" },
+    "customer": { "username": "customer@example.com", "password": "your_password" }
   }
 }
 ```
+
+Sessions are logged in lazily on first use and cached to `.auth/<key>.json`; select one with
+`test.use({ session: 'admin' })`.
 
 ## 🧪 Running Tests
 
 ```bash
 # Run all tests
 npx playwright test
+
+# Run only the API tests (no browser needed)
+npx playwright test --project=api
 
 # Run specific browser
 npx playwright test --project=chromium
@@ -146,14 +165,53 @@ test('chatbot responds correctly', async () => {
 });
 ```
 
-### Model Options
+### Model Selection
 
-| Model | Cost | Speed | Best For |
-|-------|------|-------|----------|
-| `local/qwen3.5:9b` | Free | ~2-3s | Default, local testing |
-| `local/llama3.1:8b` | Free | ~2s | Fast local eval |
-| `gh/claude-sonnet-4-20250514` | Paid | ~1-2s | High accuracy |
-| `gh/gpt-4o` | Paid | ~1-2s | Alternative cloud |
+Model choice is **automatic** by default. The judge scores each call's complexity into a tier
+(`simple` / `medium` / `complex`) and resolves it to a concrete model **discovered at runtime** —
+never a hardcoded list:
+
+- **Local first:** the installed Ollama models are ranked by parameter size — smallest for
+  `simple`, largest for `complex`, median for `medium`. Nothing to configure; it adapts to
+  whatever you have pulled.
+- **Cloud fallback:** only when no compatible local model exists (e.g. an image needs a
+  vision-capable model and none is installed) does it fall back to a model discovered from the
+  9Router gateway (requires `JUDGE_API_KEY`).
+
+Override per call when you need control:
+
+```typescript
+await judgeResponse({ ...input, model: 'gh/claude-sonnet-4.6' }); // exact model (pins the judge)
+await judgeResponse({ ...input, tier: 'complex' }); // force a tier
+await judgeResponse({ ...input, verbose: true }); // attach routing trace to _meta
+```
+
+Set `JUDGE_MODEL` in `env/environments.json` to pin one model globally (disables auto-routing).
+Tune tiers, thresholds, and cloud preferences in `config/aiJudge.config.ts`.
+
+## 🔌 API Testing
+
+A layered structure keeps HTTP details in one place and tests readable. See
+[docs/API_TESTING.md](docs/API_TESTING.md); the example targets [Petstore v3](https://petstore3.swagger.io).
+
+```
+tests/api/*.api.ts          # layer 3 — tests speak business language via services
+api/services/PetService.ts  # layer 2 — business operations (fetch, CRUD, derived queries)
+api/core/ApiClient.ts       # layer 1 — typed get/post/put/patch/delete over APIRequestContext
+```
+
+Tests run in the browser-free `api` project (`npm run test:api`), with the base URL from
+`API_BASE_URL`:
+
+```typescript
+import { test, expect } from '@fixtures/apiFixtures';
+
+test('available pets are all "available"', async ({ petService }) => {
+  const pets = await petService.findAvailable();
+  expect(pets.length).toBeGreaterThan(0);
+  expect(pets.every(p => p.status === 'available')).toBeTruthy();
+});
+```
 
 ## 📁 Project Structure
 
@@ -161,48 +219,60 @@ test('chatbot responds correctly', async () => {
 playwright-ai-distro/
 ├── .auth/                    # Storage state files (gitignored)
 ├── .github/workflows/        # CI/CD pipelines
-├── config/                   # Environment loading
+├── .husky/                   # git hooks (pre-commit → lint-staged, commit-msg → commitlint)
+├── api/                      # API testing (3 layers)
+│   ├── core/ApiClient.ts     #   layer 1: typed get/post/put/patch/delete → ApiResponse<T>
+│   ├── services/             #   layer 2: business operations (PetService)
+│   └── models/               #   domain types (Pet, …)
+├── config/                   # Environment + judge config
 │   ├── loadEnv.ts
-│   └── envUtils.ts
-├── docs/                     # Documentation
-│   └── AI_JUDGE.md
-├── env/                      # Environment config
-│   └── environments.json
+│   ├── envUtils.ts
+│   └── aiJudge.config.ts     # tiers, thresholds, routing preferences
+├── docs/                     # AI_JUDGE.md · API_TESTING.md
+├── env/                      # environments.json (BASE_URL, API_BASE_URL)
 ├── fixtures/                 # Playwright fixtures
-│   └── globalFixtures.ts
-├── pages/                    # Page Object Models
-│   ├── BasePage.ts
-│   └── LoginPage.ts
-├── scripts/ci/               # CI scripts
-│   └── judge-services.sh
-├── testData/                 # Test data
-│   └── users.json
+│   ├── globalFixtures.ts     #   test/expect + `session` storageState-key option
+│   ├── auth.ts               #   lazy session login + caching (authState, ensureSession)
+│   ├── aiExpect.ts           #   expectAi matchers
+│   └── apiFixtures.ts        #   apiClient + service fixtures (browser-free)
+├── pages/                    # Page Object Models (BasePage, LoginPage)
+├── scripts/ci/               # judge-services.sh
+├── testData/                 # users.json (named login sessions)
 ├── tests/
-│   ├── setup/                # Auth setup
-│   │   ├── auth.helper.ts
-│   │   └── auth.setup.ts
-│   └── example/              # Example tests
-├── utils/                    # Utilities
-│   ├── aiJudge.ts            # AI Judge core
-│   ├── types.ts              # TypeScript types
-│   ├── apiUtils.ts
-│   ├── dateUtils.ts
-│   └── ...
-└── playwright.config.ts
+│   ├── example/              #   UI + AI Judge examples
+│   └── api/                  #   API examples (*.api.ts)
+├── utils/
+│   ├── ai/                   #   AI Judge engine (router, providers, judge)
+│   ├── aiJudge.ts            #   judge entrypoint (re-exports utils/ai)
+│   └── *.ts                  #   date/string/wait/validation helpers
+├── playwright.config.ts      # chromium + api projects
+└── eslint.config.js · .prettierrc · .commitlintrc.json
 ```
 
 ## 🔐 Authentication
 
-The framework uses multi-worker safe authentication with file-based mutex:
+Session-based, opt-in, and **lazy**. Declare named sessions in `testData/users.json`; a test opts in
+with `test.use({ session: 'admin' })`. The first test that uses a session logs in once and caches
+`.auth/<key>.json`; every later test and run reuses it — no repeated logins, no setup project.
+Unauthenticated tests (e.g. public pages) set nothing.
 
 ```typescript
-// tests/setup/auth.setup.ts
-setup('authenticate myapp/qa', async ({ page, context }) => {
-  await ensureAuthFile(context, 'myapp', 'qa', async () => {
-    const creds = getCredentials('myapp', 'qa');
-    await authenticate(page, creds);
-  });
+// Select a session for a test or a whole describe:
+test.use({ session: 'admin' });
+
+test('admin sees the dashboard', async ({ page }) => {
+  await page.goto('/dashboard'); // already signed in as admin
 });
+```
+
+The login flow lives in `fixtures/auth.ts` → `loginSession` (customize it; the generic branch uses
+`pages/LoginPage` with credentials from `testData/users.json`). For cross-role tests, open
+independent contexts — `ensureSession` performs the lazy login first:
+
+```typescript
+import { authState, ensureSession } from '@fixtures/auth';
+await ensureSession(browser, 'admin');
+const adminCtx = await browser.newContext({ storageState: authState('admin') });
 ```
 
 ## 📊 Reporters
@@ -234,6 +304,10 @@ npm run format
 npx tsc --noEmit
 ```
 
+Git hooks are wired via husky: **pre-commit** runs lint-staged (ESLint + Prettier on staged files)
+and **commit-msg** enforces [Conventional Commits](https://www.conventionalcommits.org) via
+commitlint (`.commitlintrc.json`). They activate after `npm install` in a git repo.
+
 ## 📝 Writing Tests
 
 ### Basic Test
@@ -248,10 +322,10 @@ test('user can view dashboard', async ({ page }) => {
 });
 ```
 
-### Test with Different Role
+### Test with a Different Session
 
 ```typescript
-test.use({ appType: 'myapp', roleType: 'admin' });
+test.use({ session: 'admin' });
 
 test('admin can access settings', async ({ page }) => {
   await page.goto('/admin/settings');
@@ -299,13 +373,14 @@ Trigger manually with custom options:
 workflow_dispatch:
   inputs:
     environment: dev|staging|production
-    judge_model: local/qwen3.5:9b
+    judge_model: <optional pin, e.g. local/qwen3.5; empty = auto-routing>
     browser: chromium|firefox|webkit|all
 ```
 
 ## 📚 Documentation
 
 - [AI Judge Guide](docs/AI_JUDGE.md) - Detailed AI Judge documentation
+- [API Testing Guide](docs/API_TESTING.md) - Layered API client/service/test structure
 - [Playwright Docs](https://playwright.dev/docs/intro) - Official Playwright docs
 
 ## 📄 License

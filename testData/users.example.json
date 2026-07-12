@@ -1,37 +1,17 @@
 {
-  "_note": "User credentials per environment. Flattened by loadEnv to CX_<APP>_<ROLE>_<KEY> process.env keys. Example: environments.dev.myapp.roleType.qa.username -> CX_MYAPP_QA_USERNAME",
-  "environments": {
-    "dev": {
-      "apptype": {
-        "myapp": {
-          "roleType": {
-            "qa": {
-              "username": "qa@example.com",
-              "password": "qa_password_here"
-            },
-            "dev": {
-              "username": "dev@example.com",
-              "password": "dev_password_here"
-            }
-          }
-        }
-      }
+  "_note": "Named login sessions. Copy to testData/users.json (gitignored). Sessions are logged in lazily on first use (via pages/LoginPage) and cached to .auth/<key>.json; select one in a test with test.use({ session: '<key>' }). Values below are the public saucedemo.com placeholder creds so the examples run out of the box — replace with your app's users.",
+  "users": {
+    "demoUser": {
+      "username": "standard_user",
+      "password": "secret_sauce"
     },
-    "staging": {
-      "apptype": {
-        "myapp": {
-          "roleType": {
-            "qa": {
-              "username": "qa@staging.example.com",
-              "password": "staging_qa_password"
-            },
-            "dev": {
-              "username": "dev@staging.example.com",
-              "password": "staging_dev_password"
-            }
-          }
-        }
-      }
+    "adminUser": {
+      "username": "standard_user",
+      "password": "secret_sauce"
+    },
+    "customerUser": {
+      "username": "standard_user",
+      "password": "secret_sauce"
     }
   }
 }

@@ -1,30 +1,24 @@
 {
-  "_note": "Per-environment test config. Select with TEST_ENV (default = common.DEFAULT_TEST_ENV). 'common' is merged into every env (with ${TEST_ENV.X} resolved from the selected env block). 'environments' holds per-app baseUrl + the env-specific API_HOST. User credentials/profile test data lives in testData/users.json and is flattened by loadEnv to CX_<APP>_<ROLE>_* process.env keys.",
+  "_note": "Per-environment test config. Select with TEST_ENV (default = common.DEFAULT_TEST_ENV). 'common' is merged into every env (with ${TEST_ENV.X} resolved from the selected env block). 'environments' holds per-env scalars: BASE_URL (UI, the Playwright baseURL) and API_BASE_URL (the api project's baseURL — kept separate so the two never collide). Every string scalar is flattened to a process.env key by loadEnv. Login sessions live in testData/users.json (not here).",
   "common": {
     "DEFAULT_TEST_ENV": "dev",
-    "JUDGE_BASE_URL": "http://127.0.0.1:20128/v1",
+    "JUDGE_GATEWAY_BASE_URL": "http://127.0.0.1:20128/v1",
     "JUDGE_OLLAMA_BASE_URL": "http://127.0.0.1:11434/v1",
-    "JUDGE_MODEL": "local/qwen3.5:9b",
-    "JUDGE_OLLAMA_KEEP_ALIVE": "30m"
+    "JUDGE_OLLAMA_KEEP_ALIVE": "30m",
+    "_JUDGE_MODEL_note": "Model selection is automatic (tier from complexity → concrete model discovered from Ollama). Optionally set JUDGE_MODEL to pin one model globally (disables auto-routing); set JUDGE_API_KEY + JUDGE_GATEWAY_BASE_URL to enable cloud fallback via the 9Router gateway."
   },
   "environments": {
     "dev": {
-      "API_HOST": "http://localhost:3000",
-      "myapp": {
-        "baseUrl": "http://localhost:3000"
-      }
+      "BASE_URL": "http://localhost:3000",
+      "API_BASE_URL": "https://petstore3.swagger.io/api/v3"
     },
     "staging": {
-      "API_HOST": "https://staging.example.com",
-      "myapp": {
-        "baseUrl": "https://staging.example.com"
-      }
+      "BASE_URL": "https://staging.example.com",
+      "API_BASE_URL": "https://staging.example.com/api/v3"
     },
     "production": {
-      "API_HOST": "https://app.example.com",
-      "myapp": {
-        "baseUrl": "https://app.example.com"
-      }
+      "BASE_URL": "https://app.example.com",
+      "API_BASE_URL": "https://app.example.com/api/v3"
     }
   }
 }

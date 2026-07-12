@@ -17,9 +17,9 @@ on:
           - staging
           - production
       judge_model:
-        description: 'AI Judge model'
-        required: true
-        default: 'local/qwen3.5:9b'
+        description: 'AI Judge model to pin (optional; leave empty for automatic routing)'
+        required: false
+        default: ''
         type: string
       browser:
         description: 'Browser to test'
@@ -34,7 +34,8 @@ on:
 
 env:
   TEST_ENV: ${{ github.event.inputs.environment || 'dev' }}
-  JUDGE_MODEL: ${{ github.event.inputs.judge_model || 'local/qwen3.5:9b' }}
+  # Optional: pin a judge model globally. Empty enables automatic routing (config/aiJudge.config.ts).
+  JUDGE_MODEL: ${{ github.event.inputs.judge_model || '' }}
 
 jobs:
   test:
@@ -55,39 +56,21 @@ jobs:
       - name: Install Playwright Browsers
         run: npx playwright install --with-deps
 
-      - name: Setup Ollama (for local AI Judge)
-        if: startsWith(env.JUDGE_MODEL, 'local/')
-        run: |
-          # Install Ollama
-          curl -fsSL https://ollama.com/install.sh | sh
-          
-          # Start Ollama server
-          ollama serve &
-          
-          # Wait for Ollama to be ready
-          for i in {1..30}; do
-            if curl -s http://localhost:11434/api/tags > /dev/null; then
-              echo "Ollama is ready"
-              break
-            fi
-            sleep 1
-          done
-          
-          # Pull the model
-          MODEL_NAME="${JUDGE_MODEL#local/}"
-          ollama pull "$MODEL_NAME"
-          
-          # Warm up the model
-          curl -s http://localhost:11434/api/chat \
-            -H "Content-Type: application/json" \
-            -d "{
-              \"model\": \"$MODEL_NAME\",
-              \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}],
-              \"stream\": false,
-              \"think\": false,
-              \"keep_alive\": \"30m\",
-              \"options\": {\"num_predict\": 1}
-            }"
+      # ── AI Judge backend (PLACEHOLDER — customize for your setup) ────────────────
+      # The AI Judge needs a model backend; this scaffold does NOT assume one. Pick ONE:
+      #
+      #   • Local (Ollama) — install, serve, and pull a model, e.g.:
+      #       - name: Setup Ollama
+      #         run: |
+      #           curl -fsSL https://ollama.com/install.sh | sh
+      #           ollama serve &
+      #           until curl -s http://localhost:11434/api/tags >/dev/null; do sleep 1; done
+      #           ollama pull qwen3.5        # ← your model(s)
+      #
+      #   • Cloud gateway (9Router / OpenAI-compatible) — set JUDGE_GATEWAY_BASE_URL and JUDGE_API_KEY
+      #     in the `env:` block above (use repository secrets) and skip Ollama entirely.
+      #
+      # Until a backend is wired here, AI-judge tests will fail in CI.
 
       - name: Copy environment config
         run: |
@@ -108,7 +91,7 @@ jobs:
         with:
           name: playwright-report
           path: playwright-report/
-          retention-days: 30
+          retention-days: 3
 
       - name: Upload Allure Results
         uses: actions/upload-artifact@v4
@@ -116,7 +99,7 @@ jobs:
         with:
           name: allure-results
           path: allure-results/
-          retention-days: 30
+          retention-days: 3
 
       - name: Upload Test Results
         uses: actions/upload-artifact@v4
@@ -124,32 +107,4 @@ jobs:
         with:
           name: test-results
           path: test-results/
-          retention-days: 30
-
-  # Generate Allure Report
-  allure-report:
-    needs: test
-    runs-on: ubuntu-latest
-    if: always()
-    
-    steps:
-      - name: Download Allure Results
-        uses: actions/download-artifact@v4
-        with:
-          name: allure-results
-          path: allure-results
-
-      - name: Generate Allure Report
-        uses: simple-elf/allure-report-action@master
-        if: always()
-        with:
-          allure_results: allure-results
-          allure_history: allure-history
-          keep_reports: 20
-
-      - name: Upload Allure Report
-        uses: actions/upload-artifact@v4
-        with:
-          name: allure-report
-          path: allure-report/
-          retention-days: 30
+          retention-days: 33
