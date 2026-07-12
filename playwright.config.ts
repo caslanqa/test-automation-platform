@@ -70,8 +70,8 @@ export default defineConfig({
 
     // Shared settings for all projects
     use: {
-        // Base URL from environment configuration
-        baseURL: process.env.BASE_URL || 'http://localhost:3000',
+        // Base URL — single source of truth: env/environments.json → loadEnv → process.env.BASE_URL.
+        baseURL: process.env.BASE_URL,
 
         // Browser options
         headless: false,
@@ -109,6 +109,18 @@ export default defineConfig({
             },
         },
 
+        // ============================================
+        // API TESTS - No browser; layered client/service (see api/ + fixtures/apiFixtures.ts)
+        // ============================================
+        {
+            // Pure API project — no `use` block: the base URL and default headers live in the layered
+            // client (api/core/ApiClient.ts, wired via fixtures/apiFixtures.ts from API_BASE_URL), so
+            // there is nothing browser- or HTTP-specific to configure here.
+            name: 'api',
+            testDir: './tests/api',
+            testMatch: /.*\.api\.ts$/,
+        },
+
         /*{
             name: 'firefox',
             use: {
@@ -142,20 +154,6 @@ export default defineConfig({
                 ...devices['iPhone 12'],
             },
             dependencies: ['setup'],
-        },
-
-        // ============================================
-        // API TESTS - No browser needed
-        // ============================================
-        {
-            name: 'api',
-            testDir: './tests/api',
-            testMatch: /.*\.api\.ts/,
-            use: {
-                // API tests don't need a browser
-                baseURL: process.env.BASE_URL || 'http://localhost:3000',
-            },
-            // No browser setup dependency
         },*/
     ],
 

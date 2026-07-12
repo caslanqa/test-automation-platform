@@ -49,42 +49,37 @@ const log = {
   step: msg => console.log(`${colors.cyan}→${colors.reset} ${msg}`),
 };
 
-// Template files to copy (relative to package root). Note: dotfiles that npm
-// renames on publish (e.g. .gitignore -> .npmignore) are handled separately
-// from the templates/ directory below.
-const FILES_TO_COPY = [
-  'config/envUtils.ts',
-  'config/index.ts',
-  'config/loadEnv.ts',
-  'env/environments.example.json',
-  'fixtures/globalFixtures.ts',
-  'fixtures/index.ts',
-  'pages/BasePage.ts',
-  'pages/index.ts',
-  'pages/LoginPage.ts',
-  'scripts/ci/judge-services.sh',
-  'testData/users.example.json',
-  'tests/setup/auth.helper.ts',
-  'tests/setup/auth.setup.ts',
-  'tests/example/aiJudge.spec.ts',
-  'tests/example/login.spec.ts',
-  'utils/aiJudge.ts',
-  'utils/apiUtils.ts',
-  'utils/dateUtils.ts',
-  'utils/index.ts',
-  'utils/stringUtils.ts',
-  'utils/types.ts',
-  'utils/uiUtils.ts',
-  'utils/validationUtils.ts',
-  'utils/waitUtils.ts',
-  'docs/AI_JUDGE.md',
-  '.github/workflows/ci.yml',
+// Source directories copied recursively into the generated project — the SAME set the package
+// ships (see package.json "files"), so the scaffold always matches this repo and can never drift
+// out of date (the old hand-maintained file list did). `bin/` (the scaffolder itself), `templates/`
+// (its gitignore is handled below) and `.github/` (optional, handled below) are excluded on purpose.
+const DIRS_TO_COPY = [
+  'api',
+  'config',
+  'env',
+  'fixtures',
+  'pages',
+  'scripts',
+  'testData',
+  'tests',
+  'utils',
+];
+
+// Individual root-level files. Only the user-facing docs are copied (not framework-internal ones
+// like PUBLISHING.md). Dotfiles that npm renames on publish (e.g. .gitignore -> .npmignore) are
+// handled separately via the templates/ directory below.
+const ROOT_FILES_TO_COPY = [
   'playwright.config.ts',
   'tsconfig.json',
   'eslint.config.js',
   '.prettierrc',
   '.commitlintrc.json',
+  'docs/AI_JUDGE.md',
+  'docs/API_TESTING.md',
 ];
+
+// GitHub Actions workflow — copied only when the user keeps CI (see includeGha).
+const GHA_WORKFLOW = '.github/workflows/ci.yml';
 
 // package.json for the generated project. devDependencies are read from THIS
 // package's own package.json so the copied configs (eslint/prettier/playwright)
@@ -102,8 +97,7 @@ const createPackageJson = (projectName, devDependencies) => ({
     'test:headed': 'playwright test --headed',
     'test:debug': 'playwright test --debug',
     'test:chromium': 'playwright test --project=chromium',
-    'test:firefox': 'playwright test --project=firefox',
-    'test:webkit': 'playwright test --project=webkit',
+    'test:api': 'playwright test --project=api',
     report: 'playwright show-report',
     'allure:generate': 'allure generate allure-results -o allure-report --clean',
     'allure:open': 'allure open allure-report',
@@ -169,6 +163,15 @@ function copyFile(src, dest) {
     return true;
   }
   return false;
+}
+
+// Count files under a directory tree (recursively) — for the "Copied N files" summary.
+function countFiles(dir) {
+  let total = 0;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    total += entry.isDirectory() ? countFiles(path.join(dir, entry.name)) : 1;
+  }
+  return total;
 }
 
 // Run a child command in the target dir. npm_* env vars leaked from the parent
@@ -309,22 +312,33 @@ ${colors.cyan}╔═════════════════════
   const packageRoot = getPackageRoot();
   log.step('Copying files from template...');
 
-  // Drop the GitHub Actions workflow when the user opted out.
-  const filesToCopy = includeGha
-    ? FILES_TO_COPY
-    : FILES_TO_COPY.filter(f => !f.startsWith('.github/'));
-
   let copiedCount = 0;
-  for (const file of filesToCopy) {
-    const src = path.join(packageRoot, file);
-    const dest = path.join(targetDir, file);
 
-    if (copyFile(src, dest)) {
+  // Whole source directories (recursive) — mirrors package.json "files", so nothing is missed.
+  for (const dir of DIRS_TO_COPY) {
+    const src = path.join(packageRoot, dir);
+    if (fs.existsSync(src)) {
+      fs.cpSync(src, path.join(targetDir, dir), { recursive: true });
+      copiedCount += countFiles(src);
+    } else {
+      log.warn(`Directory not found: ${dir}`);
+    }
+  }
+
+  // Root-level config files.
+  for (const file of ROOT_FILES_TO_COPY) {
+    if (copyFile(path.join(packageRoot, file), path.join(targetDir, file))) {
       copiedCount++;
     } else {
       log.warn(`File not found: ${file}`);
     }
   }
+
+  // GitHub Actions workflow, unless the user opted out.
+  if (includeGha && copyFile(path.join(packageRoot, GHA_WORKFLOW), path.join(targetDir, GHA_WORKFLOW))) {
+    copiedCount++;
+  }
+
   log.success(`Copied ${copiedCount} files`);
 
   // .gitignore is shipped as templates/gitignore because npm renames a literal
@@ -344,35 +358,15 @@ ${colors.cyan}╔═════════════════════
   fs.writeFileSync(path.join(targetDir, 'package.json'), JSON.stringify(pkgJson, null, 2) + '\n');
   log.success('Created package.json');
 
-  // README.md
-  const readme = `# ${pkgName}
-
-Playwright test automation project with AI Judge capabilities.
-
-## Quick Start
-
-\`\`\`bash
-# Copy environment config (already created by the scaffolder)
-# Edit env/environments.json and testData/users.json for your app
-
-# Run tests
-npm test
-\`\`\`
-
-## AI Judge
-
-\`\`\`bash
-# Start Ollama (for local AI Judge)
-npm run judge:start
-
-# Run AI Judge tests
-npx playwright test tests/example/aiJudge.spec.ts
-\`\`\`
-
-See [docs/AI_JUDGE.md](docs/AI_JUDGE.md) for detailed documentation.
-`;
-  fs.writeFileSync(path.join(targetDir, 'README.md'), readme);
-  log.success('Created README.md');
+  // README.md — rendered from templates/README.md with the project name substituted.
+  const readmeTemplate = path.join(packageRoot, 'templates', 'README.md');
+  if (fs.existsSync(readmeTemplate)) {
+    const readme = fs.readFileSync(readmeTemplate, 'utf8').replace(/\{\{PROJECT_NAME\}\}/g, pkgName);
+    fs.writeFileSync(path.join(targetDir, 'README.md'), readme);
+    log.success('Created README.md');
+  } else {
+    log.warn('Template README not found; skipping README.md');
+  }
 
   // .auth directory (auth state is generated at runtime)
   fs.mkdirSync(path.join(targetDir, '.auth'), { recursive: true });
@@ -392,6 +386,26 @@ See [docs/AI_JUDGE.md](docs/AI_JUDGE.md) for detailed documentation.
   }
   log.success('Created environment config files');
 
+  // Husky git hooks — activated by the generated project's `prepare: husky` on install: run
+  // lint-staged before each commit and commitlint on the commit message. (lint-staged config lives
+  // in package.json, commitlint config in .commitlintrc.json — both scaffolded above.)
+  const huskyDir = path.join(targetDir, '.husky');
+  fs.mkdirSync(huskyDir, { recursive: true });
+  const huskyHooks = {
+    'pre-commit': 'npx lint-staged\n',
+    'commit-msg': 'npx --no -- commitlint --edit "$1"\n',
+  };
+  for (const [hookName, hookBody] of Object.entries(huskyHooks)) {
+    const hookPath = path.join(huskyDir, hookName);
+    fs.writeFileSync(hookPath, hookBody);
+    try {
+      fs.chmodSync(hookPath, '755');
+    } catch {
+      // Ignore chmod errors (e.g. on Windows)
+    }
+  }
+  log.success('Created husky hooks (pre-commit, commit-msg)');
+
   // Make the judge helper script executable
   const scriptPath = path.join(targetDir, 'scripts/ci/judge-services.sh');
   if (fs.existsSync(scriptPath)) {
@@ -399,6 +413,17 @@ See [docs/AI_JUDGE.md](docs/AI_JUDGE.md) for detailed documentation.
       fs.chmodSync(scriptPath, '755');
     } catch {
       // Ignore chmod errors (e.g. on Windows)
+    }
+  }
+
+  // Initialize a git repo before installing, so husky can wire up its hooks during `prepare`
+  // (husky needs a .git dir). Best-effort — if git is missing or it's already a repo, skip.
+  if (!fs.existsSync(path.join(targetDir, '.git'))) {
+    try {
+      run('git init -q', targetDir);
+      log.success('Initialized git repository');
+    } catch {
+      log.warn('git not available — run "git init" later so husky hooks activate.');
     }
   }
 
