@@ -10,6 +10,9 @@ allure-report/
 # Auth state (generated)
 .auth/*.json
 
+# AI judge model gate (locks/state)
+.judge/
+
 # Environment files (contains secrets)
 env/environments.json
 testData/users.json

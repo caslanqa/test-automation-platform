@@ -1,6 +1,7 @@
 import { imageToBase64 } from '../judge/judgePrompt';
 import { parseVerdict } from '../judge/verdictParser';
 import type { JudgeVerdict } from '../types';
+import { withModelGate } from './ollamaGate';
 import { type AIProvider, JudgeHttpError } from './provider';
 
 /** Strip a trailing /v1 from JUDGE_OLLAMA_BASE_URL to reach Ollama's native API root. */
@@ -21,33 +22,41 @@ export function ollamaApiBase(): string {
  */
 export const ollamaProvider: AIProvider = {
   async judge(model, systemPrompt, userText, images): Promise<JudgeVerdict> {
-    const userMessage: Record<string, unknown> = { role: 'user', content: userText };
+    const apiBase = ollamaApiBase();
+    // Prepend a per-call nonce so Ollama can't reuse a previous call's KV-cache prefix: with an
+    // identical prompt + shared first image, cache reuse would skip re-processing a differing second
+    // image (compare mode), making the model "see" the wrong image. The judge ignores this marker.
+    const nonce = `[req:${Date.now().toString(36)}${Math.round(performance.now() * 1000).toString(36)}]`;
+    const userMessage: Record<string, unknown> = { role: 'user', content: `${nonce}\n${userText}` };
     if (images.length > 0) {
       userMessage.images = images.map(imageToBase64);
     }
 
-    const response = await fetch(`${ollamaApiBase()}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model,
-        stream: false,
-        think: false, // disable thinking → fast (qwen3.x reasoning adds ~40s/call otherwise)
-        keep_alive: process.env.JUDGE_OLLAMA_KEEP_ALIVE ?? '30m', // keep model resident across the run
-        options: { temperature: 0 },
-        messages: [{ role: 'system', content: systemPrompt }, userMessage],
-      }),
+    // Serialize across workers and keep a single model resident at a time (see ollamaGate).
+    return withModelGate(model, apiBase, async () => {
+      const response = await fetch(`${apiBase}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model,
+          stream: false,
+          think: false, // disable thinking → fast (qwen3.x reasoning adds ~40s/call otherwise)
+          keep_alive: process.env.JUDGE_OLLAMA_KEEP_ALIVE ?? '30m', // keep resident across the run
+          options: { temperature: 0 },
+          messages: [{ role: 'system', content: systemPrompt }, userMessage],
+        }),
+      });
+
+      if (!response.ok) {
+        throw new JudgeHttpError(
+          response.status,
+          `[ai-judge] Ollama ${response.status}: ${await response.text()}`
+        );
+      }
+
+      const data = (await response.json()) as { message?: { content?: string } };
+
+      return parseVerdict(data.message?.content ?? '');
     });
-
-    if (!response.ok) {
-      throw new JudgeHttpError(
-        response.status,
-        `[ai-judge] Ollama ${response.status}: ${await response.text()}`
-      );
-    }
-
-    const data = (await response.json()) as { message?: { content?: string } };
-
-    return parseVerdict(data.message?.content ?? '');
   },
 };
