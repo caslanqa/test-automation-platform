@@ -20,8 +20,12 @@ export interface MobileOptions {
    * - `device` (Android AVD name, or iOS simulator name/UDID) falls back to `MOBILE_DEVICE`; when
    *   set, the device is booted automatically if it isn't running. When omitted, an already-booted
    *   device is used (otherwise the test skips).
+   * - `headless` hides the device (`-no-window` on Android, no Simulator GUI on iOS); set `false` to
+   *   show the emulator window / Simulator app. Precedence: this per-test value, then the central
+   *   `MOBILE_HEADLESS` default (env / env/environments.json), then `true`. It's scoped to this
+   *   `test.use()` block, and always takes effect — a reused device is switched to the requested mode.
    */
-  mobile: { platform?: MobilePlatform; device?: string } | undefined;
+  mobile: { platform?: MobilePlatform; device?: string; headless?: boolean } | undefined;
 }
 
 /** The runtime facade a mobile test uses. */
@@ -48,6 +52,18 @@ function resolvePlatform(option: MobileOptions['mobile']): MobilePlatform {
   return platform;
 }
 
+/**
+ * Resolve headless: an explicit per-test `headless` wins; otherwise the central `MOBILE_HEADLESS`
+ * default (env / env/environments.json); otherwise `true` (hidden).
+ */
+function resolveHeadless(option?: boolean): boolean {
+  if (typeof option === 'boolean') {
+    return option;
+  }
+  const env = process.env.MOBILE_HEADLESS?.trim();
+  return env ? /^(1|true|yes|on)$/i.test(env) : true;
+}
+
 /** Recursively collect the PNG screenshots Maestro wrote under `dir`. */
 function screenshots(dir: string): string[] {
   if (!fs.existsSync(dir)) {
@@ -72,12 +88,16 @@ export const test = base.extend<MobileOptions & MobileFixtures>({
   maestro: async ({ mobile }, use, testInfo) => {
     const platform = resolvePlatform(mobile);
     const deviceName = mobile?.device || process.env.MOBILE_DEVICE || undefined;
-    const device = await new DeviceManager().acquire(platform, deviceName);
+    const device = await new DeviceManager().acquire(
+      platform,
+      deviceName,
+      resolveHeadless(mobile?.headless)
+    );
     if (!device) {
       testInfo.skip(
         true,
-        `[mobile] no booted ${platform} device — set MOBILE_DEVICE (or test.use({ mobile: { device } })) ` +
-          'to auto-boot one, or boot a device manually. See docs/MOBILE_TESTING.md'
+        `[mobile] no ${platform} device available — name one via the mobile option to auto-boot it, ` +
+          'create one with `npm run mobile:create-device`, or boot a device manually. See docs/MOBILE_TESTING.md'
       );
       return;
     }

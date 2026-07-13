@@ -28,10 +28,42 @@ mobile/core/DeviceManager.ts   finds (or boots) a device (adb / xcrun simctl)
 
 - [Maestro](https://maestro.mobile.dev) on your PATH (`maestro --version`); needs Java 17+.
 - A device — either boot one yourself, or let the framework boot it (see “Choosing the device” below):
-  - **Android:** an emulator (AVD), created in Android Studio. The Android SDK is auto-detected from
-    `ANDROID_HOME` / `ANDROID_SDK_ROOT` / the default location (`~/Library/Android/sdk` on macOS), so
-    you usually don't need to export anything.
-  - **iOS (macOS):** an available Xcode simulator.
+  - **Android:** an emulator (AVD). The Android SDK is auto-detected from `ANDROID_HOME` /
+    `ANDROID_SDK_ROOT` / the default location (macOS `~/Library/Android/sdk`, Linux `~/Android/Sdk`,
+    Windows `%LOCALAPPDATA%\Android\Sdk`), so you usually don't need to export anything. To create an
+    AVD with `npm run mobile:create-device` you also need the **command-line tools** — see below.
+  - **iOS (macOS only):** an available Xcode simulator. No extra tooling to install.
+
+### Installing the Android command-line tools
+
+Only needed for **Android** `create-device` (it runs `sdkmanager`/`avdmanager`); iOS needs none of
+this. Works on macOS, Windows and Linux — pick **one** path:
+
+**A. Android Studio (GUI, any OS — easiest).** Install Android Studio, then open **SDK Manager → SDK
+Tools tab → tick “Android SDK Command-line Tools (latest)” → Apply.** This drops them straight into
+the standard SDK where `create-device` looks — nothing else to do.
+
+**B. CLI, no GUI.** Get a `sdkmanager` binary, then install the tools into your SDK:
+
+| OS      | Get `sdkmanager`                                                                                                                         |
+| ------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| macOS   | `brew install --cask android-commandlinetools`                                                                                           |
+| Windows | `scoop install android-clt`                                                                                                              |
+| Linux   | Arch: AUR `android-sdk-cmdline-tools-latest` — otherwise use the universal zip below                                                     |
+| Any OS  | Download **“Command line tools only”** from [developer.android.com/studio](https://developer.android.com/studio#command-line-tools-only) |
+
+```bash
+# SDK root: macOS ~/Library/Android/sdk · Linux ~/Android/Sdk · Windows %LOCALAPPDATA%\Android\Sdk
+export ANDROID_HOME="$HOME/Library/Android/sdk"          # adjust per OS
+sdkmanager --sdk_root="$ANDROID_HOME" "cmdline-tools;latest"   # lands them inside your SDK
+yes | sdkmanager --sdk_root="$ANDROID_HOME" --licenses         # accept licenses
+```
+
+> **Universal-zip only:** the archive unpacks to a `cmdline-tools/` folder — the final layout **must**
+> be `<SDK>/cmdline-tools/latest/bin/…` (rename the extracted folder to `latest`; avoid the
+> `cmdline-tools/cmdline-tools` trap). Then run the `--licenses` line above.
+
+Verify with `avdmanager list device` or by re-running `npm run mobile:create-device`.
 
 ## Running
 
@@ -67,8 +99,28 @@ test.use({ mobile: devices.pixel7 }); // type-checked; auto-boots the AVD if it 
   running. Omit it (e.g. `{ platform: 'android' }`) to use any booted device of that platform.
 - No device booted and none named → the test **skips** (doesn't fail). Auto-booted devices are left
   running and reused across runs.
-- No AVD/simulator yet? Create one from your installed SDK/Xcode, then add it to the catalog:
-  `npm run mobile:create-device -- --platform ios --name "iPhone 16 Pro"` (or `--platform android --name Pixel_7_API_34`).
+- No AVD/simulator yet? Run **`npm run mobile:create-device`** with no flags for an interactive
+  picker: it lists the device profiles and the system images you can choose — on **Android** pulled
+  live from the SDK catalog (`sdkmanager --list`: your installed images plus the newest downloadable
+  API levels, installed ones marked "no download"); on **iOS** your installed runtimes and iPhone
+  device types (plus **⬇ download** entries) — then creates the device and prints the line to paste
+  into the catalog. Skip the prompts with flags:
+  `npm run mobile:create-device -- --platform ios --name "My iPhone" --type "iPhone 16 Pro" [--download latest|26.0]`
+  (or `--platform android --name Pixel_7_API_34 --api 34`).
+  - **iOS** can create from an installed runtime (no download) or download one via `xcodebuild`
+    (~7 GB) — pick "Download latest" or "Download a specific version…" in the picker, or pass
+    `--download`. Apple exposes no CLI to _list_ downloadable versions, so the "specific version" step
+    asks you to type one (e.g. `26.0`). Needs full Xcode (not just Command Line Tools).
+  - **Android** downloads the chosen system image only if it isn't already installed (~1 GB; the picker marks which are local).
+    Requires the command-line tools — see [Installing the Android command-line tools](#installing-the-android-command-line-tools);
+    without them the command exits with an actionable message.
+- **Headed vs headless:** the framework boots the device **hidden by default** (`-no-window` on
+  Android, no Simulator GUI on iOS). Change the central default with `MOBILE_HEADLESS` in
+  `env/environments.json`, or override per test with the `headless` option (which wins) —
+  `test.use({ mobile: { ...devices.iphone16, headless: false } })` to watch that test run. `headless`
+  **always takes effect, even on a reused device**: iOS just toggles the Simulator app, while an
+  Android emulator running in the other mode is restarted (the boot is the trade-off). Scoped to the
+  `test.use()` block; other tests are unaffected.
 - Env alternatives: `MOBILE_PLATFORM` / `MOBILE_DEVICE` apply when a spec doesn't set the `mobile` option.
 
 ## Authoring a test

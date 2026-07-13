@@ -3,6 +3,7 @@
   "common": {
     "DEFAULT_TEST_ENV": "dev",
     "MOBILE_PLATFORM": "android",
+    "MOBILE_HEADLESS": "true",
     "JUDGE_GATEWAY_BASE_URL": "http://127.0.0.1:20128/v1",
     "JUDGE_OLLAMA_BASE_URL": "http://127.0.0.1:11434/v1",
     "JUDGE_OLLAMA_KEEP_ALIVE": "30m",

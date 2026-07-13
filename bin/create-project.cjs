@@ -94,7 +94,9 @@ named device is auto-booted if it isn't running:
 npm run test:mobile   # MOBILE=1 playwright test --project=mobile --workers=1
 \`\`\`
 
-See [docs/MOBILE_TESTING.md](docs/MOBILE_TESTING.md).
+No device yet? \`npm run mobile:create-device\` builds one from your installed SDK/Xcode (interactive
+picker). Android also needs the command-line tools (macOS/Windows/Linux, GUI or CLI) — see
+[docs/MOBILE_TESTING.md](docs/MOBILE_TESTING.md#installing-the-android-command-line-tools).
 `;
 
 // package.json for the generated project. devDependencies are read from THIS

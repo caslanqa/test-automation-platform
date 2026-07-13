@@ -1,8 +1,30 @@
 import { spawn } from 'child_process';
+import fs from 'fs';
 import path from 'path';
 
 import { androidEnv } from './android';
 import type { MaestroRunOptions, MaestroRunResult } from './types';
+
+/**
+ * Resolve a bare command name to its absolute path via `env.PATH`. Needed because we spawn Maestro
+ * with `cwd` set, and Node fails to PATH-resolve a bare command name once `cwd` is specified. Returns
+ * the input unchanged if it's already a path or can't be found (spawn then surfaces ENOENT).
+ */
+function resolveOnPath(binary: string, env: NodeJS.ProcessEnv): string {
+  if (binary.includes(path.sep) || path.isAbsolute(binary)) {
+    return binary;
+  }
+  const exts = process.platform === 'win32' ? ['.exe', '.cmd', '.bat', ''] : [''];
+  for (const dir of (env.PATH ?? '').split(path.delimiter)) {
+    for (const ext of exts) {
+      const candidate = path.join(dir, binary + ext);
+      if (dir && fs.existsSync(candidate)) {
+        return candidate;
+      }
+    }
+  }
+  return binary;
+}
 
 /**
  * Layer 1 — the mobile execution adapter. A thin wrapper around the Maestro CLI (`maestro test`),
@@ -34,6 +56,11 @@ export class MaestroRunner {
     const absFlow = path.resolve(process.cwd(), flowPath);
     const junitPath = path.join(options.outputDir, 'report.xml');
 
+    // We spawn Maestro with cwd set to the output dir (so a flow's `takeScreenshot: <name>` lands
+    // there, not in the project root). Playwright creates that dir lazily, and spawn ENOENTs on a
+    // missing cwd — so ensure it exists first.
+    fs.mkdirSync(options.outputDir, { recursive: true });
+
     // `--device` is a GLOBAL option, before the `test` subcommand. `--format` value is uppercase.
     const args = [
       '--device',
@@ -57,7 +84,15 @@ export class MaestroRunner {
     const env = options.platform === 'android' ? androidEnv() : process.env;
 
     return new Promise<MaestroRunResult>((resolve, reject) => {
-      const child = spawn(this.binary, args, { stdio: ['ignore', 'pipe', 'pipe'], env });
+      // Run from the test's output dir so a flow's `takeScreenshot: <name>` (a relative path) lands
+      // there — attached to the report — instead of littering the project root. All the paths passed
+      // above (flow, --output, --test-output-dir, --debug-output) are absolute, so cwd doesn't affect
+      // them; the binary is pre-resolved because a `cwd` breaks Node's PATH lookup of a bare name.
+      const child = spawn(resolveOnPath(this.binary, env), args, {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env,
+        cwd: options.outputDir,
+      });
       let stdout = '';
       let stderr = '';
       child.stdout.on('data', chunk => (stdout += chunk.toString()));

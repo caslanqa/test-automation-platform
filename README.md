@@ -30,13 +30,13 @@ npm init @caslanqa/playwright-ai@latest my-project
 Only **Node.js ≥ 18** is always required. Everything else is per-feature and installed by _you_ (the
 scaffolder installs the npm deps + Playwright browsers, but not these system-level tools):
 
-| For             | You need                                                                                                                         |
-| --------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| Everything      | **Node.js ≥ 18**                                                                                                                 |
-| UI tests        | Playwright browsers — `npx playwright install`                                                                                   |
-| API tests       | nothing beyond Node (they call an HTTP endpoint)                                                                                 |
-| AI Judge        | [Ollama](https://ollama.com) + a pulled model (local), **or** a 9Router gateway + `JUDGE_API_KEY`                                |
-| Mobile (opt-in) | [Maestro](https://maestro.mobile.dev) CLI + **Java 17+**, and a device: Android SDK + emulator, or (macOS) Xcode + iOS simulator |
+| For             | You need                                                                                                                                                                                                                                                                                                                                |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Everything      | **Node.js ≥ 18**                                                                                                                                                                                                                                                                                                                        |
+| UI tests        | Playwright browsers — `npx playwright install`                                                                                                                                                                                                                                                                                          |
+| API tests       | nothing beyond Node (they call an HTTP endpoint)                                                                                                                                                                                                                                                                                        |
+| AI Judge        | [Ollama](https://ollama.com) + a pulled model (local), **or** a 9Router gateway + `JUDGE_API_KEY`                                                                                                                                                                                                                                       |
+| Mobile (opt-in) | [Maestro](https://maestro.mobile.dev) CLI + **Java 17+**, and a device: Android SDK + emulator, or (macOS) Xcode + iOS simulator. To build an AVD via `mobile:create-device` you also need the Android command-line tools — [setup (macOS/Windows/Linux, GUI or CLI)](docs/MOBILE_TESTING.md#installing-the-android-command-line-tools) |
 
 ## 📦 Create a new project
 

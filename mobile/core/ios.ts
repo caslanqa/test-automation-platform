@@ -31,7 +31,11 @@ export async function resolveSimUdid(nameOrUdid: string): Promise<string | undef
   return match?.udid;
 }
 
-/** Boot an iOS simulator (by name or UDID) and wait until ready. Returns the resolved UDID. */
+/**
+ * Boot an iOS simulator (by name or UDID) and wait until ready. Returns the resolved UDID. This only
+ * boots the runtime (no window); visibility is a separate concern — the Simulator app — toggled via
+ * `openSimulatorApp` / `quitSimulatorApp`, because it can be changed without rebooting the sim.
+ */
 export async function bootIosSim(nameOrUdid: string, timeoutMs = 120_000): Promise<string> {
   const udid = await resolveSimUdid(nameOrUdid);
   if (!udid) {
@@ -46,4 +50,22 @@ export async function bootIosSim(nameOrUdid: string, timeoutMs = 120_000): Promi
   // Block until the simulator has fully booted.
   await execFileAsync('xcrun', ['simctl', 'bootstatus', udid, '-b'], { timeout: timeoutMs });
   return udid;
+}
+
+/**
+ * Show the Simulator app (it displays whatever sims are booted) — makes a device headed. Idempotent,
+ * so it's safe to call for a reused sim whose window was closed.
+ */
+export async function openSimulatorApp(): Promise<void> {
+  await execFileAsync('open', ['-a', 'Simulator'], { timeout: 15_000 }).catch(() => undefined);
+}
+
+/**
+ * Quit the Simulator app — makes iOS headless. Booted sims stay `Booted` (a `simctl boot` runtime is
+ * independent of the app), so no reboot is needed to hide or later re-show them.
+ */
+export async function quitSimulatorApp(): Promise<void> {
+  await execFileAsync('osascript', ['-e', 'tell application "Simulator" to quit'], {
+    timeout: 10_000,
+  }).catch(() => undefined);
 }
