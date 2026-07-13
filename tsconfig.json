@@ -19,6 +19,7 @@
     "baseUrl": ".",
     "paths": {
       "@api/*": ["api/*"],
+      "@mobile/*": ["mobile/*"],
       "@utils/*": ["utils/*"],
       "@pages/*": ["pages/*"],
       "@fixtures/*": ["fixtures/*"],

@@ -13,6 +13,9 @@ allure-report/
 # AI judge model gate (locks/state)
 .judge/
 
+# Maestro local artifacts (mobile testing)
+.maestro/
+
 # Environment files (contains secrets)
 env/environments.json
 testData/users.json
