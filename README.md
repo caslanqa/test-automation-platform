@@ -208,7 +208,7 @@ Tune tiers, thresholds, and cloud preferences in `config/aiJudge.config.ts`.
 A layered structure keeps HTTP details in one place and tests readable. See
 [docs/API_TESTING.md](docs/API_TESTING.md); the example targets [Petstore v3](https://petstore3.swagger.io).
 
-```
+```text
 tests/api/*.api.ts          # layer 3 — tests speak business language via services
 api/services/PetService.ts  # layer 2 — business operations (fetch, CRUD, derived queries)
 api/core/ApiClient.ts       # layer 1 — typed get/post/put/patch/delete over APIRequestContext
@@ -235,9 +235,10 @@ Tests read like the UI/API tests — see [docs/MOBILE_TESTING.md](docs/MOBILE_TE
 
 ```typescript
 import { test } from '@fixtures/mobileFixtures';
+import { devices } from '@mobile/devices'; // typed device catalog — mobile/devices.ts
 
 test.describe('Login — Android', () => {
-  test.use({ mobile: { platform: 'android', device: 'Pixel_7_API_34' } }); // device optional (auto-boot)
+  test.use({ mobile: devices.pixel7 }); // auto-boots the AVD if it isn't running
 
   test('signs in', async ({ maestro }) => {
     await maestro.run('tests/mobile/flows/android/login.yaml');
@@ -245,12 +246,13 @@ test.describe('Login — Android', () => {
 });
 ```
 
-Runs serially in the browser-free `mobile` project: `npm run test:mobile`. Naming a `device`
-auto-boots it (Android AVD / iOS simulator); with no device available the tests **skip** (don't fail).
+Runs serially in the browser-free `mobile` project: `npm run test:mobile`. A catalogued `device`
+auto-boots (Android AVD / iOS simulator); with none available the tests **skip** (don't fail). No
+device yet? `npm run mobile:create-device` builds one from your installed SDK/Xcode.
 
 ## 📁 Project Structure
 
-```
+```text
 playwright-ai-distro/
 ├── .auth/                    # Storage state files (gitignored)
 ├── .github/workflows/        # CI/CD pipelines

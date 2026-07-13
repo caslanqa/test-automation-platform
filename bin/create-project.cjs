@@ -115,7 +115,10 @@ const createPackageJson = (projectName, devDependencies, includeMobile) => ({
     'test:chromium': 'playwright test --project=chromium',
     'test:api': 'playwright test --project=api',
     ...(includeMobile
-      ? { 'test:mobile': 'MOBILE=1 playwright test --project=mobile --workers=1' }
+      ? {
+          'test:mobile': 'MOBILE=1 playwright test --project=mobile --workers=1',
+          'mobile:create-device': 'node mobile/create-device.mjs',
+        }
       : {}),
     report: 'playwright show-report',
     'allure:generate': 'allure generate allure-results -o allure-report --clean',

@@ -67,6 +67,7 @@
     "test:serial": "playwright test --workers=1",
     "test:api": "playwright test --project=api",
     "test:mobile": "MOBILE=1 playwright test --project=mobile --workers=1",
+    "mobile:create-device": "node mobile/create-device.mjs",
     "test:tag": "playwright test --workers=1 --project chromium --retries=0 --grep @wip",
     "report:playwright": "playwright show-report",
     "report:allure": "allure generate allure-results --output allure-report && allure serve allure-results",

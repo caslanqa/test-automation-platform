@@ -6,7 +6,7 @@ a CLI — no npm dependency). It's the fourth engine alongside web, API, and the
 
 ## How it fits together
 
-```
+```text
 tests/mobile/*.mobile.ts       Playwright specs: test.use({ mobile }) + maestro.run('<flow>.yaml')
         │
 tests/mobile/flows/**/*.yaml   the Maestro flows they run (YAML-first)
@@ -46,19 +46,30 @@ npm run test:mobile
 
 ### Choosing the device
 
-- Set **`MOBILE_PLATFORM`** (`android` | `ios`) — in `env/environments.json` or inline.
-- Set **`MOBILE_DEVICE`** to an **AVD name** (Android) or **simulator name/UDID** (iOS) and the
-  framework **boots it automatically** if it isn't already running:
+Devices live in a typed **catalog** (`mobile/devices.ts`) — the single place device names live —
+so specs reference them by name and only known devices are selectable:
 
-  ```bash
-  MOBILE_PLATFORM=android MOBILE_DEVICE=Pixel_7_API_34 npm run test:mobile
-  MOBILE_PLATFORM=ios     MOBILE_DEVICE='iPhone 16 Pro' npm run test:mobile
-  ```
+```typescript
+// mobile/devices.ts
+export const devices = {
+  pixel7: { platform: 'android', device: 'Pixel_7_API_34' },
+  iphone16: { platform: 'ios', device: 'iPhone 16 Pro' },
+} as const satisfies Record<string, DeviceSpec>;
+```
 
-  Or per spec: `test.use({ mobile: { platform: 'android', device: 'Pixel_7_API_34' } })`.
+```typescript
+// in a spec
+import { devices } from '@mobile/devices';
+test.use({ mobile: devices.pixel7 }); // type-checked; auto-boots the AVD if it isn't running
+```
 
-- Without `MOBILE_DEVICE`, an already-booted device is used; if none is booted the mobile tests
-  **skip** (they don't fail). Auto-booted devices are **left running** and reused across runs.
+- An entry's `device` (AVD name / iOS simulator name or UDID) is **auto-booted** if it isn't already
+  running. Omit it (e.g. `{ platform: 'android' }`) to use any booted device of that platform.
+- No device booted and none named → the test **skips** (doesn't fail). Auto-booted devices are left
+  running and reused across runs.
+- No AVD/simulator yet? Create one from your installed SDK/Xcode, then add it to the catalog:
+  `npm run mobile:create-device -- --platform ios --name "iPhone 16 Pro"` (or `--platform android --name Pixel_7_API_34`).
+- Env alternatives: `MOBILE_PLATFORM` / `MOBILE_DEVICE` apply when a spec doesn't set the `mobile` option.
 
 ## Authoring a test
 
@@ -81,9 +92,10 @@ appId: com.example.app
 ```typescript
 // tests/mobile/login.mobile.ts
 import { test } from '@fixtures/mobileFixtures';
+import { devices } from '@mobile/devices';
 
 test.describe('Login — Android', () => {
-  test.use({ mobile: { platform: 'android', device: 'Pixel_7_API_34' } }); // device optional (auto-boot)
+  test.use({ mobile: devices.pixel7 }); // device auto-boots if needed
 
   test('signs in', async ({ maestro }) => {
     await maestro.run('tests/mobile/flows/android/login.yaml');
