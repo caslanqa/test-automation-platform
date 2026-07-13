@@ -201,6 +201,41 @@ function run(command, cwd) {
   execSync(command, { cwd, stdio: 'inherit', env });
 }
 
+// Whether an executable is resolvable on PATH.
+function commandExists(cmd) {
+  try {
+    execSync(process.platform === 'win32' ? `where ${cmd}` : `command -v ${cmd}`, {
+      stdio: 'ignore',
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Best-effort install of the Maestro CLI (the mobile engine). Prompted + opt-in only. Skips when
+// already installed or on Windows; warns (does not fail) on missing Java or a failed install.
+function installMaestroCli(cwd) {
+  if (commandExists('maestro')) {
+    log.success('Maestro CLI already installed');
+    return;
+  }
+  if (process.platform === 'win32') {
+    log.warn('Maestro auto-install is not supported on Windows — see https://maestro.mobile.dev');
+    return;
+  }
+  if (!commandExists('java')) {
+    log.warn('Java not found — Maestro needs Java 17+ at runtime; install a JDK before running mobile tests.');
+  }
+  try {
+    log.step('Installing Maestro CLI...');
+    run('curl -Ls "https://get.maestro.mobile.dev" | bash', cwd);
+    log.success('Installed Maestro CLI (restart your shell, or add ~/.maestro/bin to PATH)');
+  } catch {
+    log.warn('Maestro install failed — install it manually: https://maestro.mobile.dev');
+  }
+}
+
 // Minimal readline-based prompts (zero dependencies). Used only when stdin is a
 // TTY; otherwise callers fall back to defaults so the scaffolder never hangs.
 function createPrompter() {
@@ -239,6 +274,7 @@ ${colors.cyan}Options:${colors.reset}
   --no-browsers    Skip installing Playwright browser binaries
   --no-gha         Skip the GitHub Actions workflow
   --mobile         Include mobile testing (Maestro flows via the Maestro CLI)
+  --install-maestro  With --mobile, also install the Maestro CLI (needs Java 17+)
   -y, --yes        Accept all defaults without prompting (no interactive menu)
   -h, --help       Show this help
 `);
@@ -257,6 +293,7 @@ async function main() {
   const flagNoBrowsers = argv.includes('--no-browsers');
   const flagNoGha = argv.includes('--no-gha');
   const flagMobile = argv.includes('--mobile');
+  const flagInstallMaestro = argv.includes('--install-maestro');
   const flagYes = argv.includes('--yes') || argv.includes('-y');
   // First non-flag argument is the project directory.
   const positional = argv.find(a => !a.startsWith('-'));
@@ -274,6 +311,7 @@ ${colors.cyan}╔═════════════════════
   let projectName = positional;
   let includeGha = !flagNoGha;
   let includeMobile = flagMobile;
+  let installMaestro = flagInstallMaestro;
   let doInstall = !flagNoInstall;
   let doBrowsers = !flagNoBrowsers;
 
@@ -288,6 +326,9 @@ ${colors.cyan}╔═════════════════════
       }
       if (!flagMobile) {
         includeMobile = await prompt.confirm('Add mobile testing (Maestro flows)?', false);
+      }
+      if (includeMobile && !flagInstallMaestro) {
+        installMaestro = await prompt.confirm('Install the Maestro CLI now? (needs Java 17+)', false);
       }
       if (!flagNoInstall) {
         doInstall = await prompt.confirm('Install npm dependencies now?', true);
@@ -475,6 +516,11 @@ ${colors.cyan}╔═════════════════════
     }
   }
 
+  // Maestro CLI — opt-in, only when mobile was included (prompted / --install-maestro).
+  if (includeMobile && installMaestro) {
+    installMaestroCli(targetDir);
+  }
+
   // --- Next steps: only show what the user still needs to run ---
   const steps = [];
   if (!isCurrentDir) {
@@ -492,11 +538,14 @@ ${colors.cyan}╔═════════════════════
   steps.push('npm test');
   const manualSteps = steps.map(s => `\n  ${colors.yellow}${s}${colors.reset}`).join('');
 
+  const maestroStep = installMaestro
+    ? `Maestro installed — restart your shell (or add ${colors.yellow}~/.maestro/bin${colors.reset} to PATH)`
+    : `Install Maestro: ${colors.blue}https://maestro.mobile.dev${colors.reset}  (needs Java 17+)`;
   const mobileHelp = includeMobile
     ? `
 ${colors.cyan}For Mobile testing (Maestro):${colors.reset}
 
-  1. Install Maestro: ${colors.blue}https://maestro.mobile.dev${colors.reset}  (needs Java 17+)
+  1. ${maestroStep}
   2. Boot a device (Android emulator or iOS simulator)
   3. Set MOBILE_PLATFORM (android|ios) in env/environments.json
   4. ${colors.yellow}npm run test:mobile${colors.reset}
