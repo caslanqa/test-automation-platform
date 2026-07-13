@@ -1,5 +1,10 @@
 # Changelog
 
+## [3.3.2] - 2026-07-13
+
+- Version bump (patch)
+
+
 ## [3.3.1] - 2026-07-13
 
 - Version bump (patch)

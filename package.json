@@ -1,6 +1,6 @@
 {
   "name": "@caslanqa/create-playwright-ai",
-  "version": "3.3.1",
+  "version": "3.3.2",
   "description": "Scaffold a ready-to-run Playwright + TypeScript test framework: AI Judge for LLM evaluation, layered API testing, lazy session auth, and full tooling (ESLint, Prettier, husky, commitlint)",
   "author": "CaslanQA",
   "license": "MIT",
