@@ -80,10 +80,26 @@ const ROOT_FILES_TO_COPY = [
 // GitHub Actions workflow — copied only when the user keeps CI (see includeGha).
 const GHA_WORKFLOW = '.github/workflows/ci.yml';
 
+// Injected into the generated README (templates/README.md {{MOBILE_SECTION}}) only when mobile is
+// opted in; replaced with '' otherwise so opted-out projects don't document a feature they lack.
+const MOBILE_README_SECTION = `
+### Mobile test (Maestro)
+
+Mobile tests read like the UI/API tests: pick a device with \`test.use({ mobile: { platform, device } })\`
+and run a Maestro YAML flow with \`maestro.run('…')\` (see \`tests/mobile/*.mobile.ts\`). Serial, and the
+named device is auto-booted if it isn't running:
+
+\`\`\`bash
+npm run test:mobile   # MOBILE=1 playwright test --project=mobile --workers=1
+\`\`\`
+
+See [docs/MOBILE_TESTING.md](docs/MOBILE_TESTING.md).
+`;
+
 // package.json for the generated project. devDependencies are read from THIS
 // package's own package.json so the copied configs (eslint/prettier/playwright)
 // always get matching, complete dependencies — single source of truth, no drift.
-const createPackageJson = (projectName, devDependencies) => ({
+const createPackageJson = (projectName, devDependencies, includeMobile) => ({
   name: projectName,
   version: '1.0.0',
   description: 'Playwright test automation with AI Judge capabilities',
@@ -97,6 +113,9 @@ const createPackageJson = (projectName, devDependencies) => ({
     'test:debug': 'playwright test --debug',
     'test:chromium': 'playwright test --project=chromium',
     'test:api': 'playwright test --project=api',
+    ...(includeMobile
+      ? { 'test:mobile': 'MOBILE=1 playwright test --project=mobile --workers=1' }
+      : {}),
     report: 'playwright show-report',
     'allure:generate': 'allure generate allure-results -o allure-report --clean',
     'allure:open': 'allure open allure-report',
@@ -218,6 +237,7 @@ ${colors.cyan}Options:${colors.reset}
   --no-install     Skip installing npm dependencies
   --no-browsers    Skip installing Playwright browser binaries
   --no-gha         Skip the GitHub Actions workflow
+  --mobile         Include mobile testing (Maestro flows via the Maestro CLI)
   -y, --yes        Accept all defaults without prompting (no interactive menu)
   -h, --help       Show this help
 `);
@@ -235,6 +255,7 @@ async function main() {
   const flagNoInstall = argv.includes('--no-install');
   const flagNoBrowsers = argv.includes('--no-browsers');
   const flagNoGha = argv.includes('--no-gha');
+  const flagMobile = argv.includes('--mobile');
   const flagYes = argv.includes('--yes') || argv.includes('-y');
   // First non-flag argument is the project directory.
   const positional = argv.find(a => !a.startsWith('-'));
@@ -251,6 +272,7 @@ ${colors.cyan}╔═════════════════════
   // --- Interactive menu (like official create-playwright) ---
   let projectName = positional;
   let includeGha = !flagNoGha;
+  let includeMobile = flagMobile;
   let doInstall = !flagNoInstall;
   let doBrowsers = !flagNoBrowsers;
 
@@ -262,6 +284,9 @@ ${colors.cyan}╔═════════════════════
       }
       if (!flagNoGha) {
         includeGha = await prompt.confirm('Add a GitHub Actions workflow?', true);
+      }
+      if (!flagMobile) {
+        includeMobile = await prompt.confirm('Add mobile testing (Maestro flows)?', false);
       }
       if (!flagNoInstall) {
         doInstall = await prompt.confirm('Install npm dependencies now?', true);
@@ -334,6 +359,27 @@ ${colors.cyan}╔═════════════════════
     copiedCount++;
   }
 
+  // Mobile testing (Maestro) — opt-in. `tests/mobile` shipped as part of `tests/` above; keep it only
+  // when opted in and add the `mobile/` engine + its doc. Otherwise strip `tests/mobile` so the
+  // config's existsSync guard leaves the `mobile` project unregistered.
+  if (includeMobile) {
+    const mobileSrc = path.join(packageRoot, 'mobile');
+    if (fs.existsSync(mobileSrc)) {
+      fs.cpSync(mobileSrc, path.join(targetDir, 'mobile'), { recursive: true });
+      copiedCount += countFiles(mobileSrc);
+    }
+    if (
+      copyFile(
+        path.join(packageRoot, 'docs/MOBILE_TESTING.md'),
+        path.join(targetDir, 'docs/MOBILE_TESTING.md')
+      )
+    ) {
+      copiedCount++;
+    }
+  } else {
+    fs.rmSync(path.join(targetDir, 'tests', 'mobile'), { recursive: true, force: true });
+  }
+
   log.success(`Copied ${copiedCount} files`);
 
   // .gitignore is shipped as templates/gitignore because npm renames a literal
@@ -349,7 +395,7 @@ ${colors.cyan}╔═════════════════════
   // package.json (devDependencies derived from this package — single source of truth)
   const devDependencies = readTemplateDevDependencies(packageRoot);
   const pkgName = isCurrentDir ? path.basename(targetDir) : projectName;
-  const pkgJson = createPackageJson(pkgName, devDependencies);
+  const pkgJson = createPackageJson(pkgName, devDependencies, includeMobile);
   fs.writeFileSync(path.join(targetDir, 'package.json'), JSON.stringify(pkgJson, null, 2) + '\n');
   log.success('Created package.json');
 
@@ -442,6 +488,17 @@ ${colors.cyan}╔═════════════════════
   steps.push('npm test');
   const manualSteps = steps.map(s => `\n  ${colors.yellow}${s}${colors.reset}`).join('');
 
+  const mobileHelp = includeMobile
+    ? `
+${colors.cyan}For Mobile testing (Maestro):${colors.reset}
+
+  1. Install Maestro: ${colors.blue}https://maestro.mobile.dev${colors.reset}  (needs Java 17+)
+  2. Boot a device (Android emulator or iOS simulator)
+  3. Set MOBILE_PLATFORM (android|ios) in env/environments.json
+  4. ${colors.yellow}npm run test:mobile${colors.reset}
+`
+    : '';
+
   console.log(`
 ${colors.green}✨ Project created successfully!${colors.reset}
 
@@ -452,9 +509,9 @@ ${colors.cyan}For AI Judge:${colors.reset}
   1. Install Ollama: ${colors.blue}https://ollama.com${colors.reset}
   2. ${colors.yellow}ollama serve${colors.reset}  (then pull a model, e.g. ${colors.yellow}ollama pull qwen3.5${colors.reset})
   3. ${colors.yellow}npx playwright test tests/example/aiJudge.spec.ts${colors.reset}
-
+${mobileHelp}
 ${colors.cyan}Documentation:${colors.reset}
-  - AI Judge Guide: ${colors.blue}docs/AI_JUDGE.md${colors.reset}
+  - AI Judge Guide: ${colors.blue}docs/AI_JUDGE.md${colors.reset}${includeMobile ? `\n  - Mobile Testing: ${colors.blue}docs/MOBILE_TESTING.md${colors.reset}` : ''}
   - Playwright Docs: ${colors.blue}https://playwright.dev${colors.reset}
 
 Happy testing! 🎭

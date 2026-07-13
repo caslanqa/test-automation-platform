@@ -1,9 +1,16 @@
+import fs from 'node:fs';
+
 import { defineConfig, devices } from '@playwright/test';
 
 import { loadEnv } from './config/loadEnv';
 
 // Load environment variables from env/environments.json
 loadEnv();
+
+// The Maestro-driven `mobile` project is registered only when mobile testing was scaffolded
+// (tests/mobile exists) AND explicitly enabled (MOBILE=1, set by `npm run test:mobile`). This keeps a
+// bare `npm test` web+api only — mobile needs a booted device and runs serially on a single device.
+const mobileEnabled = fs.existsSync('tests/mobile') && process.env.MOBILE === '1';
 
 /**
  * Playwright Test Configuration
@@ -121,6 +128,24 @@ export default defineConfig({
             testMatch: /.*\.api\.ts$/,
         },
 
+        // ============================================
+        // MOBILE TESTS - Maestro flows (see mobile/ + fixtures/mobileFixtures.ts). Opt-in and gated:
+        // registered only when scaffolded (tests/mobile) and MOBILE=1 (set by `npm run test:mobile`).
+        // Serial, single booted device. No `use` block — device is discovered by the fixture.
+        // ============================================
+        ...(mobileEnabled
+            ? [
+                  {
+                      name: 'mobile',
+                      testDir: './tests/mobile',
+                      testMatch: /.*\.mobile\.ts$/,
+                      // Generous per-test timeout: a cold emulator/simulator boot (auto-boot) plus the
+                      // Maestro flow can take a couple of minutes on the first test.
+                      timeout: 5 * 60 * 1000,
+                  },
+              ]
+            : []),
+
         /*{
             name: 'firefox',
             use: {
@@ -133,25 +158,6 @@ export default defineConfig({
             name: 'webkit',
             use: {
                 ...devices['Desktop Safari'],
-            },
-            dependencies: ['setup'],
-        },
-
-        // ============================================
-        // MOBILE PROJECTS
-        // ============================================
-        {
-            name: 'mobile-chrome',
-            use: {
-                ...devices['Pixel 5'],
-            },
-            dependencies: ['setup'],
-        },
-
-        {
-            name: 'mobile-safari',
-            use: {
-                ...devices['iPhone 12'],
             },
             dependencies: ['setup'],
         },*/
