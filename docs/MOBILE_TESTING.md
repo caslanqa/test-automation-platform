@@ -242,15 +242,22 @@ Specs are `*.mobile.ts` (so the `mobile` project picks them up and the browser p
 
 ## Reporting
 
-`npx playwright show-report` shows the `mobile` project with one test per flow. Pass/fail comes from
-Maestro's exit code; each test has the **Maestro JUnit report and screenshots** attached. Note: the
-per-step Maestro timeline is not surfaced in Playwright's trace (Maestro executes as its own process)
-— the attached artifacts are the debugging surface.
+`npx playwright show-report` shows the `mobile` project with each flow as a test. Every Maestro command
+is replayed as a native **Playwright step**, so the report reads like a normal Playwright test:
+
+- **Step-by-step timeline** — `launchApp "…"`, `tapOn "…"`, `takeScreenshot …`, each with its duration.
+- **On failure**, the exact failing step is marked, and its error carries the **real reason** from
+  Maestro (e.g. `Element not found: …`), not just an exit code.
+- **Attachments** per test: `maestro-junit` (JUnit XML), `maestro-log` (the full run log), and
+  screenshots — including the one Maestro auto-captures at the point of failure.
+
+For the deepest detail, the raw artifacts still live in `test-results/<test>/` (`debug/maestro.log`,
+`debug/commands-*.json`, `screenshots/`). Pass/fail comes from Maestro's exit code.
 
 ## Not yet (V2)
 
-Out of scope for now: retries with device reset, JUnit-parsed per-step reporting, and a fluent TS
-builder that generates flows (Playwright-style authoring without hand-written YAML). App install
-covers APK/`.app`; **AAB** (needs `bundletool`) and **iOS `.ipa` / real devices** (signing +
-`devicectl`, and blocked upstream on Xcode 26.4+) are deferred. (Parallel runs via a device pool are
-now supported — see [Running in parallel](#running-in-parallel-device-pool).)
+Out of scope for now: retries with device reset, and a fluent TS builder that generates flows
+(Playwright-style authoring without hand-written YAML). App install covers APK/`.app`; **AAB** (needs
+`bundletool`) and **iOS `.ipa` / real devices** (signing + `devicectl`, and blocked upstream on Xcode
+26.4+) are deferred. Already supported: [parallel runs](#running-in-parallel) and step-by-step
+[reporting](#reporting).
