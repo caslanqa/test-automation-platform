@@ -83,6 +83,41 @@ After the run, devices the framework **auto-booted are shut down** (via `globalT
 and simulators don't linger. A device you booted yourself is never touched. Keep the auto-booted ones
 for faster iterative reruns with `MOBILE_KEEP_DEVICES=1` — they're reused on the next run.
 
+### Running in parallel
+
+Each test already names its device (`test.use({ mobile })`). Add `--workers=N` — a cross-process lock
+reserves each device so parallel workers never double-book one, and same-device tests serialize (they
+wait, not skip).
+
+```bash
+npm run test:mobile -- --workers=3
+```
+
+```typescript
+test.describe('checkout', () => {
+  test.use({ mobile: devices.pixel9 }); // these serialize on pixel9…
+});
+test.describe('login', () => {
+  test.use({ mobile: devices.pixel8 }); // …and run in parallel with the pixel9 tests
+});
+```
+
+**Real parallelism needs a recent Maestro.** Old Maestro (e.g. 2.0.0) pins its on-device driver to a
+fixed port (7001), so concurrent flows collide and hang; the rebuilt driver (**Maestro ≳ 2.6**)
+allocates a port per process, so concurrent runs on different devices Just Work — verified on 2.6.1
+for both Android and iOS. The framework **auto-detects the version**:
+
+- **Maestro ≳ 2.6** → both Android and iOS parallelize across distinct devices (one slot per AVD /
+  simulator — an AVD can't run twice; create more with `npm run mobile:create-device`; a real device
+  counts too). Effective concurrency ≈ `min(--workers, distinct devices in play)`.
+- **Older Maestro** → all runs **serialize** on a single lock, so `--workers>1` stays safe (no port
+  clash / hang) — just no speedup. Upgrade with `brew upgrade mobile-dev-inc/tap/maestro` (the bare
+  `maestro` name is a different Homebrew cask) or `curl -Ls https://get.maestro.mobile.dev | bash`.
+
+Override the auto-detection with `MOBILE_PARALLEL=1` (force parallel) or `MOBILE_PARALLEL=0` (force
+serialize). No Maestro `--shard-split` — Playwright owns parallelism; teardown shuts down whatever it
+booted.
+
 ### Choosing the device
 
 Devices live in a typed **catalog** (`mobile/devices.ts`) — the single place device names live —
@@ -214,7 +249,8 @@ per-step Maestro timeline is not surfaced in Playwright's trace (Maestro execute
 
 ## Not yet (V2)
 
-Out of scope for now: device pools + parallel workers, retries with device reset, JUnit-parsed
-per-step reporting, and a fluent TS builder that generates flows (Playwright-style authoring without
-hand-written YAML). App install covers APK/`.app`; **AAB** (needs `bundletool`) and **iOS `.ipa` /
-real devices** (signing + `devicectl`, and blocked upstream on Xcode 26.4+) are deferred.
+Out of scope for now: retries with device reset, JUnit-parsed per-step reporting, and a fluent TS
+builder that generates flows (Playwright-style authoring without hand-written YAML). App install
+covers APK/`.app`; **AAB** (needs `bundletool`) and **iOS `.ipa` / real devices** (signing +
+`devicectl`, and blocked upstream on Xcode 26.4+) are deferred. (Parallel runs via a device pool are
+now supported — see [Running in parallel](#running-in-parallel-device-pool).)

@@ -171,14 +171,36 @@ export async function bootAndroidAvd(
       .catch(() => '');
 
   const deadline = Date.now() + timeoutMs;
+  let serial: string | undefined;
   while (Date.now() < deadline) {
-    const bootCompleted = (await sh(['shell', 'getprop', 'sys.boot_completed'])).trim() === '1';
-    const pmReady =
-      bootCompleted && (await sh(['shell', 'pm', 'path', 'android'])).includes('package:');
-    if (pmReady) {
-      return;
+    // Resolve THIS AVD's serial first: with several emulators booting in parallel a bare `adb shell`
+    // is ambiguous ("more than one device"), so readiness must be checked on the serial with `-s`.
+    serial ??= await serialForAvd(avdName);
+    if (serial) {
+      const bootCompleted =
+        (await sh(['-s', serial, 'shell', 'getprop', 'sys.boot_completed'])).trim() === '1';
+      const pmReady =
+        bootCompleted &&
+        (await sh(['-s', serial, 'shell', 'pm', 'path', 'android'])).includes('package:');
+      if (pmReady) {
+        return;
+      }
     }
     await sleep(2_000);
   }
   throw new Error(`[mobile] AVD '${avdName}' did not finish booting within ${timeoutMs / 1000}s`);
+}
+
+/** The emulator serial currently running `avdName` (via `adb -s <serial> emu avd name`), or undefined. */
+async function serialForAvd(avdName: string): Promise<string | undefined> {
+  const out = await execFileAsync(adbPath(), ['devices'], { timeout: 5_000 })
+    .then(r => r.stdout)
+    .catch(() => '');
+  for (const line of out.split('\n').slice(1)) {
+    const id = line.trim().split(/\s+/)[0];
+    if (id && (await avdNameForSerial(id)) === avdName) {
+      return id;
+    }
+  }
+  return undefined;
 }

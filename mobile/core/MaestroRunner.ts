@@ -1,9 +1,43 @@
-import { spawn } from 'child_process';
+import { execFileSync, spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
 import { androidEnv } from './android';
 import type { MaestroRunOptions, MaestroRunResult } from './types';
+
+let parallelSupport: boolean | undefined;
+
+/**
+ * Whether this Maestro CLI can run concurrent flows on one host. Older Maestro (e.g. 2.0.0) pins its
+ * on-device driver to a fixed port (7001), so two flows collide and hang; the rebuilt driver (Maestro
+ * ≳ 2.6) allocates a port per process, so concurrent runs on different devices Just Work — verified on
+ * 2.6.1 for both Android and iOS. Gate: `MOBILE_PARALLEL=1/0` overrides; otherwise Maestro >= 2.6.
+ * When false, the fixture serializes all runs so `--workers>1` stays safe (no speedup). Detected once.
+ */
+export function maestroSupportsParallel(
+  binary: string = process.env.MAESTRO_BIN ?? 'maestro'
+): boolean {
+  if (parallelSupport === undefined) {
+    const override = process.env.MOBILE_PARALLEL?.trim();
+    if (override) {
+      parallelSupport = /^(1|true|yes|on)$/i.test(override);
+    } else {
+      try {
+        const out = execFileSync(binary, ['--version'], {
+          encoding: 'utf8',
+          timeout: 10_000,
+          stdio: ['ignore', 'pipe', 'ignore'],
+        });
+        const m = /(\d+)\.(\d+)\.(\d+)/.exec(out);
+        const [, major, minor] = m ? m.map(Number) : [];
+        parallelSupport = m ? major > 2 || (major === 2 && minor >= 6) : false;
+      } catch {
+        parallelSupport = false;
+      }
+    }
+  }
+  return parallelSupport;
+}
 
 /**
  * Resolve a bare command name to its absolute path via `env.PATH`. Needed because we spawn Maestro
@@ -62,6 +96,8 @@ export class MaestroRunner {
     fs.mkdirSync(options.outputDir, { recursive: true });
 
     // `--device` is a GLOBAL option, before the `test` subcommand. `--format` value is uppercase.
+    // Concurrent runs are safe on modern Maestro (it allocates a driver port per process); the fixture
+    // has already serialized runs when the CLI is too old (see maestroSupportsParallel).
     const args = [
       '--device',
       options.device,

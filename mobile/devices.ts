@@ -20,6 +20,7 @@ export interface DeviceSpec {
  * one from your installed SDK/Xcode with `npm run mobile:create-device`, then add it here.
  */
 export const devices = {
+  pixel9b: { platform: 'android', device: 'pixel9b' },
   pixel9: { platform: 'android', device: 'pixel9' },
   iphone16: { platform: 'ios', device: 'iPhone 16 Pro' },
   android: { platform: 'android' }, // add device: 'Pixel_7_API_34' to auto-boot a specific AVD
