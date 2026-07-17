@@ -8,7 +8,7 @@
     ],
     "type-case": [2, "always", "lower-case"],
     "type-empty": [2, "never"],
-    "scope-enum": [2, "always", ["core", "utils", "config", "fixtures", "pages", "tests", "ci", "docs"]],
+    "scope-enum": [2, "always", ["core", "utils", "config", "fixtures", "pages", "tests", "ci", "docs", "mobile", "api", "ui"]],
     "scope-case": [2, "always", "lower-case"],
     "subject-empty": [2, "never"],
     "subject-full-stop": [2, "never", "."],

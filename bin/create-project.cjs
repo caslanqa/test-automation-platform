@@ -86,12 +86,13 @@ const MOBILE_README_SECTION = `
 ### Mobile test (Maestro)
 
 Requires the [Maestro](https://maestro.mobile.dev) CLI + Java 17+ and a device (Android emulator or
-iOS simulator). Mobile tests read like the UI/API tests: pick a device with \`test.use({ mobile: { platform, device } })\`
-and run a Maestro YAML flow with \`maestro.run('…')\` (see \`tests/mobile/*.mobile.ts\`). Serial, and the
+iOS simulator). Mobile tests read like the UI/API tests: pick a device with \`test.use({ mobile: { platform, device } })\`,
+then drive it either imperatively — \`await maestro.tapOn('Login')\`, with \`isVisible\` for live-screen
+branching — or with a Maestro YAML flow via \`maestro.run('…')\` (see \`tests/mobile/*.mobile.ts\`). The
 named device is auto-booted if it isn't running:
 
 \`\`\`bash
-npm run test:mobile   # MOBILE=1 playwright test --project=mobile --workers=1
+npm run test:mobile   # MOBILE=1 playwright test --project=mobile --workers=3
 \`\`\`
 
 No device yet? \`npm run mobile:create-device\` builds one from your installed SDK/Xcode (interactive
@@ -109,27 +110,34 @@ const createPackageJson = (projectName, devDependencies, includeMobile) => ({
   // The copied configs (eslint.config.js, playwright.config.ts) use ESM syntax,
   // so the project must be an ES module package.
   type: 'module',
+  // Kept in sync with this repo's own package.json scripts (the template). Mobile scripts are the
+  // only conditional ones — mobile testing is opt-in in the scaffolder.
   scripts: {
+    clearReports: 'rm -rf playwright-report test-results allure-report allure-results',
     test: 'playwright test',
-    'test:ui': 'playwright test --ui',
     'test:headed': 'playwright test --headed',
     'test:debug': 'playwright test --debug',
-    'test:chromium': 'playwright test --project=chromium',
+    'test:ui': 'playwright test --ui',
+    'test:parallel': 'playwright test --workers=4',
+    'test:serial': 'playwright test --workers=1',
     'test:api': 'playwright test --project=api',
     ...(includeMobile
       ? {
-          'test:mobile': 'MOBILE=1 playwright test --project=mobile --workers=1',
+          'test:mobile': 'MOBILE=1 playwright test --project=mobile --workers=3',
           'mobile:create-device': 'node mobile/create-device.mjs',
         }
       : {}),
-    report: 'playwright show-report',
-    'allure:generate': 'allure generate allure-results -o allure-report --clean',
-    'allure:open': 'allure open allure-report',
+    'test:tag': 'playwright test --workers=1 --project chromium --retries=0 --grep @wip',
+    'report:playwright': 'playwright show-report',
+    'report:allure':
+      'allure generate allure-results --output allure-report && allure serve allure-results',
+    codegen: 'playwright codegen',
     lint: 'eslint .',
     'lint:fix': 'eslint . --fix',
     format: 'prettier --write "**/*.{ts,js,json,md}"',
     'format:check': 'prettier --check "**/*.{ts,js,json,md}"',
     'type-check': 'tsc --noEmit',
+    commit: 'cz',
     prepare: 'husky',
   },
   devDependencies,

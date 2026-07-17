@@ -7,9 +7,17 @@ import { loadEnv } from '@config/loadEnv';
 import { ensureAppInstalled } from '@mobile/core/appInstaller';
 import { acquireDeviceLock, deviceLockKey } from '@mobile/core/deviceLock';
 import { DeviceManager } from '@mobile/core/DeviceManager';
+import { maestroError } from '@mobile/core/maestroError';
+import type { MaestroDirection } from '@mobile/core/MaestroMcpSession';
+import { MaestroMcpSession } from '@mobile/core/MaestroMcpSession';
 import { maestroFailureDetail, parseMaestroSteps } from '@mobile/core/maestroReport';
 import { MaestroRunner, maestroSupportsParallel } from '@mobile/core/MaestroRunner';
-import type { DiscoveredDevice, MobilePlatform } from '@mobile/core/types';
+import type {
+  DiscoveredDevice,
+  MaestroScreen,
+  MaestroSelector,
+  MobilePlatform,
+} from '@mobile/core/types';
 
 // Load the selected environment (MOBILE_PLATFORM → process.env) before any test runs.
 loadEnv();
@@ -39,12 +47,69 @@ export interface MobileOptions {
     { platform?: MobilePlatform; device?: string; headless?: boolean; app?: string } | undefined;
 }
 
-/** The runtime facade a mobile test uses. */
+/**
+ * The runtime facade a mobile test uses. Two authoring styles, mixable in one test:
+ *
+ * - **Imperative** (Playwright-style): `await maestro.launchApp(id); await maestro.tapOn('Login')`.
+ *   Each call runs one Maestro command against a warm device driver and appears as a report step;
+ *   `isVisible` / `inspectScreen` let you branch in TypeScript on the live screen.
+ * - **Batch YAML**: `await maestro.run('tests/mobile/flows/login.yaml')` runs an authored flow file.
+ */
 export interface MaestroFixture {
   /** The booted device this test is running against. */
   device: DiscoveredDevice;
-  /** Run a Maestro flow (project-relative path) and attach its artifacts to the report. */
+  /** Run an authored Maestro flow (project-relative path) and attach its artifacts to the report. */
   run(flowPath: string, options?: { tags?: string[] }): Promise<void>;
+
+  /** Launch the app under test; call before element commands (they need the app id). */
+  launchApp(appId: string, options?: { clearState?: boolean; stopApp?: boolean }): Promise<void>;
+  /** Tap an element. */
+  tapOn(selector: MaestroSelector): Promise<void>;
+  /** Double-tap an element. */
+  doubleTapOn(selector: MaestroSelector): Promise<void>;
+  /** Long-press an element. */
+  longPressOn(selector: MaestroSelector): Promise<void>;
+  /** Type text into the focused field. */
+  inputText(text: string): Promise<void>;
+  /** Erase characters from the focused field (all, or the last `charactersToErase`). */
+  eraseText(charactersToErase?: number): Promise<void>;
+  /** Assert an element is visible. */
+  assertVisible(selector: MaestroSelector): Promise<void>;
+  /** Assert an element is not visible. */
+  assertNotVisible(selector: MaestroSelector): Promise<void>;
+  /** Whether an element is visible within `timeout` ms (default 2000) — for branching, never fails. */
+  isVisible(selector: MaestroSelector, options?: { timeout?: number }): Promise<boolean>;
+  /** Press the system Back button. */
+  back(): Promise<void>;
+  /** Press a hardware/system key (e.g. `Enter`, `Home`, `Back`). */
+  pressKey(key: string): Promise<void>;
+  /** Hide the on-screen keyboard. */
+  hideKeyboard(): Promise<void>;
+  /** Scroll down one screen. */
+  scroll(): Promise<void>;
+  /** Scroll (default down) until an element is visible. */
+  scrollUntilVisible(
+    selector: MaestroSelector,
+    options?: { direction?: MaestroDirection }
+  ): Promise<void>;
+  /** Swipe by direction, or between two `x%,y%` points. */
+  swipe(options: {
+    direction?: MaestroDirection;
+    start?: string;
+    end?: string;
+    duration?: number;
+  }): Promise<void>;
+  /** Wait for on-screen animations to settle. */
+  waitForAnimationToEnd(): Promise<void>;
+  /**
+   * Capture the current screen, attach it to the report as `<name>`, and return the file path — pipe
+   * it into the AI judge: `expectAi({ image: await maestro.takeScreenshot('home'), rubric })`.
+   */
+  takeScreenshot(name: string): Promise<string>;
+  /** The current screen's view hierarchy (Maestro's `inspect_screen`) — for TypeScript branching. */
+  inspectScreen(): Promise<MaestroScreen>;
+  /** The value in the row labelled `label` (e.g. `rowValue('Name')` → `'iPhone'`), or `undefined`. */
+  rowValue(label: string): Promise<string | undefined>;
 }
 
 interface MobileFixtures {
@@ -73,17 +138,6 @@ function resolveHeadless(option?: boolean): boolean {
   }
   const env = process.env.MOBILE_HEADLESS?.trim();
   return env ? /^(1|true|yes|on)$/i.test(env) : true;
-}
-
-/**
- * A failure whose report shows just the message (the Maestro step + reason) — not this fixture's
- * internal throw-site. We overwrite `stack` so Playwright renders no code snippet pointing at our
- * `throw`, which is meaningless noise for a mobile test author.
- */
-function maestroError(message: string): Error {
-  const error = new Error(message);
-  error.stack = message;
-  return error;
 }
 
 /** Recursively collect the PNG screenshots Maestro wrote under `dir`. */
@@ -120,6 +174,8 @@ export const test = base.extend<MobileOptions & MobileFixtures>({
       // to ONE shared lock so `--workers>1` stays safe (just not faster). Override with MOBILE_PARALLEL.
       const lockKey = maestroSupportsParallel() ? deviceLockKey(platform, deviceName) : 'maestro';
       const release = await acquireDeviceLock(lockKey);
+      // Declared out here so `finally` can tear it down even if `use` throws mid-test.
+      let session: MaestroMcpSession | undefined;
       try {
         const device = await new DeviceManager().acquire(
           platform,
@@ -144,8 +200,38 @@ export const test = base.extend<MobileOptions & MobileFixtures>({
         }
 
         const runner = new MaestroRunner();
+        // The imperative API's warm-driver session. It's created here but only spawns its `maestro
+        // mcp` process on the first imperative call, so batch-only tests (`maestro.run(flow)`) never
+        // pay for it. Each command is reported as a step; artifacts attach without adding steps.
+        const mcp = new MaestroMcpSession(device, {
+          step: (title, body) => base.step(title, body),
+          outputDir: testInfo.outputDir,
+          // `testInfo.attach` (not attachments.push) so a screenshot/hierarchy binds to the current
+          // step — the failure evidence shows under the failing step, in the report and the trace.
+          report: (name, attachment) => testInfo.attach(name, attachment),
+        });
+        session = mcp; // hand to `finally` for teardown; `mcp` is what the closures below capture
         await use({
           device,
+          launchApp: (appId, options) => mcp.launchApp(appId, options),
+          tapOn: selector => mcp.tapOn(selector),
+          doubleTapOn: selector => mcp.doubleTapOn(selector),
+          longPressOn: selector => mcp.longPressOn(selector),
+          inputText: text => mcp.inputText(text),
+          eraseText: charactersToErase => mcp.eraseText(charactersToErase),
+          assertVisible: selector => mcp.assertVisible(selector),
+          assertNotVisible: selector => mcp.assertNotVisible(selector),
+          isVisible: (selector, options) => mcp.isVisible(selector, options),
+          back: () => mcp.back(),
+          pressKey: key => mcp.pressKey(key),
+          hideKeyboard: () => mcp.hideKeyboard(),
+          scroll: () => mcp.scroll(),
+          scrollUntilVisible: (selector, options) => mcp.scrollUntilVisible(selector, options),
+          swipe: options => mcp.swipe(options),
+          waitForAnimationToEnd: () => mcp.waitForAnimationToEnd(),
+          takeScreenshot: name => mcp.takeScreenshot(name),
+          inspectScreen: () => mcp.inspectScreen(),
+          rowValue: label => mcp.rowValue(label),
           run: async (flowPath, options) => {
             const result = await runner.run(flowPath, {
               device: device.id,
@@ -208,6 +294,10 @@ export const test = base.extend<MobileOptions & MobileFixtures>({
           },
         });
       } finally {
+        // Tear down the warm `maestro mcp` process (no-op if it never spawned) BEFORE releasing the
+        // device lock, so the next test on this device starts with a clean driver — two mcp processes
+        // on one device would kill the driver.
+        await session?.close();
         release();
       }
     },

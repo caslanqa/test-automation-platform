@@ -1,4 +1,5 @@
-import { expect as baseExpect } from '@playwright/test';
+import type { TestInfo } from '@playwright/test';
+import { expect as baseExpect, test } from '@playwright/test';
 
 import { judgeResponse } from '@utils/aiJudge';
 import type { JudgeInput, JudgeVerdict, ModelTier } from '@utils/types';
@@ -47,10 +48,60 @@ async function toVerdict(
     return value;
   }
   return judgeResponse({
+    // Default `verbose` on so the reported judgement carries routing (`_meta.selectedModel`, tier);
+    // an explicit `verbose` in the input still wins.
+    verbose: true,
     ...value,
     ...(overrides.model !== undefined ? { model: overrides.model } : {}),
     ...(overrides.tier !== undefined ? { tier: overrides.tier } : {}),
   });
+}
+
+/** The current TestInfo, or `undefined` when a matcher runs outside a test (guarded). */
+function currentTestInfo(): TestInfo | undefined {
+  try {
+    return test.info();
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Render a verdict as PLAIN TEXT for the report attachment. Plain text (not markdown) is deliberate:
+ * the Playwright HTML report renders a `text/plain` attachment INLINE, so the score and reasoning are
+ * readable directly under the step without opening/downloading anything.
+ */
+function renderVerdict(verdict: JudgeVerdict): string {
+  const lines = [`Result: ${verdict.pass ? 'pass' : 'fail'}`, `Score: ${verdict.score}/100`];
+  if (verdict._meta) {
+    lines.push(`Model: ${verdict._meta.selectedModel} (tier ${verdict._meta.tier})`);
+  }
+  lines.push(`Reasoning: ${verdict.reasoning || '(none)'}`);
+  return lines.join('\n');
+}
+
+/**
+ * Resolve the argument to a verdict (judging an input, or reusing a verdict), then surface it in the
+ * report as an "AI judgement" step — **on both pass and fail** — with the score in the step title and
+ * the full verdict (reasoning + routing) attached under it. This is what makes a failed AI assertion
+ * explainable in the report, not just in the terminal error. No-ops the reporting when there is no
+ * active test (e.g. a matcher used in a script), still returning the verdict.
+ */
+async function judgeAndReport(
+  value: AiExpectArg,
+  overrides: JudgeOverrides = {}
+): Promise<JudgeVerdict> {
+  const verdict = await toVerdict(value, overrides);
+  const info = currentTestInfo();
+  if (info) {
+    await test.step(`AI judgement — ${verdict.pass ? 'pass' : 'fail'} (score ${verdict.score})`, async () => {
+      await info.attach('ai-judgement', {
+        body: renderVerdict(verdict),
+        contentType: 'text/plain',
+      });
+    });
+  }
+  return verdict;
 }
 
 /**
@@ -79,7 +130,7 @@ export const expectAi = baseExpect.extend({
   /** Assert the material satisfies the rubric (optionally also meeting a minimum score). */
   async toPassRubric(received: AiExpectArg, options: PassRubricOptions = {}) {
     const assertionName = 'toPassRubric';
-    const verdict = await toVerdict(received, { model: options.model, tier: options.tier });
+    const verdict = await judgeAndReport(received, { model: options.model, tier: options.tier });
     const scoreOk = options.minScore === undefined || verdict.score >= options.minScore;
     // Positive-sense result; Playwright inverts it for `.not` — do not flip here.
     const pass = verdict.pass && scoreOk;
@@ -99,7 +150,7 @@ export const expectAi = baseExpect.extend({
   /** Assert the verdict's score is at least `threshold`. */
   async toScoreAtLeast(received: AiExpectArg, threshold: number, options: JudgeOverrides = {}) {
     const assertionName = 'toScoreAtLeast';
-    const verdict = await toVerdict(received, options);
+    const verdict = await judgeAndReport(received, options);
     // Positive-sense result; Playwright inverts it for `.not` — do not flip here.
     const pass = verdict.score >= threshold;
 
@@ -131,7 +182,7 @@ export const expectAi = baseExpect.extend({
       );
     }
 
-    const verdict = await toVerdict(
+    const verdict = await judgeAndReport(
       { ...received, referenceImage: expected },
       { model: options.model, tier: options.tier }
     );

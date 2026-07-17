@@ -1,8 +1,14 @@
 # Mobile Testing (Maestro)
 
-Mobile tests are authored as [Maestro](https://maestro.mobile.dev) YAML flows and orchestrated by
-Playwright: **Playwright is the runner/reporter, Maestro is the mobile execution engine** (invoked as
-a CLI — no npm dependency). It's the fourth engine alongside web, API, and the AI Judge.
+Mobile tests run on [Maestro](https://maestro.mobile.dev) but are orchestrated by Playwright:
+**Playwright is the runner/reporter, Maestro is the mobile execution engine** (invoked as a CLI — no
+npm dependency). It's the fourth engine alongside web, API, and the AI Judge. You author in either of
+two styles, mixable in one test:
+
+- **Imperative (TypeScript)** — `await maestro.tapOn('Login')`, one call per step, Playwright-style.
+  Branch in TypeScript on the live screen with `isVisible` / `inspectScreen`. See
+  [Authoring imperatively](#authoring-imperatively-typescript).
+- **YAML flows** — hand-written [Maestro flows](#authoring-with-a-yaml-flow) run via `maestro.run('<flow>.yaml')`.
 
 > In a hurry? The [Mobile Cheat Sheet](MOBILE_CHEATSHEET.md) has the day-to-day commands — listing
 > device/app IDs, booting/installing, and the Maestro CLI.
@@ -10,22 +16,30 @@ a CLI — no npm dependency). It's the fourth engine alongside web, API, and the
 ## How it fits together
 
 ```text
-tests/mobile/*.mobile.ts       Playwright specs: test.use({ mobile }) + maestro.run('<flow>.yaml')
+tests/mobile/*.mobile.ts        Playwright specs: test.use({ mobile }) + the `maestro` fixture
         │
-tests/mobile/flows/**/*.yaml   the Maestro flows they run (YAML-first)
-        │
-mobile/core/MaestroRunner.ts   spawns `maestro --device <id> test <flow> …`
-mobile/core/DeviceManager.ts   finds (or boots) a device (adb / xcrun simctl)
+        ├─ imperative:  await maestro.tapOn('Login')      ─┐
+        └─ YAML batch:  maestro.run('flows/login.yaml')    │
+                                                           │
+mobile/core/MaestroMcpSession.ts  imperative → 1 command per call over a warm `maestro mcp` driver
+mobile/core/McpClient.ts          stdio JSON-RPC 2.0 client for that `maestro mcp` process
+mobile/core/MaestroRunner.ts      YAML batch → spawns `maestro --device <id> test <flow> …`
+mobile/core/DeviceManager.ts      finds (or boots) a device (adb / xcrun simctl)
 ```
 
-- **Layer 1 — `MaestroRunner`** (`mobile/core/`): runs one flow on a device via the Maestro CLI and
-  reports the exit code + artifact locations.
+- **Layer 1 — `MaestroMcpSession`** (`mobile/core/`): the imperative path. Holds one long-lived
+  `maestro mcp` process per device (spawned lazily on the first command) and sends each call as a
+  single Maestro command over MCP. The device driver stays **warm** between calls, so `await` has
+  true per-command semantics and no per-command process spawn — and you can branch in TypeScript on
+  the live screen.
+- **Layer 1 — `MaestroRunner`**: the YAML batch path. Runs one whole flow file on a device via the
+  Maestro CLI and reports the exit code + artifact locations.
 - **Layer 1 — `DeviceManager`**: finds a booted device for the platform — or, when you name one
   (`MOBILE_DEVICE` / `test.use({ mobile: { device } })`), **boots it and waits** until it's ready.
 - **The specs** (`tests/mobile/*.mobile.ts`): read just like the UI and API tests —
-  `test.use({ mobile: { platform, device } })` selects the device, and each `test()` calls
-  `maestro.run('<flow>.yaml')`. The `maestro` fixture attaches Maestro's JUnit report + screenshots
-  to each test.
+  `test.use({ mobile: { platform, device } })` selects the device, then the `maestro` fixture drives
+  it (imperative methods and/or `maestro.run('<flow>.yaml')`). The fixture reports each command as a
+  Playwright step and attaches screenshots + Maestro artifacts.
 
 ## Prerequisites
 
@@ -77,7 +91,9 @@ needs no device):
 npm run test:mobile
 ```
 
-`test:mobile` runs `MOBILE=1 playwright test --project=mobile --workers=1` — serial, single device.
+`test:mobile` runs `MOBILE=1 playwright test --project=mobile --workers=3` — up to 3 workers, with a
+per-device lock so tests on distinct devices run in parallel and same-device tests serialize (see
+[Running in parallel](#running-in-parallel)). With a single device it effectively runs serially.
 
 After the run, devices the framework **auto-booted are shut down** (via `globalTeardown`) so emulators
 and simulators don't linger. A device you booted yourself is never touched. Keep the auto-booted ones
@@ -206,9 +222,66 @@ devices** are not yet wired — see [Not yet (V2)](#not-yet-v2).
 
 ## Authoring a test
 
-Two pieces: a **Maestro flow** (the mobile steps, in YAML) and a **spec** that runs it (Playwright).
+Specs are `*.mobile.ts` (so the `mobile` project picks them up and the browser projects don't). Pick
+the device with `test.use` (omit `device` to use an already-booted one / `MOBILE_DEVICE`; `platform`
+falls back to `MOBILE_PLATFORM`), then drive it with the `maestro` fixture — imperatively, with a
+YAML flow, or both in one test.
 
-**1. Write the flow** under `tests/mobile/flows/` (organize by platform folder if you like):
+### Authoring imperatively (TypeScript)
+
+Call the commands as methods; each runs one Maestro command against the warm device driver and shows
+up as its own report step. `launchApp` first (element commands need the app id).
+
+```typescript
+// tests/mobile/login.mobile.ts
+import { test } from '@fixtures/mobileFixtures';
+import { devices } from '@mobile/devices';
+
+test.describe('Login — Android', () => {
+  test.use({ mobile: devices.pixel7 }); // device auto-boots if needed
+
+  test('signs in', async ({ maestro }) => {
+    await maestro.launchApp('com.example.app', { clearState: true });
+    await maestro.tapOn('Sign in');
+    await maestro.inputText('user@example.com');
+
+    // Branch on the live screen — impossible in a static YAML flow. Never throws; returns a boolean.
+    if (await maestro.isVisible('Cookie banner')) {
+      await maestro.tapOn('Accept');
+    }
+
+    await maestro.assertVisible('Welcome');
+    await maestro.takeScreenshot('after-login');
+  });
+});
+```
+
+Selectors are a plain string (matched as Maestro `text`) or a selector object
+(`{ id: 'submit' }`, `{ text: 'OK', index: 1 }`, position matchers like `below` / `rightOf`).
+
+| Method                                        | Maestro command | Notes                                              |
+| --------------------------------------------- | --------------- | -------------------------------------------------- |
+| `launchApp(appId, { clearState?, stopApp? })` | `launchApp`     | Call first; sets the target app for later commands |
+| `tapOn` / `doubleTapOn` / `longPressOn`       | tap variants    | Takes a selector                                   |
+| `inputText(text)` / `eraseText(n?)`           | text entry      | Types into / clears the focused field              |
+| `assertVisible` / `assertNotVisible`          | assertions      | Fail the step if the condition isn't met           |
+| `scroll()` / `scrollUntilVisible(sel, {…})`   | scrolling       | `scrollUntilVisible` stops when the element shows  |
+| `swipe({ direction \| start,end })`           | `swipe`         | Direction (`UP`…) or two `x%,y%` points            |
+| `back()` / `pressKey(key)` / `hideKeyboard()` | keys            | System back / hardware key / dismiss keyboard      |
+| `waitForAnimationToEnd()`                     | wait            | Settle animations before asserting                 |
+| `takeScreenshot(name)`                        | screenshot      | Captured and attached to the report as `<name>`    |
+| `isVisible(sel, { timeout? })` → `boolean`    | (query)         | For branching — never fails; waits ≤ 2000 ms       |
+| `inspectScreen()` → hierarchy                 | (query)         | Live view tree for richer TypeScript branching     |
+
+Under the hood the imperative path talks to a `maestro mcp` server over stdio, keeping the device
+driver warm across calls — so `await maestro.tapOn(...)` executes and fails at that exact line, with
+no per-command process spawn. The process is spawned on the first imperative call and torn down when
+the test releases the device, so batch-only tests never pay for it.
+
+### Authoring with a YAML flow
+
+Prefer a hand-written flow (e.g. sharing it with a Maestro-only workflow, or a long static script)?
+Write it under `tests/mobile/flows/` and run it with `maestro.run(...)`:
 
 ```yaml
 # tests/mobile/flows/android/login.yaml
@@ -220,44 +293,82 @@ appId: com.example.app
 - assertVisible: 'Welcome'
 ```
 
-**2. Write the spec** — same shape as a UI/API test: pick the device with `test.use`, run the flow:
-
 ```typescript
-// tests/mobile/login.mobile.ts
-import { test } from '@fixtures/mobileFixtures';
-import { devices } from '@mobile/devices';
-
-test.describe('Login — Android', () => {
-  test.use({ mobile: devices.pixel7 }); // device auto-boots if needed
-
-  test('signs in', async ({ maestro }) => {
-    await maestro.run('tests/mobile/flows/android/login.yaml');
-  });
+test('signs in', async ({ maestro }) => {
+  await maestro.run('tests/mobile/flows/android/login.yaml');
 });
 ```
 
-Specs are `*.mobile.ts` (so the `mobile` project picks them up and the browser projects don't). Omit
-`device` to use an already-booted device (or `MOBILE_DEVICE`); `platform` falls back to
-`MOBILE_PLATFORM`.
-
 ## Reporting
 
-`npx playwright show-report` shows the `mobile` project with each flow as a test. Every Maestro command
-is replayed as a native **Playwright step**, so the report reads like a normal Playwright test:
+`npx playwright show-report` shows the `mobile` project with each test made of native **Playwright
+steps** (one per Maestro command), so it reads like a normal Playwright test:
 
-- **Step-by-step timeline** — `launchApp "…"`, `tapOn "…"`, `takeScreenshot …`, each with its duration.
-- **On failure**, the exact failing step is marked, and its error carries the **real reason** from
-  Maestro (e.g. `Element not found: …`), not just an exit code.
-- **Attachments** per test: `maestro-junit` (JUnit XML), `maestro-log` (the full run log), and
-  screenshots — including the one Maestro auto-captures at the point of failure.
+- **Step-by-step timeline** — `launchApp "…"`, `tapOn "…"`, `assertVisible "…"`, each with its duration.
+- **On failure**, the exact failing step is marked with the **real reason** from Maestro (e.g.
+  `Element not found: …`), not just an exit code — and the framework auto-captures the **real device
+  screen + view hierarchy at that point**, attached under the failing step (`failure.jpg`,
+  `failure-hierarchy.json`). This is the native-mobile equivalent of Playwright's on-failure screenshot.
+- **Batch (`maestro.run`) attachments**: also `maestro-junit` (JUnit XML), `maestro-log` (full run
+  log), and any `takeScreenshot` images.
 
-For the deepest detail, the raw artifacts still live in `test-results/<test>/` (`debug/maestro.log`,
-`debug/commands-*.json`, `screenshots/`). Pass/fail comes from Maestro's exit code.
+### Screenshots & trace
+
+Native mobile has no browser for Playwright to trace, so a `page`-based trace/video/network capture
+is impossible — instead the framework attaches real **device** evidence, controlled by
+`MOBILE_SCREENSHOT`:
+
+- `only-on-failure` (default) — capture the screen + hierarchy only at a failure. Fast.
+- `on` — also capture after **every** command → a step-by-step visual timeline you can scrub in both
+  the HTML report and the **trace viewer** (each step carries its screenshot). Costs one screenshot
+  per command. Set it inline: `MOBILE_SCREENSHOT=on npm run test:mobile`.
+- `off` — no captures.
+
+The mobile project disables Playwright's own `video`/`screenshot` (always empty for a native device)
+and keeps `trace` (retain-on-failure) — which now carries the above step captures. For the deepest
+detail, batch-run raw artifacts still live in `test-results/<test>/` (`debug/maestro.log`,
+`debug/commands-*.json`). Network capture is not available for native flows (would need a device
+proxy — out of scope).
+
+## AI-judging a screen
+
+The framework's multimodal **AI Judge** (see [AI_JUDGE.md](AI_JUDGE.md)) evaluates the _same_ mobile
+screenshots — judge a native screen against a plain-English rubric, exactly as you would a web page.
+`maestro.takeScreenshot(name)` returns the file path, which `expectAi` accepts as its `image`:
+
+```typescript
+import { expectAi } from '@fixtures/aiExpect';
+import { test } from '@fixtures/mobileFixtures';
+import { devices } from '@mobile/devices';
+
+test.use({ mobile: devices.iphone16 });
+
+test('the checkout screen looks right', async ({ maestro }) => {
+  await maestro.launchApp('com.example.app');
+  await maestro.tapOn('Checkout');
+
+  const shot = await maestro.takeScreenshot('checkout');
+  await expectAi({
+    image: shot, // a file path; a Buffer or data URI also work
+    rubric: 'A checkout screen with an order total, a payment method, and a visible Pay button.',
+  }).toPassRubric({ minScore: 80 });
+});
+```
+
+Compare-against-a-reference works too: `expectAi({ image: shot }).toMatchImage('baseline/checkout.png')`.
+Running it needs an AI provider configured (an Ollama vision model at `JUDGE_OLLAMA_BASE_URL`, or an
+OpenAI key) — same setup as the web AI-judge examples. A ready, provider-gated example ships at
+`tests/mobile/ai-judge.mobile.ts` (it **skips** cleanly when no vision-capable provider is available,
+so it never breaks a run without one).
+
+Every `expectAi` assertion records the verdict in the report as an **"AI judgement — pass/fail (score N)"**
+step — on **both** pass and fail — with the full reasoning + model attached. So a failed AI check is
+explainable straight from the report (`npx playwright show-report`), not just the terminal error.
 
 ## Not yet (V2)
 
-Out of scope for now: retries with device reset, and a fluent TS builder that generates flows
-(Playwright-style authoring without hand-written YAML). App install covers APK/`.app`; **AAB** (needs
+Out of scope for now: retries with device reset. App install covers APK/`.app`; **AAB** (needs
 `bundletool`) and **iOS `.ipa` / real devices** (signing + `devicectl`, and blocked upstream on Xcode
-26.4+) are deferred. Already supported: [parallel runs](#running-in-parallel) and step-by-step
-[reporting](#reporting).
+26.4+) are deferred. Already supported: the [imperative TypeScript API](#authoring-imperatively-typescript)
+(Playwright-style authoring, no hand-written YAML), [parallel runs](#running-in-parallel), and
+step-by-step [reporting](#reporting).

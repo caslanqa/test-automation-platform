@@ -17,7 +17,7 @@ Quick command reference for the mobile (Maestro) layer. Full guide:
 ## This framework
 
 ```bash
-npm run test:mobile                     # run the mobile project (serial, single device)
+npm run test:mobile                     # run the mobile project (up to 3 workers; per-device lock)
 npm run test:mobile -- --grep Android   # filter by describe/title
 npm run mobile:create-device            # interactive: create an AVD / iOS sim + add it to the catalog
 ```
