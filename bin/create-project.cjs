@@ -25,6 +25,7 @@
  */
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const readline = require('readline');
 const { execSync } = require('child_process');
@@ -103,10 +104,11 @@ picker). Android also needs the command-line tools (macOS/Windows/Linux, GUI or 
 // package.json for the generated project. devDependencies are read from THIS
 // package's own package.json so the copied configs (eslint/prettier/playwright)
 // always get matching, complete dependencies — single source of truth, no drift.
-const createPackageJson = (projectName, devDependencies, includeMobile) => ({
+// `meta` (version/description/author/license) comes from the interactive `npm init`-style prompts.
+const createPackageJson = (projectName, devDependencies, includeMobile, meta = {}) => ({
   name: projectName,
-  version: '1.0.0',
-  description: 'Playwright test automation with AI Judge capabilities',
+  version: meta.version || '1.0.0',
+  description: meta.description || 'Playwright test automation with AI Judge capabilities',
   // The copied configs (eslint.config.js, playwright.config.ts) use ESM syntax,
   // so the project must be an ES module package.
   type: 'module',
@@ -140,6 +142,10 @@ const createPackageJson = (projectName, devDependencies, includeMobile) => ({
     commit: 'cz',
     prepare: 'husky',
   },
+  ...(meta.keywords && meta.keywords.length ? { keywords: meta.keywords } : {}),
+  ...(meta.author ? { author: meta.author } : {}),
+  license: meta.license || 'ISC',
+  ...(meta.repository ? { repository: { type: 'git', url: meta.repository } } : {}),
   devDependencies,
   'lint-staged': {
     '*.{ts,tsx,js}': ['eslint --fix', 'prettier --write'],
@@ -226,26 +232,161 @@ function commandExists(cmd) {
   }
 }
 
-// Best-effort install of the Maestro CLI (the mobile engine). Prompted + opt-in only. Skips when
-// already installed or on Windows; warns (does not fail) on missing Java or a failed install.
+// Best-effort, cross-platform install of the Maestro CLI (the mobile engine). Skips when already
+// installed; warns (never fails) on missing Java or a failed install. macOS/Linux use Maestro's
+// official installer script; Windows needs a POSIX shell (WSL / Git Bash) to run it, else we point
+// the user to the docs.
 function installMaestroCli(cwd) {
   if (commandExists('maestro')) {
     log.success('Maestro CLI already installed');
     return;
   }
-  if (process.platform === 'win32') {
-    log.warn('Maestro auto-install is not supported on Windows — see https://maestro.mobile.dev');
-    return;
-  }
   if (!commandExists('java')) {
-    log.warn('Java not found — Maestro needs Java 17+ at runtime; install a JDK before running mobile tests.');
+    log.warn(
+      'Java not found — Maestro needs Java 17+ at runtime; install a JDK before running mobile tests.'
+    );
   }
+  const installScript = 'curl -Ls "https://get.maestro.mobile.dev" | bash';
   try {
-    log.step('Installing Maestro CLI...');
-    run('curl -Ls "https://get.maestro.mobile.dev" | bash', cwd);
+    if (process.platform === 'win32') {
+      if (!commandExists('bash')) {
+        log.warn(
+          'Maestro auto-install on Windows needs WSL or Git Bash — install manually: https://maestro.mobile.dev'
+        );
+        return;
+      }
+      log.step('Installing Maestro CLI (via bash)...');
+      run(`bash -lc '${installScript}'`, cwd);
+    } else {
+      log.step('Installing Maestro CLI...');
+      run(installScript, cwd);
+    }
     log.success('Installed Maestro CLI (restart your shell, or add ~/.maestro/bin to PATH)');
   } catch {
     log.warn('Maestro install failed — install it manually: https://maestro.mobile.dev');
+  }
+}
+
+// Candidate Android SDK roots (env vars, then the per-OS default install location). Mirrors
+// mobile/core/android.ts so our checks match where the framework actually resolves the SDK.
+function androidSdkRoots() {
+  const home = os.homedir();
+  return [
+    process.env.ANDROID_HOME,
+    process.env.ANDROID_SDK_ROOT,
+    process.platform === 'darwin' ? path.join(home, 'Library', 'Android', 'sdk') : undefined,
+    process.platform === 'linux' ? path.join(home, 'Android', 'Sdk') : undefined,
+    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Android', 'Sdk') : undefined,
+  ].filter(Boolean);
+}
+
+// Whether `adb` exists in the standard Android SDK location. The framework resolves adb from the SDK
+// at runtime even when it isn't on PATH (mobile/core/android.ts), so a SDK-resident adb counts.
+function androidSdkAdbExists() {
+  const exe = process.platform === 'win32' ? 'adb.exe' : 'adb';
+  return androidSdkRoots().some(root => fs.existsSync(path.join(root, 'platform-tools', exe)));
+}
+
+// Whether the Android SDK Command-line Tools (sdkmanager/avdmanager) are available — on PATH, or under
+// a standard SDK's `cmdline-tools/latest/bin`. Required by `npm run mobile:create-device` to create AVDs.
+function androidCmdlineToolsExist() {
+  if (commandExists('sdkmanager')) {
+    return true;
+  }
+  const bin = process.platform === 'win32' ? 'sdkmanager.bat' : 'sdkmanager';
+  return androidSdkRoots().some(root =>
+    fs.existsSync(path.join(root, 'cmdline-tools', 'latest', 'bin', bin))
+  );
+}
+
+// Best-effort, cross-platform ensure of `adb` (Android mobile testing). Present when on PATH or in the
+// SDK. Otherwise install via the first available NON-admin package manager for the OS (macOS/Linux
+// Homebrew, Windows scoop/winget); if none is available we only PRINT the right command (never run
+// sudo/admin installs unattended, which would hang or need elevation). Never fails the scaffold.
+function ensureAdb(cwd) {
+  if (commandExists('adb') || androidSdkAdbExists()) {
+    log.success('adb already available');
+    return;
+  }
+  let plan;
+  if (process.platform === 'win32') {
+    plan = commandExists('scoop')
+      ? 'scoop install adb'
+      : commandExists('winget')
+        ? 'winget install --id Google.PlatformTools -e --silent'
+        : undefined;
+  } else if (commandExists('brew')) {
+    // macOS, and Linux with Homebrew.
+    plan = 'brew install android-platform-tools';
+  }
+  if (plan) {
+    try {
+      log.step(`Installing adb (${plan})...`);
+      run(plan, cwd);
+      log.success('Installed adb');
+      return;
+    } catch {
+      log.warn(`adb install failed (${plan}) — install it manually.`);
+      return;
+    }
+  }
+  const manual =
+    process.platform === 'win32'
+      ? 'scoop install adb  (or: winget install Google.PlatformTools)'
+      : process.platform === 'darwin'
+        ? 'brew install android-platform-tools'
+        : 'sudo apt-get install -y android-tools-adb  (or dnf/pacman/zypper equivalent)';
+  log.warn(`adb not found — install the Android platform-tools: ${manual}. (The Android SDK already bundles adb.)`);
+}
+
+// Best-effort ensure of the Android SDK Command-line Tools (sdkmanager/avdmanager), which
+// `mobile:create-device` needs to create AVDs. Auto-installs where a package manager makes it feasible
+// without admin (macOS Homebrew cask, Windows scoop); otherwise prints install guidance (there is no
+// universal no-admin installer — bootstrapping the tools elsewhere means the manual SDK download).
+function ensureAndroidCmdlineTools(cwd) {
+  if (androidCmdlineToolsExist()) {
+    log.success('Android SDK command-line tools already installed');
+    return;
+  }
+  let plan;
+  if (process.platform === 'darwin' && commandExists('brew')) {
+    plan = 'brew install --cask android-commandlinetools';
+  } else if (process.platform === 'win32' && commandExists('scoop')) {
+    plan = 'scoop install android-clt';
+  }
+  if (plan) {
+    try {
+      log.step(`Installing Android SDK command-line tools (${plan})...`);
+      run(plan, cwd);
+      log.success('Installed Android SDK command-line tools');
+      return;
+    } catch {
+      log.warn(`Command-line tools install failed (${plan}).`);
+    }
+  }
+  log.warn(
+    'Android SDK command-line tools not found — needed by `npm run mobile:create-device` to create AVDs. ' +
+      'Install via Android Studio (SDK Manager → SDK Tools → "Android SDK Command-line Tools"), or see ' +
+      'docs/MOBILE_TESTING.md#installing-the-android-command-line-tools.'
+  );
+}
+
+// Best-effort, cross-platform ensure of the Allure CLI — used by the `allure` reporter and the
+// `report:allure` script, independent of mobile. Installed via a global npm install: the
+// `allure-commandline` package ships the CLI and works on every OS with no package manager or admin.
+function ensureAllureCli(cwd) {
+  if (commandExists('allure')) {
+    log.success('Allure CLI already installed');
+    return;
+  }
+  try {
+    log.step('Installing Allure CLI (npm install -g allure-commandline)...');
+    run('npm install -g allure-commandline', cwd);
+    log.success('Installed Allure CLI');
+  } catch {
+    log.warn(
+      'Allure CLI install failed — install manually: npm i -g allure-commandline (or brew/scoop install allure).'
+    );
   }
 }
 
@@ -286,8 +427,7 @@ ${colors.cyan}Options:${colors.reset}
   --no-install     Skip installing npm dependencies
   --no-browsers    Skip installing Playwright browser binaries
   --no-gha         Skip the GitHub Actions workflow
-  --mobile         Include mobile testing (Maestro flows via the Maestro CLI)
-  --install-maestro  With --mobile, also install the Maestro CLI (needs Java 17+)
+  --mobile         Include mobile testing (Maestro); when installing, checks/installs adb + Maestro CLI
   -y, --yes        Accept all defaults without prompting (no interactive menu)
   -h, --help       Show this help
 `);
@@ -306,7 +446,6 @@ async function main() {
   const flagNoBrowsers = argv.includes('--no-browsers');
   const flagNoGha = argv.includes('--no-gha');
   const flagMobile = argv.includes('--mobile');
-  const flagInstallMaestro = argv.includes('--install-maestro');
   const flagYes = argv.includes('--yes') || argv.includes('-y');
   // First non-flag argument is the project directory.
   const positional = argv.find(a => !a.startsWith('-'));
@@ -324,9 +463,17 @@ ${colors.cyan}╔═════════════════════
   let projectName = positional;
   let includeGha = !flagNoGha;
   let includeMobile = flagMobile;
-  let installMaestro = flagInstallMaestro;
   let doInstall = !flagNoInstall;
   let doBrowsers = !flagNoBrowsers;
+  // package.json metadata — the `npm init`-style questions. Defaults used in --yes / non-TTY mode.
+  const meta = {
+    version: '1.0.0',
+    description: 'Playwright test automation with AI Judge capabilities',
+    author: '',
+    license: 'ISC',
+    keywords: [],
+    repository: '',
+  };
 
   if (interactive) {
     const prompt = createPrompter();
@@ -334,14 +481,21 @@ ${colors.cyan}╔═════════════════════
       if (!projectName) {
         projectName = await prompt.text("Project directory name ('.' for current dir)", '.');
       }
+      // package.json metadata (like `npm init`).
+      meta.version = await prompt.text('Version', meta.version);
+      meta.description = await prompt.text('Description', meta.description);
+      meta.author = await prompt.text('Author', meta.author);
+      meta.license = await prompt.text('License', meta.license);
+      meta.keywords = (await prompt.text('Keywords (comma-separated)', ''))
+        .split(',')
+        .map(k => k.trim())
+        .filter(Boolean);
+      meta.repository = await prompt.text('Git repository URL', meta.repository);
       if (!flagNoGha) {
         includeGha = await prompt.confirm('Add a GitHub Actions workflow?', true);
       }
       if (!flagMobile) {
         includeMobile = await prompt.confirm('Add mobile testing (Maestro flows)?', false);
-      }
-      if (includeMobile && !flagInstallMaestro) {
-        installMaestro = await prompt.confirm('Install the Maestro CLI now? (needs Java 17+)', false);
       }
       if (!flagNoInstall) {
         doInstall = await prompt.confirm('Install npm dependencies now?', true);
@@ -447,7 +601,7 @@ ${colors.cyan}╔═════════════════════
   // package.json (devDependencies derived from this package — single source of truth)
   const devDependencies = readTemplateDevDependencies(packageRoot);
   const pkgName = isCurrentDir ? path.basename(targetDir) : projectName;
-  const pkgJson = createPackageJson(pkgName, devDependencies, includeMobile);
+  const pkgJson = createPackageJson(pkgName, devDependencies, includeMobile, meta);
   fs.writeFileSync(path.join(targetDir, 'package.json'), JSON.stringify(pkgJson, null, 2) + '\n');
   log.success('Created package.json');
 
@@ -526,9 +680,16 @@ ${colors.cyan}╔═════════════════════
     }
   }
 
-  // Maestro CLI — opt-in, only when mobile was included (prompted / --install-maestro).
-  if (includeMobile && installMaestro) {
-    installMaestroCli(targetDir);
+  // CLI tooling (only while installing — respects --no-install). Allure powers the `allure` reporter
+  // and `report:allure` for EVERY project, independent of mobile. When mobile is included, also make
+  // sure adb + the Maestro CLI are present (checked first, installed only if missing).
+  if (doInstall) {
+    ensureAllureCli(targetDir);
+    if (includeMobile) {
+      ensureAdb(targetDir);
+      ensureAndroidCmdlineTools(targetDir);
+      installMaestroCli(targetDir);
+    }
   }
 
   // --- Next steps: only show what the user still needs to run ---
@@ -545,11 +706,15 @@ ${colors.cyan}╔═════════════════════
   // Create the machine-local config from the shipped examples, then edit + run.
   steps.push('cp env/environments.example.json env/environments.json    # then set BASE_URL / API_BASE_URL');
   steps.push('cp testData/users.example.json testData/users.json        # then set your login sessions');
+  // Allure CLI powers `report:allure`; surface it if it still isn't available (skipped / failed install).
+  if (!commandExists('allure')) {
+    steps.push('npm i -g allure-commandline    # Allure CLI (used by report:allure)');
+  }
   steps.push('npm test');
   const manualSteps = steps.map(s => `\n  ${colors.yellow}${s}${colors.reset}`).join('');
 
-  const maestroStep = installMaestro
-    ? `Maestro installed — restart your shell (or add ${colors.yellow}~/.maestro/bin${colors.reset} to PATH)`
+  const maestroStep = doInstall
+    ? `Maestro was checked/installed — if just installed, restart your shell (or add ${colors.yellow}~/.maestro/bin${colors.reset} to PATH). Docs: ${colors.blue}https://maestro.mobile.dev${colors.reset}`
     : `Install Maestro: ${colors.blue}https://maestro.mobile.dev${colors.reset}  (needs Java 17+)`;
   const mobileHelp = includeMobile
     ? `
