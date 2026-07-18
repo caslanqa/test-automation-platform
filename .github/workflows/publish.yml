@@ -118,7 +118,9 @@ jobs:
       - name: Push changes
         if: ${{ github.event.inputs.dry_run == 'false' }}
         run: |
-          git push origin main
+          # Push the version-bump commit back to the branch the workflow was
+          # dispatched from (github.ref_name), not a hardcoded "main".
+          git push origin "HEAD:${{ github.ref_name }}"
           git push origin "v${{ steps.bump_version.outputs.version }}"
 
       - name: Publish to npm (Dry Run)
