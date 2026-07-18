@@ -51,25 +51,39 @@ native/apps.ts                   the named app catalog (mirrors desktop/apps.ts)
 
 ## Prerequisites
 
-Native automation is **OS-locked** and needs a real desktop session (no headless).
+Native automation is **OS-locked** and needs a **real desktop session** (no headless). Appium 3 is
+Node-based, so — unlike the mobile engine — **no Java is required**.
 
-- **`appium` + `webdriverio`** as devDependencies — the scaffolder adds them when you opt into native
-  testing.
-- **The platform driver**, installed into Appium once:
+**1. Node.js ≥ 18** (already required by the framework).
 
-  ```bash
-  npx appium driver install mac2       # macOS
-  npx appium driver install windows    # Windows
-  ```
+**2. `appium` + `webdriverio`** — devDependencies. The scaffolder adds them when you opt into native
+testing (`--native`); otherwise `npm i -D appium webdriverio`.
 
-- **macOS:** Xcode + its command-line tools, and **Accessibility permission** for the process running
-  the tests (System Settings → Privacy & Security → Accessibility → enable your terminal / IDE).
-  Without it the session can't see the UI.
-- **Windows:** [WinAppDriver](https://github.com/microsoft/WinAppDriver/releases) installed, and
-  **Developer Mode** enabled (Settings → Privacy & security → For developers).
+**3. The Appium platform driver** — installed into Appium once (the scaffolder does this on opt-in):
 
-You don't have to start Appium yourself — the fixture auto-starts a local one — but running `appium`
-in a separate terminal is faster for iterative work (it's then reused).
+```bash
+npx appium driver install mac2       # macOS
+npx appium driver install windows    # Windows
+```
+
+**4. Per-OS system prerequisites:**
+
+- **macOS (mac2 / XCTest):**
+  - **Xcode** + its command-line tools — `xcode-select --install` (a full Xcode from the App Store is
+    recommended; the first session builds a WebDriverAgentMac helper, which needs it).
+  - **Accessibility permission** for the process that runs the tests: System Settings → Privacy &
+    Security → **Accessibility** → enable your terminal / IDE (e.g. Terminal, iTerm, VS Code). Without
+    it the session opens but can't see or drive the UI.
+  - Verify the setup any time with `npx appium driver doctor mac2`.
+- **Windows (windows / WinAppDriver):**
+  - **[WinAppDriver](https://github.com/microsoft/WinAppDriver/releases)** installed.
+  - **Developer Mode** enabled: Settings → Privacy & security → For developers.
+  - Verify with `npx appium driver doctor windows`.
+
+You don't have to start Appium yourself — the fixture **auto-starts** a local server (and reuses it) —
+but running `appium` in a separate terminal is faster for iterative work. Point at a remote/manual
+server with `serverUrl` (or `NATIVE_SERVER_URL`). If none of this is available the tests **skip**, so
+the suite stays green on machines without the toolchain.
 
 ## Running
 
@@ -102,7 +116,7 @@ export const apps = {
 Select one per file/describe, or inline a config:
 
 ```typescript
-test.use({ native: { app: 'myMacApp' } });                      // catalogued app
+test.use({ native: { app: 'myMacApp' } }); // catalogued app
 test.use({ native: { platform: 'mac', bundleId: 'com.acme.MyApp' } }); // inline (macOS)
 test.use({ native: { platform: 'windows', appPath: 'C:/…/MyApp.exe' } }); // inline (Windows)
 ```

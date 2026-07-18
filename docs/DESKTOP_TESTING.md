@@ -81,9 +81,9 @@ export const apps = {
 Select one per file/describe, or inline a config:
 
 ```typescript
-test.use({ desktop: { app: 'myapp' } });                       // catalogued app
+test.use({ desktop: { app: 'myapp' } }); // catalogued app
 test.use({ desktop: { main: 'src/main.js', args: ['--dev'] } }); // inline
-test.use({ desktop: { executablePath: '/path/to/App' } });      // packaged build
+test.use({ desktop: { executablePath: '/path/to/App' } }); // packaged build
 ```
 
 The default (`DESKTOP_APP` in `env/environments.json`, shipped as `example`) is used when a test sets
@@ -131,9 +131,10 @@ On failure the fixture attaches a **real** Playwright trace (open it with the "V
 the HTML report, or `npx playwright show-trace`) and a final screenshot of the window — the same
 first-class artifacts you get from a web test. On success nothing is attached.
 
-## Roadmap — native (non-Electron) desktop apps
+## Native (non-Electron) desktop apps
 
-This layer covers **Electron**. Native OS apps (Win32/WPF/WinUI, macOS AppKit) are **not** driven by
-Playwright; supporting them would add an Appium-based engine (`appium-windows-driver` /
-`appium-mac2-driver`) — heavier, OS-locked, and using the WebDriver protocol rather than the Page API.
-That's a planned follow-up, not part of this layer today.
+This layer covers **Electron**, where the window is a real Playwright `Page`. For native OS apps
+(Win32/WPF/WinUI, macOS AppKit) — which Playwright can't drive — use the separate **[native testing
+layer](NATIVE_TESTING.md)** (Appium via `appium-mac2-driver` / `appium-windows-driver`). It's heavier
+and OS-locked, uses the WebDriver protocol rather than the Page API, and is a different engine with its
+own imperative API — so pick by your app: **Electron → this layer; anything else → native.**

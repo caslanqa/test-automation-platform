@@ -19,6 +19,8 @@ npm init @caslanqa/playwright-ai@latest my-project
 - **Dual LLM Routing** - Ollama (local, free) or 9Router gateway (Claude, GPT)
 - **Layered API Testing** - `ApiClient` → service → test structure (Petstore v3 example)
 - **Mobile Testing** - Maestro YAML flows orchestrated by Playwright, opt-in (`--mobile`)
+- **Desktop Testing (Electron)** - drive Electron apps as a real Playwright `Page`, opt-in (`--desktop`)
+- **Native Desktop Testing (Appium)** - non-Electron macOS / Windows apps via Appium, opt-in (`--native`)
 - **Lazy Session Auth** - Cached storageState per session, worker-safe, opt-in
 - **Page Object Model** - Clean, maintainable test structure
 - **Environment-Driven** - JSON-based configuration, zero hardcoded values
@@ -30,13 +32,15 @@ npm init @caslanqa/playwright-ai@latest my-project
 Only **Node.js ≥ 18** is always required. Everything else is per-feature and installed by _you_ (the
 scaffolder installs the npm deps + Playwright browsers, but not these system-level tools):
 
-| For             | You need                                                                                                                                                                                                                                                                                                                                |
-| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Everything      | **Node.js ≥ 18**                                                                                                                                                                                                                                                                                                                        |
-| UI tests        | Playwright browsers — `npx playwright install`                                                                                                                                                                                                                                                                                          |
-| API tests       | nothing beyond Node (they call an HTTP endpoint)                                                                                                                                                                                                                                                                                        |
-| AI Judge        | [Ollama](https://ollama.com) + a pulled model (local), **or** a 9Router gateway + `JUDGE_API_KEY`                                                                                                                                                                                                                                       |
-| Mobile (opt-in) | [Maestro](https://maestro.mobile.dev) CLI + **Java 17+**, and a device: Android SDK + emulator, or (macOS) Xcode + iOS simulator. To build an AVD via `mobile:create-device` you also need the Android command-line tools — [setup (macOS/Windows/Linux, GUI or CLI)](docs/MOBILE_TESTING.md#installing-the-android-command-line-tools) |
+| For                         | You need                                                                                                                                                                                                                                                                                                                                |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Everything                  | **Node.js ≥ 18**                                                                                                                                                                                                                                                                                                                        |
+| UI tests                    | Playwright browsers — `npx playwright install`                                                                                                                                                                                                                                                                                          |
+| API tests                   | nothing beyond Node (they call an HTTP endpoint)                                                                                                                                                                                                                                                                                        |
+| AI Judge                    | [Ollama](https://ollama.com) + a pulled model (local), **or** a 9Router gateway + `JUDGE_API_KEY`                                                                                                                                                                                                                                       |
+| Mobile (opt-in)             | [Maestro](https://maestro.mobile.dev) CLI + **Java 17+**, and a device: Android SDK + emulator, or (macOS) Xcode + iOS simulator. To build an AVD via `mobile:create-device` you also need the Android command-line tools — [setup (macOS/Windows/Linux, GUI or CLI)](docs/MOBILE_TESTING.md#installing-the-android-command-line-tools) |
+| Desktop / Electron (opt-in) | the `electron` devDependency (scaffolder adds it on `--desktop`); on headless Linux/CI a display via `xvfb-run`. See [docs/DESKTOP_TESTING.md](docs/DESKTOP_TESTING.md)                                                                                                                                                                 |
+| Native desktop (opt-in)     | a running (or auto-started) **Appium** server + the platform driver (`npx appium driver install mac2` / `windows`); **macOS:** Xcode + Accessibility permission; **Windows:** WinAppDriver + Developer Mode. See [docs/NATIVE_TESTING.md](docs/NATIVE_TESTING.md)                                                                       |
 
 ## 📦 Create a new project
 
@@ -73,8 +77,10 @@ npm run test:ui       # interactive UI mode
 ```
 
 Flags: `--no-install` (skip `npm install`), `--no-browsers` (skip browser download), `--no-gha` (skip
-the GitHub Actions workflow), `--mobile` (include mobile testing / Maestro), `-y/--yes` (accept
-defaults). Omit the project name to scaffold into the current directory.
+the GitHub Actions workflow), `--mobile` (Maestro), `--desktop` (Electron), `--native` (Appium native
+apps), `-y/--yes` (accept defaults). Omit the project name to scaffold into the current directory. A
+module flag can also be run **inside an existing project** to add just that module later, e.g.
+`npm init @caslanqa/playwright-ai@latest . --native`.
 
 ## 🛠️ Develop this framework (contributors)
 
@@ -261,6 +267,57 @@ devicectl` install, and physical-device discovery — and is currently blocked u
 ([maestro#3218](https://github.com/mobile-dev-inc/maestro/issues/3218)). iOS testing today is
 simulator-only; real-device support is planned once the upstream build is fixed.
 
+## 🖥️ Desktop App Testing
+
+Two opt-in desktop engines, chosen by **what your app is** — both run under the same Playwright runner
+and report, and share the same AI Judge. They are separate engines because the driver protocol
+differs, so pick one per app:
+
+|             | **Desktop (Electron)** — `--desktop`                                         | **Native (Appium)** — `--native`                                                  |
+| ----------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| Use for     | Electron apps                                                                | native macOS (AppKit) / Windows (Win32/WPF/WinUI) apps                            |
+| Driver      | Playwright's native `_electron`                                              | an [Appium](https://appium.io) server (WebDriver)                                 |
+| The window  | a **real Playwright `Page`** — locators, `expect`, POMs, genuine trace/video | a WebDriver session — an imperative `app` API + screenshot / page-source evidence |
+| Extra infra | just the `electron` devDependency                                            | `appium` + `webdriverio` + a platform driver; OS-locked (Xcode / WinAppDriver)    |
+
+> **Which one?** If your app is **Electron**, use the desktop layer — the window is a browser page, so
+> everything from the web layer works and the evidence is a real trace. For anything else, use the
+> native layer.
+
+**Electron** — the window is a `Page`, so it reads exactly like a UI test. Full guide:
+**[docs/DESKTOP_TESTING.md](docs/DESKTOP_TESTING.md)**.
+
+```typescript
+import { expect, test } from '@fixtures/desktopFixtures';
+
+test.use({ desktop: { app: 'example' } }); // desktop/apps.ts
+
+test('window reacts to a click', async ({ window, electron }) => {
+  await expect(window.getByRole('heading', { level: 1 })).toBeVisible(); // `window` is a Page
+  await window.getByRole('button', { name: 'Greet' }).click();
+  const version = await electron.app.evaluate(({ app }) => app.getVersion()); // main process
+});
+```
+
+Run with `npm run test:desktop`.
+
+**Native (Appium)** — a WebDriver session, so it uses the imperative `app` fixture plus `expectAi` on
+a screenshot. Full guide (incl. prerequisites): **[docs/NATIVE_TESTING.md](docs/NATIVE_TESTING.md)**.
+
+```typescript
+import { expect, test } from '@fixtures/nativeFixtures';
+
+test.use({ native: { app: 'textEdit' } }); // native/apps.ts (macOS TextEdit / Windows Notepad examples)
+
+test('app launches', async ({ app }) => {
+  await app.assertVisible({ xpath: '//XCUIElementTypeWindow' });
+  const shot = await app.takeScreenshot('home'); // real screenshot → also feeds expectAi
+});
+```
+
+Run with `npm run test:native`. When the Appium server/driver isn't available the native tests
+**skip** (don't fail), so the suite stays green everywhere.
+
 ## 📁 Project Structure
 
 ```text
@@ -276,27 +333,37 @@ playwright-ai-distro/
 │   ├── loadEnv.ts
 │   ├── envUtils.ts
 │   └── aiJudge.config.ts     # tiers, thresholds, routing preferences
-├── docs/                     # AI_JUDGE.md · API_TESTING.md · MOBILE_TESTING.md · MOBILE_CHEATSHEET.md
+├── docs/                     # AI_JUDGE · API_TESTING · MOBILE_TESTING · MOBILE_CHEATSHEET · DESKTOP_TESTING · NATIVE_TESTING
 ├── env/                      # environments.json (BASE_URL, API_BASE_URL)
 ├── fixtures/                 # Playwright fixtures
 │   ├── globalFixtures.ts     #   test/expect + `session` storageState-key option
 │   ├── auth.ts               #   lazy session login + caching (authState, ensureSession)
 │   ├── aiExpect.ts           #   expectAi matchers
 │   ├── apiFixtures.ts        #   apiClient + service fixtures (browser-free)
-│   └── mobileFixtures.ts     #   maestro fixture + `mobile` option (opt-in)
+│   ├── mobileFixtures.ts     #   maestro fixture + `mobile` option (opt-in)
+│   ├── desktopFixtures.ts    #   electron fixture + `window` Page + `desktop` option (opt-in)
+│   └── nativeFixtures.ts     #   Appium `app` fixture + `native` option (opt-in)
 ├── mobile/                   # Mobile testing (Maestro) — opt-in
 │   └── core/                 #   MaestroRunner + DeviceManager (adb/simctl, auto-boot)
+├── desktop/                  # Desktop testing (Electron) — opt-in
+│   ├── core/                 #   ElectronSession (_electron.launch, real trace)
+│   └── example-app/          #   build-free Electron app for the example
+├── native/                   # Native desktop testing (Appium) — opt-in
+│   ├── core/                 #   NativeSession (webdriverio) + appiumServer (auto-start)
+│   └── apps.ts               #   native app catalog (TextEdit / Notepad examples)
 ├── pages/                    # Page Object Models (BasePage, LoginPage)
 ├── testData/                 # users.json (named login sessions)
 ├── tests/
 │   ├── example/              #   UI + AI Judge examples
 │   ├── api/                  #   API examples (*.api.ts)
-│   └── mobile/               #   Maestro flows + *.mobile.ts (opt-in)
+│   ├── mobile/               #   Maestro flows + *.mobile.ts (opt-in)
+│   ├── desktop/              #   Electron *.desktop.ts (opt-in)
+│   └── native/               #   Appium *.native.ts (opt-in)
 ├── utils/
 │   ├── ai/                   #   AI Judge engine (router, providers, judge)
 │   ├── aiJudge.ts            #   judge entrypoint (re-exports utils/ai)
 │   └── *.ts                  #   date/string/wait/validation helpers
-├── playwright.config.ts      # chromium + api (+ mobile when scaffolded)
+├── playwright.config.ts      # chromium + api (+ mobile/desktop/native when scaffolded)
 └── eslint.config.js · .prettierrc · .commitlintrc.json
 ```
 
@@ -434,6 +501,8 @@ workflow_dispatch:
 - [API Testing Guide](docs/API_TESTING.md) - Layered API client/service/test structure
 - [Mobile Testing Guide](docs/MOBILE_TESTING.md) - Maestro flows orchestrated by Playwright
 - [Mobile Cheat Sheet](docs/MOBILE_CHEATSHEET.md) - device/app IDs, boot & install commands, Maestro CLI
+- [Desktop Testing Guide](docs/DESKTOP_TESTING.md) - Electron apps driven as a real Playwright `Page`
+- [Native Desktop Testing Guide](docs/NATIVE_TESTING.md) - non-Electron macOS/Windows apps via Appium
 - [Playwright Docs](https://playwright.dev/docs/intro) - Official Playwright docs
 
 ## 📄 License
