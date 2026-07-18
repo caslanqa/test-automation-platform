@@ -16,11 +16,12 @@
  * `npm init playwright@latest`. In non-TTY contexts (CI, piped input) it skips
  * the prompts and uses defaults, so it never hangs.
  *
- * Modules (mobile, desktop) are opt-in plug-ins. Opting out installs NONE of a
- * module's files/scripts/config; a module can also be added to an EXISTING
+ * Modules (mobile, desktop, native) are opt-in plug-ins. Opting out installs NONE
+ * of a module's files/scripts/config; a module can also be added to an EXISTING
  * project later by running the scaffolder inside it with the module's flag:
  *   npm init @caslanqa/playwright-ai@latest . --mobile     # add mobile to this project
- *   npm init @caslanqa/playwright-ai@latest . --desktop    # add desktop to this project
+ *   npm init @caslanqa/playwright-ai@latest . --desktop    # add desktop (Electron)
+ *   npm init @caslanqa/playwright-ai@latest . --native     # add native desktop (Appium)
  *
  * Flags (override the interactive prompts):
  *   --no-install    Skip "npm install" in the new project
@@ -28,6 +29,7 @@
  *   --no-gha        Skip the GitHub Actions workflow
  *   --mobile        Include mobile testing (Maestro)
  *   --desktop       Include desktop testing (Electron)
+ *   --native        Include native desktop testing (Appium)
  *   -y, --yes       Accept all defaults without prompting
  *   -h, --help      Show usage
  */
@@ -134,6 +136,33 @@ keep the bundled example. On headless Linux/CI wrap it: \`xvfb-run -a npm run te
 [docs/DESKTOP_TESTING.md](docs/DESKTOP_TESTING.md).
 `;
 
+// Appium + webdriverio pinned into the generated project's devDependencies when native desktop testing
+// is opted in (kept out of this repo's own devDeps so they don't download for non-native scaffolds).
+// Both current Appium desktop drivers (appium-mac2-driver, appium-windows-driver) require Appium 3.
+const NATIVE_APPIUM_VERSION = '^3.0.0';
+const NATIVE_WDIO_VERSION = '^9.0.0';
+
+// Injected into the generated README (templates/README.md {{NATIVE_SECTION}}) only when native
+// desktop testing is opted in; replaced with '' otherwise.
+const NATIVE_README_SECTION = `
+### Native desktop test (Appium)
+
+For **non-Electron** native OS apps (macOS AppKit, Windows Win32/WPF/WinUI). Requires \`appium\` +
+\`webdriverio\` (the scaffolder adds them when you opt in) and a platform driver
+(\`npx appium driver install mac2\` on macOS, \`windows\` on Windows). Native apps are driven over
+WebDriver — the window is NOT a Playwright \`Page\`, so tests use the imperative \`app\` fixture plus
+\`expectAi\` on a screenshot:
+
+\`\`\`bash
+npm run test:native   # NATIVE=1 playwright test --project=native --workers=1
+\`\`\`
+
+Point \`native/apps.ts\` at your app (macOS \`bundleId\`/\`appPath\`, or Windows \`appPath\`/\`windowsApp\`),
+or keep the built-in examples (TextEdit / Notepad). macOS needs Accessibility permission; Windows needs
+WinAppDriver + Developer Mode. Tests skip cleanly when Appium isn't available. See
+[docs/NATIVE_TESTING.md](docs/NATIVE_TESTING.md).
+`;
+
 // ── Module registry ─────────────────────────────────────────────────────────────────────────────
 // Mobile and desktop are opt-in "plug-in" engines. This manifest is the SINGLE source of truth for
 // everything a module owns, so both the create-time flow (include, or fully strip when opted out)
@@ -196,6 +225,26 @@ const MODULES = {
       "const desktopEnabled = fs.existsSync('tests/desktop') && process.env.DESKTOP === '1';",
     configProject:
       "...(desktopEnabled ? [{ name: 'desktop', testDir: './tests/desktop', testMatch: /.*\\.desktop\\.ts$/, timeout: 2 * 60 * 1000 }] : [])",
+  },
+  native: {
+    flag: '--native',
+    prompt: 'Add native desktop testing (non-Electron apps via Appium)?',
+    promptDefault: false,
+    dir: 'native',
+    testsDir: 'tests/native',
+    sharedFiles: ['fixtures/nativeFixtures.ts'],
+    docs: ['docs/NATIVE_TESTING.md'],
+    scripts: { 'test:native': 'NATIVE=1 playwright test --project=native --workers=1' },
+    devDependencies: { appium: NATIVE_APPIUM_VERSION, webdriverio: NATIVE_WDIO_VERSION },
+    tsconfigPaths: { '@native/*': ['native/*'] },
+    envKeys: { NATIVE_PLATFORM: 'mac', NATIVE_APP: 'textEdit', NATIVE_SERVER_URL: '' },
+    readmeSection: NATIVE_README_SECTION,
+    ensureCli: cwd => {
+      ensureAppiumDriver(cwd);
+    },
+    configGate: "const nativeEnabled = fs.existsSync('tests/native') && process.env.NATIVE === '1';",
+    configProject:
+      "...(nativeEnabled ? [{ name: 'native', testDir: './tests/native', testMatch: /.*\\.native\\.ts$/, timeout: 3 * 60 * 1000, use: { video: 'off' as const, screenshot: 'off' as const } }] : [])",
   },
 };
 
@@ -607,6 +656,43 @@ function ensureAllureCli(cwd) {
   }
 }
 
+// Best-effort install of the Appium driver for the native desktop engine into the project's local
+// Appium (a devDependency): mac2 on macOS, windows on Windows. Skips when already installed; never
+// fails the scaffold. `npx --no` uses the project-local `appium` bin and refuses to auto-fetch it (so
+// this can't hang prompting). Other OSes have no supported native driver — we say so and move on.
+function ensureAppiumDriver(cwd) {
+  const driver =
+    process.platform === 'darwin' ? 'mac2' : process.platform === 'win32' ? 'windows' : null;
+  if (!driver) {
+    log.warn(
+      'Native desktop (Appium) supports macOS (mac2) and Windows (windows) only — skipping driver install on this OS.'
+    );
+    return;
+  }
+  try {
+    const installed = execSync('npx --no -- appium driver list --installed', {
+      cwd,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).toString();
+    if (installed.includes(driver)) {
+      log.success(`Appium ${driver} driver already installed`);
+      return;
+    }
+  } catch {
+    // `appium` may not be resolvable yet (install failed / skipped) — fall through and try to install.
+  }
+  try {
+    log.step(`Installing Appium ${driver} driver...`);
+    run(`npx --no -- appium driver install ${driver}`, cwd);
+    log.success(`Installed Appium ${driver} driver`);
+  } catch {
+    log.warn(
+      `Could not install the Appium ${driver} driver — run \`npx appium driver install ${driver}\` ` +
+        'manually. See docs/NATIVE_TESTING.md'
+    );
+  }
+}
+
 // Minimal readline-based prompts (zero dependencies). Used only when stdin is a
 // TTY; otherwise callers fall back to defaults so the scaffolder never hangs.
 function createPrompter() {
@@ -643,6 +729,7 @@ ${colors.cyan}Usage:${colors.reset}
 ${colors.cyan}Add a module to an EXISTING project${colors.reset} (run inside it, with a module flag):
   npm init @caslanqa/playwright-ai@latest . --mobile
   npm init @caslanqa/playwright-ai@latest . --desktop
+  npm init @caslanqa/playwright-ai@latest . --native
 
 ${colors.cyan}Options:${colors.reset}
   --no-install     Skip installing npm dependencies
@@ -650,6 +737,7 @@ ${colors.cyan}Options:${colors.reset}
   --no-gha         Skip the GitHub Actions workflow
   --mobile         Include mobile testing (Maestro); when installing, checks/installs adb + Maestro CLI
   --desktop        Include desktop testing (Electron); adds the electron devDependency
+  --native         Include native desktop testing (Appium); adds appium + webdriverio, installs the driver
   -y, --yes        Accept all defaults without prompting (no interactive menu)
   -h, --help       Show this help
 `);
@@ -1111,6 +1199,17 @@ ${colors.cyan}For Desktop testing (Electron):${colors.reset}
   3. ${colors.yellow}npm run test:desktop${colors.reset}   (headless Linux/CI: ${colors.yellow}xvfb-run -a npm run test:desktop${colors.reset})
 `
     : '';
+  const nativeHelp = enabled.native
+    ? `
+${colors.cyan}For Native desktop testing (Appium):${colors.reset}
+
+  1. appium + webdriverio were added to devDependencies${installed ? ' and installed' : ' — run npm install'}
+  2. The ${process.platform === 'win32' ? 'windows' : 'mac2'} driver was checked/installed (else: ${colors.yellow}npx appium driver install ${process.platform === 'win32' ? 'windows' : 'mac2'}${colors.reset})
+  3. macOS: grant Accessibility permission to your terminal/IDE. Windows: install WinAppDriver + enable Developer Mode
+  4. Point ${colors.yellow}native/apps.ts${colors.reset} at your app, or keep the built-in example
+  5. ${colors.yellow}npm run test:native${colors.reset}
+`
+    : '';
 
   console.log(`
 ${colors.green}✨ Project created successfully!${colors.reset}
@@ -1122,9 +1221,9 @@ ${colors.cyan}For AI Judge:${colors.reset}
   1. Install Ollama: ${colors.blue}https://ollama.com${colors.reset}
   2. ${colors.yellow}ollama serve${colors.reset}  (then pull a model, e.g. ${colors.yellow}ollama pull qwen3.5${colors.reset})
   3. ${colors.yellow}npx playwright test tests/example/aiJudge.spec.ts${colors.reset}
-${mobileHelp}${desktopHelp}
+${mobileHelp}${desktopHelp}${nativeHelp}
 ${colors.cyan}Documentation:${colors.reset}
-  - AI Judge Guide: ${colors.blue}docs/AI_JUDGE.md${colors.reset}${enabled.mobile ? `\n  - Mobile Testing: ${colors.blue}docs/MOBILE_TESTING.md${colors.reset}` : ''}${enabled.desktop ? `\n  - Desktop Testing: ${colors.blue}docs/DESKTOP_TESTING.md${colors.reset}` : ''}
+  - AI Judge Guide: ${colors.blue}docs/AI_JUDGE.md${colors.reset}${enabled.mobile ? `\n  - Mobile Testing: ${colors.blue}docs/MOBILE_TESTING.md${colors.reset}` : ''}${enabled.desktop ? `\n  - Desktop Testing: ${colors.blue}docs/DESKTOP_TESTING.md${colors.reset}` : ''}${enabled.native ? `\n  - Native Desktop Testing: ${colors.blue}docs/NATIVE_TESTING.md${colors.reset}` : ''}
   - Playwright Docs: ${colors.blue}https://playwright.dev${colors.reset}
 
 Happy testing! 🎭

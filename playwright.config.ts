@@ -17,6 +17,12 @@ const mobileEnabled = fs.existsSync('tests/mobile') && process.env.MOBILE === '1
 // opt-in gate as mobile, so a bare `npm test` stays web+api only. Requires `electron` installed.
 const desktopEnabled = fs.existsSync('tests/desktop') && process.env.DESKTOP === '1';
 
+// The Appium-driven `native` project (non-Electron native OS apps) is registered only when native
+// testing was scaffolded (tests/native exists) AND explicitly enabled (NATIVE=1, set by
+// `npm run test:native`). Same opt-in gate as mobile/desktop. Requires a running (or auto-started)
+// Appium server + the platform driver (`appium driver install mac2`/`windows`).
+const nativeEnabled = fs.existsSync('tests/native') && process.env.NATIVE === '1';
+
 /**
  * Playwright Test Configuration
  *
@@ -173,6 +179,26 @@ export default defineConfig({
             testMatch: /.*\.desktop\.ts$/,
             // Generous per-test timeout: the first Electron launch is a little slower than a browser.
             timeout: 2 * 60 * 1000,
+          },
+        ]
+      : []),
+
+    // ============================================
+    // NATIVE DESKTOP TESTS - non-Electron native OS apps via Appium (see native/ +
+    // fixtures/nativeFixtures.ts). Opt-in and gated: registered only when scaffolded (tests/native)
+    // and NATIVE=1 (set by `npm run test:native`). Like mobile, Playwright's own capture can't see a
+    // native window, so video/screenshot are off — the fixture attaches a real screenshot + page
+    // source on failure. Serial by default (one Appium session at a time).
+    // ============================================
+    ...(nativeEnabled
+      ? [
+          {
+            name: 'native',
+            testDir: './tests/native',
+            testMatch: /.*\.native\.ts$/,
+            // Generous per-test timeout: a cold Appium server start + first native session is slow.
+            timeout: 3 * 60 * 1000,
+            use: { video: 'off' as const, screenshot: 'off' as const },
           },
         ]
       : []),

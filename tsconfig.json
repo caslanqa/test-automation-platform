@@ -21,6 +21,7 @@
       "@api/*": ["api/*"],
       "@mobile/*": ["mobile/*"],
       "@desktop/*": ["desktop/*"],
+      "@native/*": ["native/*"],
       "@utils/*": ["utils/*"],
       "@pages/*": ["pages/*"],
       "@fixtures/*": ["fixtures/*"],

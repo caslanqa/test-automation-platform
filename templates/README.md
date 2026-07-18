@@ -147,7 +147,7 @@ await expectAi({ userMessage, botResponse, rubric }).toPassRubric({ minScore: 70
 
 Model choice is automatic (complexity → tier → a model discovered from your installed Ollama models,
 with a cloud fallback). See [docs/AI_JUDGE.md](docs/AI_JUDGE.md) and [docs/API_TESTING.md](docs/API_TESTING.md).
-{{MOBILE_SECTION}}{{DESKTOP_SECTION}}
+{{MOBILE_SECTION}}{{DESKTOP_SECTION}}{{NATIVE_SECTION}}
 
 ## Tooling
 
