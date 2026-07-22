@@ -180,7 +180,9 @@ npx create-pwtap add    <plugin...>    # add plugins to an existing project
 npx create-pwtap remove <plugin...>    # remove plugins
 ```
 
-**Flags:** `-y` / `--yes` (accept defaults, skip the menu) · `--no-install` (skip `npm install`) · `--no-browsers` (skip the Playwright browser download) · `--ai-judge` (preselect a plugin).
+Interactively, `create` asks the same questions as `npm init playwright` — tests-folder name, GitHub Actions workflow, install browsers, and (on Linux) install OS dependencies — minus TypeScript/JavaScript, since the platform is TypeScript-only. It also lists the optional plugins.
+
+**Flags:** `-y` / `--yes` (accept defaults, skip the menu) · `--tests-dir <name>` (tests folder, default `tests`) · `--gha` (add a GitHub Actions workflow) · `--no-install` (skip `npm install`) · `--no-browsers` (skip the Playwright browser download) · `--ai-judge` (preselect a plugin).
 
 ## Configuration
 

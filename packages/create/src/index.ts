@@ -24,6 +24,21 @@ function flagPresent(argv: string[], flag: string): boolean {
   return value !== undefined && value !== '' && value !== 'false';
 }
 
+/** Value of `--flag=x` / `--flag x`, or npm's `npm_config_<flag>`; undefined when absent. */
+function flagValue(argv: string[], flag: string): string | undefined {
+  const eq = argv.find(a => a.startsWith(`${flag}=`));
+  if (eq !== undefined) {
+    return eq.slice(flag.length + 1);
+  }
+  const i = argv.indexOf(flag);
+  if (i !== -1 && argv[i + 1] !== undefined && !argv[i + 1].startsWith('-')) {
+    return argv[i + 1];
+  }
+  const key = `npm_config_${flag.replace(/^--/, '').replace(/-/g, '_')}`;
+  const value = process.env[key];
+  return value !== undefined && value !== '' && value !== 'false' ? value : undefined;
+}
+
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const positional = argv.filter(a => !a.startsWith('-'));
@@ -32,6 +47,8 @@ async function main(): Promise<void> {
   const yes = flagPresent(argv, '--yes') || argv.includes('-y');
   const install = !flagPresent(argv, '--no-install');
   const browsers = !flagPresent(argv, '--no-browsers');
+  const gha = flagPresent(argv, '--gha');
+  const testsDirDefault = flagValue(argv, '--tests-dir') ?? 'tests';
   const pluginIdsFromFlags = KNOWN_PLUGINS.filter(p => flagPresent(argv, p.flag)).map(p => p.id);
 
   if (command === 'add') {
@@ -50,6 +67,8 @@ async function main(): Promise<void> {
     yes,
     install,
     browsers,
+    gha,
+    testsDirDefault,
     selectedPluginIds: pluginIdsFromFlags,
     templateDir,
     coreManifestPath,

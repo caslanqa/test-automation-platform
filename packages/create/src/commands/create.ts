@@ -5,7 +5,7 @@ import { loadCoreManifest } from '../manifest.js';
 import { addPlugins } from '../plugin-apply.js';
 import { Prompter } from '../prompts.js';
 import { KNOWN_PLUGINS } from '../registry.js';
-import { copyDir, exists, isEmptyDir, sortObject, writeJson } from '../util/fs.js';
+import { copyDir, ensureDir, exists, isEmptyDir, sortObject, writeJson } from '../util/fs.js';
 import { log } from '../util/log.js';
 import { run } from '../util/run.js';
 
@@ -14,6 +14,8 @@ export interface CreateOptions {
   yes: boolean;
   install: boolean;
   browsers: boolean;
+  gha: boolean;
+  testsDirDefault: string;
   selectedPluginIds: string[];
   templateDir: string;
   coreManifestPath: string;
@@ -37,47 +39,121 @@ export async function createProject(opts: CreateOptions): Promise<void> {
     fs.rmSync(path.join(targetDir, 'templates'), { recursive: true, force: true });
   }
 
-  // 2. Gather project name + plugin choices.
+  // 2. Gather answers — mirrors the official `npm init playwright` questions (minus TS/JS: this
+  //    platform is TypeScript-only). Non-interactive (`-y` or no TTY) takes every default.
   const prompter = new Prompter(opts.yes);
   let name: string;
+  let testsDir: string;
   let selectedIds: string[];
+  let addGha: boolean;
+  let installBrowsers: boolean;
+  let installOsDeps: boolean;
   try {
     name = await prompter.text('Project name', path.basename(targetDir));
+    testsDir = sanitizeDir(await prompter.text('Where to put your tests?', opts.testsDirDefault));
     selectedIds =
       opts.selectedPluginIds.length > 0
         ? opts.selectedPluginIds
         : await prompter.selectPlugins(KNOWN_PLUGINS);
+    addGha = await prompter.confirm('Add a GitHub Actions workflow?', opts.gha);
+    installBrowsers = await prompter.confirm('Install Playwright browsers?', opts.browsers);
+    installOsDeps =
+      process.platform === 'linux'
+        ? await prompter.confirm(
+            'Install Playwright operating system dependencies (requires sudo)?',
+            false,
+          )
+        : false;
   } finally {
     prompter.close();
   }
 
-  // 3. Write the base package.json from the core manifest.
-  writeBasePackageJson(targetDir, name, coreManifestPath);
+  // 3. Relocate the tests folder if the user renamed it (repoints config + tsconfig + eslint globs).
+  if (testsDir !== 'tests') {
+    relocateTestsDir(targetDir, testsDir);
+  }
 
-  // 4. git init + husky hooks so commit hygiene (lint-staged + commitlint) activates on install.
+  // 4. Write the base package.json from the core manifest (records testsDir so `add` places plugin
+  //    examples in the right folder later).
+  writeBasePackageJson(targetDir, name, coreManifestPath, testsDir);
+
+  // 5. Optional GitHub Actions workflow for the scaffolded project.
+  if (addGha) {
+    writeGithubWorkflow(targetDir);
+  }
+
+  // 6. git init + husky hooks so commit hygiene (lint-staged + commitlint) activates on install.
   await initGit(targetDir);
   writeHuskyHooks(targetDir);
 
-  // 5. Install core deps, then plugins (install + inject), then browsers.
+  // 7. Install core deps, then plugins (install + inject), then browsers / OS dependencies.
   if (opts.install) {
     log.step('Installing dependencies');
     await run('npm', ['install'], { cwd: targetDir });
   }
   if (selectedIds.length > 0) {
-    await addPlugins({ clientDir: targetDir, pluginIds: selectedIds, install: opts.install });
+    await addPlugins({
+      clientDir: targetDir,
+      pluginIds: selectedIds,
+      install: opts.install,
+      testsDir,
+    });
   }
-  if (opts.browsers) {
+  if (installBrowsers) {
     const core = loadCoreManifest(coreManifestPath);
     log.step(`Installing Playwright browsers: ${core.browsers.join(', ')}`);
     await run('npx', ['playwright', 'install', ...core.browsers], { cwd: targetDir }).catch(err =>
       log.warn(`playwright install skipped: ${err instanceof Error ? err.message : String(err)}`),
     );
   }
+  if (installOsDeps) {
+    log.step('Installing Playwright operating system dependencies');
+    await run('npx', ['playwright', 'install-deps'], { cwd: targetDir }).catch(err =>
+      log.warn(`install-deps skipped: ${err instanceof Error ? err.message : String(err)}`),
+    );
+  }
 
-  printNextSteps(targetDir, name);
+  printNextSteps(targetDir, name, testsDir);
 }
 
-function writeBasePackageJson(targetDir: string, name: string, coreManifestPath: string): void {
+/** Normalize a tests-folder answer to a safe relative dir; empty/invalid falls back to 'tests'. */
+function sanitizeDir(input: string): string {
+  const cleaned = input
+    .trim()
+    .replace(/^[./]+/, '')
+    .replace(/\/+$/, '');
+  return cleaned === '' || cleaned.includes('..') ? 'tests' : cleaned;
+}
+
+/** Rename tests/ → <testsDir>/ and repoint the Playwright config, tsconfig alias, and eslint glob. */
+function relocateTestsDir(targetDir: string, testsDir: string): void {
+  const from = path.join(targetDir, 'tests');
+  const to = path.join(targetDir, testsDir);
+  if (exists(from)) {
+    ensureDir(path.dirname(to));
+    fs.renameSync(from, to);
+  }
+  patchFile(path.join(targetDir, 'playwright.config.ts'), s =>
+    s.replaceAll('./tests', `./${testsDir}`),
+  );
+  patchFile(path.join(targetDir, 'tsconfig.json'), s => s.replace('"tests/*"', `"${testsDir}/*"`));
+  patchFile(path.join(targetDir, 'eslint.config.js'), s =>
+    s.replace("'tests/**/*.ts'", `'${testsDir}/**/*.ts'`),
+  );
+}
+
+function patchFile(file: string, replacer: (content: string) => string): void {
+  if (exists(file)) {
+    fs.writeFileSync(file, replacer(fs.readFileSync(file, 'utf8')));
+  }
+}
+
+function writeBasePackageJson(
+  targetDir: string,
+  name: string,
+  coreManifestPath: string,
+  testsDir: string,
+): void {
   const core = loadCoreManifest(coreManifestPath);
   writeJson(path.join(targetDir, 'package.json'), {
     name,
@@ -87,7 +163,15 @@ function writeBasePackageJson(targetDir: string, name: string, coreManifestPath:
     scripts: sortObject(core.scripts),
     devDependencies: sortObject(core.devDependencies),
     ...(core.packageJson ?? {}),
+    pwtap: { testsDir },
   });
+}
+
+/** Standard Playwright CI — mirrors the workflow `npm init playwright` generates. */
+function writeGithubWorkflow(targetDir: string): void {
+  const dir = path.join(targetDir, '.github', 'workflows');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'playwright.yml'), GITHUB_WORKFLOW);
 }
 
 async function initGit(targetDir: string): Promise<void> {
@@ -119,7 +203,7 @@ function writeHuskyHooks(targetDir: string): void {
   }
 }
 
-function printNextSteps(targetDir: string, name: string): void {
+function printNextSteps(targetDir: string, name: string, testsDir: string): void {
   const rel = path.relative(process.cwd(), targetDir) || '.';
   log.done(`Created ${name}`);
   log.info(
@@ -129,9 +213,37 @@ function printNextSteps(targetDir: string, name: string): void {
       `  cd ${rel}`,
       '  cp env/environments.example.json env/environments.json   # set BASE_URL / API_BASE_URL',
       '  cp testData/users.example.json testData/users.json       # add login sessions (optional)',
-      '  npm test                                                 # runs chromium + api',
+      `  npm test                                                 # chromium + api (in ${testsDir}/)`,
       '',
-      'Add a plugin later:  npx create-pwtap add <maestro|appium|...>',
+      'Add a plugin later:  npx create-pwtap add <maestro|appium|ai-judge>',
     ].join('\n'),
   );
 }
+
+const GITHUB_WORKFLOW = `name: Playwright Tests
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+jobs:
+  test:
+    timeout-minutes: 60
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install dependencies
+        run: npm ci
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps
+      - name: Run tests
+        run: npm test
+      - uses: actions/upload-artifact@v4
+        if: \${{ !cancelled() }}
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 30
+`;

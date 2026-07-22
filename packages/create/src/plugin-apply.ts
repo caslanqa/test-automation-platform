@@ -16,10 +16,10 @@ function toPackages(pluginIds: string[]): string[] {
 }
 
 /** Run all injectors for one plugin manifest. Warns (does not throw) when a marker is missing. */
-function injectManifest(clientDir: string, m: PluginManifest): void {
+function injectManifest(clientDir: string, m: PluginManifest, testsDir: string): void {
   mergePluginPackageJson(clientDir, m);
   mergePluginEnv(clientDir, m);
-  copyExamples(clientDir, m);
+  copyExamples(clientDir, m, testsDir);
   copyDocs(clientDir, m);
 
   if (applyFixture(clientDir, m) === false) {
@@ -58,9 +58,16 @@ export interface AddOptions {
   clientDir: string;
   pluginIds: string[];
   install: boolean;
+  /** The project's tests folder (default 'tests') — where plugin example specs are copied. */
+  testsDir?: string;
 }
 
-export async function addPlugins({ clientDir, pluginIds, install }: AddOptions): Promise<void> {
+export async function addPlugins({
+  clientDir,
+  pluginIds,
+  install,
+  testsDir = 'tests',
+}: AddOptions): Promise<void> {
   const packages = toPackages(pluginIds);
   if (packages.length === 0) {
     return;
@@ -75,7 +82,7 @@ export async function addPlugins({ clientDir, pluginIds, install }: AddOptions):
       log.warn(`Could not load manifest for ${pkg} — is it installed? Skipping.`);
       continue;
     }
-    injectManifest(clientDir, m);
+    injectManifest(clientDir, m, testsDir);
     await runEnsure(clientDir, m);
     log.done(`Added ${pkg}`);
   }

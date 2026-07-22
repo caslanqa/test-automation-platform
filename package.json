@@ -13,19 +13,19 @@
     "packages/*"
   ],
   "scripts": {
-    "pack:platform": "npm pack packages/core-template",
     "build": "tsc -b",
+    "changeset": "changeset",
     "clean": "tsc -b --clean",
-    "lint": "eslint .",
-    "lint:fix": "eslint . --fix",
+    "commit": "cz",
     "format": "prettier --write \"**/*.{ts,js,json,md,yml}\"",
     "format:check": "prettier --check \"**/*.{ts,js,json,md,yml}\"",
-    "smoke": "node scripts/smoke-scaffold.mjs",
-    "changeset": "changeset",
-    "version-packages": "changeset version",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "pack:platform": "npm pack packages/core-template",
+    "prepare": "husky",
     "release": "changeset publish",
-    "commit": "cz",
-    "prepare": "husky"
+    "smoke": "node scripts/smoke-scaffold.mjs",
+    "version-packages": "changeset version"
   },
   "lint-staged": {
     "*.{ts,tsx,js,mjs,cjs}": [

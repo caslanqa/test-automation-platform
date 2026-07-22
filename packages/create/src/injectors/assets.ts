@@ -28,8 +28,20 @@ function packageRoot(clientDir: string, pkg: string): string | null {
 }
 
 /** Copy a plugin's example tests/flows into the client once — never overwriting existing files. */
-export function copyExamples(clientDir: string, m: PluginManifest): void {
-  copyAssets(clientDir, m, m.examples);
+export function copyExamples(clientDir: string, m: PluginManifest, testsDir = 'tests'): void {
+  const examples =
+    testsDir === 'tests'
+      ? m.examples
+      : m.examples?.map(a => ({ ...a, dest: remapTestsDir(a.dest, testsDir) }));
+  copyAssets(clientDir, m, examples);
+}
+
+/** Rewrite a `tests/...` example destination onto the project's chosen tests folder. */
+function remapTestsDir(dest: string, testsDir: string): string {
+  if (dest === 'tests') {
+    return testsDir;
+  }
+  return dest.startsWith('tests/') ? `${testsDir}${dest.slice('tests'.length)}` : dest;
 }
 
 /** Copy a plugin's docs into the client (e.g. docs/MAESTRO.md). */
