@@ -23,6 +23,7 @@
     "smoke": "node scripts/smoke-scaffold.mjs",
     "changeset": "changeset",
     "version-packages": "changeset version",
+    "release": "changeset publish",
     "commit": "cz",
     "prepare": "husky"
   },

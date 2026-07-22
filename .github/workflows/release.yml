@@ -1,0 +1,51 @@
+name: Release
+
+# Manual-only. Trigger from the Actions tab (Release → Run workflow), or `gh workflow run release.yml`.
+# Changesets decides what the run does, based on pending .changeset/*.md files:
+#   - Pending changesets present  → opens/updates a "Version Packages" PR (bumps versions + changelogs).
+#     Review & merge that PR, then run this workflow again to publish.
+#   - No pending changesets        → publishes the current versions to npm (npmjs.org) + tags a GitHub Release.
+# Requires repo secret NPM_TOKEN (npm "Automation" token — bypasses 2FA in CI) and, for the Version PR,
+# Settings → Actions → General → "Allow GitHub Actions to create and approve pull requests".
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write # commit version bumps / push tags + GitHub Releases
+  pull-requests: write # open the Version Packages PR
+
+jobs:
+  release:
+    # Never run on forks — publishing belongs to the canonical repo only.
+    if: github.repository == 'caslanqa/playwright-ai-distro'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          registry-url: 'https://registry.npmjs.org'
+
+      - run: npm ci
+
+      - name: Build all packages
+        run: npm run build
+
+      - name: Create Release PR or publish to npm
+        uses: changesets/action@v1
+        with:
+          version: npm run version-packages
+          publish: npm run release
+          commit: 'chore(release): version packages'
+          title: 'chore(release): version packages'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

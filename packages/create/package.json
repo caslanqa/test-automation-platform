@@ -1,9 +1,14 @@
 {
   "name": "@pwtap/create",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Scaffold a Playwright Test Automation Platform project — UI + API core with opt-in plugins (npm init @pwtap)",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/caslanqa/playwright-ai-distro.git",
+    "directory": "packages/create"
+  },
   "engines": {
     "node": ">=20.19"
   },

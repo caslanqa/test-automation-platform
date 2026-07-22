@@ -4,11 +4,41 @@
     "type-enum": [
       2,
       "always",
-      ["feat", "fix", "docs", "style", "refactor", "perf", "test", "build", "ci", "chore", "revert", "ai"]
+      [
+        "feat",
+        "fix",
+        "docs",
+        "style",
+        "refactor",
+        "perf",
+        "test",
+        "build",
+        "ci",
+        "chore",
+        "revert",
+        "ai"
+      ]
     ],
     "type-case": [2, "always", "lower-case"],
     "type-empty": [2, "never"],
-    "scope-enum": [2, "always", ["core", "utils", "config", "fixtures", "pages", "tests", "ci", "docs", "mobile", "api", "ui"]],
+    "scope-enum": [
+      2,
+      "always",
+      [
+        "core",
+        "utils",
+        "config",
+        "fixtures",
+        "pages",
+        "tests",
+        "ci",
+        "docs",
+        "mobile",
+        "api",
+        "ui",
+        "ai"
+      ]
+    ],
     "scope-case": [2, "always", "lower-case"],
     "subject-empty": [2, "never"],
     "subject-full-stop": [2, "never", "."],
