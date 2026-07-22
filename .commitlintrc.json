@@ -36,7 +36,8 @@
         "mobile",
         "api",
         "ui",
-        "ai"
+        "ai",
+        "release"
       ]
     ],
     "scope-case": [2, "always", "lower-case"],
