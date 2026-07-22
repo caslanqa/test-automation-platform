@@ -1,5 +1,11 @@
 # @pwtap/create
 
+## 0.3.0
+
+### Minor Changes
+
+- cf322df: Collect package.json metadata interactively, npm-init style: the scaffolder now prompts for version, description, author (defaulted from your git identity), keywords, and repository URL (alongside the existing project name and license), and writes them into the generated `package.json`. Empty answers are omitted; `-y` takes the defaults.
+
 ## 0.2.0
 
 ### Minor Changes
