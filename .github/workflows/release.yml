@@ -1,12 +1,5 @@
 name: Release
 
-# Manual-only. Trigger from the Actions tab (Release → Run workflow), or `gh workflow run release.yml`.
-# Changesets decides what the run does, based on pending .changeset/*.md files:
-#   - Pending changesets present  → opens/updates a "Version Packages" PR (bumps versions + changelogs).
-#     Review & merge that PR, then run this workflow again to publish.
-#   - No pending changesets        → publishes the current versions to npm (npmjs.org) + tags a GitHub Release.
-# Requires repo secret NPM_TOKEN (npm "Automation" token — bypasses 2FA in CI) and, for the Version PR,
-# Settings → Actions → General → "Allow GitHub Actions to create and approve pull requests".
 on:
   workflow_dispatch:
 
@@ -15,12 +8,10 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write # commit version bumps / push tags + GitHub Releases
-  pull-requests: write # open the Version Packages PR
+  contents: write
 
 jobs:
   release:
-    # Never run on forks — publishing belongs to the canonical repo only.
     if: github.repository == 'caslanqa/test-automation-platform'
     runs-on: ubuntu-latest
     steps:
@@ -39,13 +30,28 @@ jobs:
       - name: Build all packages
         run: npm run build
 
-      - name: Create Release PR or publish to npm
-        uses: changesets/action@v1
-        with:
-          version: npm run version-packages
-          publish: npm run release
-          commit: 'chore(release): version packages'
-          title: 'chore(release): version packages'
+      - name: Version, commit, and publish
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          HUSKY: '0'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Apply pending changesets: bump versions, write changelogs, delete the changeset files.
+          npx changeset version
+          npm install --package-lock-only --ignore-scripts
+
+          # Commit + push the bump to main FIRST (so a later publish failure is recoverable on re-run).
+          # Skipped when there was nothing to version (publish-only runs).
+          if git diff --quiet && git diff --cached --quiet; then
+            echo "No version changes to commit — publish-only run."
+          else
+            git add -A
+            git commit -m "chore(release): version packages [skip ci]"
+            git push origin HEAD:main
+          fi
+
+          # Publish every package whose version isn't on npm yet, then push the release tags.
+          npx changeset publish
+          git push origin --tags
