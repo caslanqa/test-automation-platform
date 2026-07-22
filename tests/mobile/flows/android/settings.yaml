@@ -1,7 +1,0 @@
-# Smoke flow (Android): launch the built-in Settings app — present on every Android emulator, so it
-# runs with zero app install (the mobile analog of saucedemo/petstore). Replace appId + steps with
-# your app's; add tapOn / assertVisible / inputText as needed.
-appId: com.android.settings
----
-- launchApp
-- takeScreenshot: android-settings

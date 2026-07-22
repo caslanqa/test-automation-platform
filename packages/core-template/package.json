@@ -1,0 +1,8 @@
+{
+  "name": "@pwtap/core-template",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Private source of truth for the scaffolded core project (UI + API). Copied verbatim into new projects by @pwtap/create; never published.",
+  "type": "module",
+  "license": "MIT"
+}

@@ -1,0 +1,44 @@
+{
+  "name": "@pwtap/plugin-ai-judge",
+  "version": "0.1.0",
+  "description": "AI/LLM judge matchers for Playwright — toPassRubric/toScoreAtLeast/toMatchImage over Ollama, OpenAI-compatible endpoints (OpenAI/OpenRouter/NVIDIA/Groq/…), and native Claude",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/caslanqa/playwright-ai-distro.git",
+    "directory": "packages/plugin-ai-judge"
+  },
+  "engines": {
+    "node": ">=20.19"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./manifest": {
+      "types": "./dist/manifest.d.ts",
+      "default": "./dist/manifest.js"
+    }
+  },
+  "files": [
+    "dist",
+    "templates"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "peerDependencies": {
+    "@playwright/test": ">=1.61.0"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.112.5"
+  }
+}

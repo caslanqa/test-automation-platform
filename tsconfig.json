@@ -1,35 +1,9 @@
 {
-  "compilerOptions": {
-    "target": "ES2022",
-    "lib": ["ES2022", "DOM"],
-    "module": "ESNext",
-    "moduleResolution": "Bundler",
-    "ignoreDeprecations": "5.0",
-
-    "types": ["node", "@playwright/test"],
-    "noEmit": true,
-    "isolatedModules": true,
-
-    "resolveJsonModule": true,
-    "esModuleInterop": true,
-    "forceConsistentCasingInFileNames": true,
-    "strict": true,
-    "skipLibCheck": true,
-
-    "baseUrl": ".",
-    "paths": {
-      "@api/*": ["api/*"],
-      "@mobile/*": ["mobile/*"],
-      "@desktop/*": ["desktop/*"],
-      "@utils/*": ["utils/*"],
-      "@pages/*": ["pages/*"],
-      "@fixtures/*": ["fixtures/*"],
-      "@tests/*": ["tests/*"],
-      "@env/*": ["env/*"],
-      "@testData/*": ["testData/*"],
-      "@config/*": ["config/*"]
-    }
-  },
-  "include": ["**/*.ts"],
-  "exclude": ["node_modules", "dist", "coverage", "playwright-report", "test-results"]
+  "//": "Solution file for the monorepo. Each publishable package is a composite project referenced here. `tsc -b` builds them in dependency order. core-template/files is NOT built here — it is template source compiled in the scaffolded client project's own tsconfig.",
+  "files": [],
+  "references": [
+    { "path": "packages/platform" },
+    { "path": "packages/create" },
+    { "path": "packages/plugin-ai-judge" }
+  ]
 }

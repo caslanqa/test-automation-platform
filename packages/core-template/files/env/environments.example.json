@@ -1,0 +1,20 @@
+{
+  "_note": "Per-environment test config. Select with TEST_ENV (default = common.DEFAULT_TEST_ENV). 'common' is merged into every env (with ${TEST_ENV.X} resolved from the selected env block). 'environments' holds per-env scalars: BASE_URL (UI, the Playwright baseURL) and API_BASE_URL (the api project's baseURL, kept separate so the two never collide). Every string scalar is flattened to a process.env key by loadEnv. Login sessions live in testData/users.json (not here). Plugins add their own keys under 'common' when installed.",
+  "common": {
+    "DEFAULT_TEST_ENV": "dev"
+  },
+  "environments": {
+    "dev": {
+      "BASE_URL": "https://www.saucedemo.com/",
+      "API_BASE_URL": "https://petstore3.swagger.io/api/v3"
+    },
+    "staging": {
+      "BASE_URL": "https://www.saucedemo.com/",
+      "API_BASE_URL": "https://petstore3.swagger.io/api/v3"
+    },
+    "production": {
+      "BASE_URL": "https://www.saucedemo.com/",
+      "API_BASE_URL": "https://petstore3.swagger.io/api/v3"
+    }
+  }
+}

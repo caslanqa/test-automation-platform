@@ -1,0 +1,19 @@
+node_modules/
+dist/
+
+# Playwright / reports
+playwright-report/
+test-results/
+allure-results/
+allure-report/
+playwright/.cache/
+
+# Cached auth sessions (per-session storage state)
+.auth/
+
+# Secrets — only the *.example.json files are tracked
+env/environments.json
+testData/users.json
+
+*.log
+.DS_Store

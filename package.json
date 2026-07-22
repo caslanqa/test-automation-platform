@@ -1,109 +1,51 @@
 {
-  "name": "@caslanqa/create-playwright-ai",
-  "version": "4.0.1",
-  "description": "Scaffold a ready-to-run Playwright + TypeScript test framework: AI Judge for LLM evaluation, layered API testing, lazy session auth, and full tooling (ESLint, Prettier, husky, commitlint)",
+  "name": "playwright-test-automation-platform",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Playwright Test Automation Platform — npm-workspaces monorepo (UI + API core; opt-in plugins)",
   "author": "CaslanQA",
   "license": "MIT",
-  "type": "module",
-  "keywords": [
-    "playwright",
-    "testing",
-    "e2e",
-    "ai",
-    "llm",
-    "judge",
-    "automation",
-    "ollama",
-    "chatbot-testing",
-    "api-testing",
-    "create",
-    "scaffold",
-    "starter"
-  ],
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/caslanqa/playwright-ai-distro.git"
-  },
-  "bugs": {
-    "url": "https://github.com/caslanqa/playwright-ai-distro/issues"
-  },
-  "homepage": "https://github.com/caslanqa/playwright-ai-distro#readme",
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.19"
   },
-  "bin": {
-    "create-playwright-ai": "bin/create-project.cjs"
-  },
-  "files": [
-    "api/",
-    "bin/",
-    "config/",
-    "docs/AI_JUDGE.md",
-    "docs/API_TESTING.md",
-    "docs/MOBILE_TESTING.md",
-    "docs/MOBILE_CHEATSHEET.md",
-    "docs/DESKTOP_TESTING.md",
-    "env/environments.example.json",
-    "fixtures/",
-    "mobile/",
-    "desktop/",
-    "pages/",
-    "templates/",
-    "testData/users.example.json",
-    "tests/",
-    "utils/",
-    ".github/",
-    "playwright.config.ts",
-    "tsconfig.json",
-    "eslint.config.js",
-    ".prettierrc",
-    ".commitlintrc.json",
-    "README.md"
+  "workspaces": [
+    "packages/*"
   ],
   "scripts": {
-    "clearReports": "rm -rf playwright-report test-results allure-report allure-results",
-    "test": "playwright test",
-    "test:headed": "playwright test --headed",
-    "test:debug": "playwright test --debug",
-    "test:ui": "playwright test --ui",
-    "test:parallel": "playwright test --workers=4",
-    "test:serial": "playwright test --workers=1",
-    "test:api": "playwright test --project=api",
-    "test:mobile": "MOBILE=1 playwright test --project=mobile --workers=3",
-    "mobile:create-device": "node mobile/create-device.mjs",
-    "test:desktop": "DESKTOP=1 playwright test --project=desktop",
-    "test:tag": "playwright test --workers=1 --project chromium --retries=0 --grep @wip",
-    "report:playwright": "playwright show-report",
-    "report:allure": "allure generate allure-results --output allure-report && allure serve allure-results",
-    "codegen": "playwright codegen",
+    "pack:platform": "npm pack packages/core-template",
+    "build": "tsc -b",
+    "clean": "tsc -b --clean",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "format": "prettier --write \"**/*.{ts,js,json,md}\"",
-    "format:check": "prettier --check \"**/*.{ts,js,json,md}\"",
-    "type-check": "tsc --noEmit",
+    "format": "prettier --write \"**/*.{ts,js,json,md,yml}\"",
+    "format:check": "prettier --check \"**/*.{ts,js,json,md,yml}\"",
+    "smoke": "node scripts/smoke-scaffold.mjs",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "release": "changeset publish",
     "commit": "cz",
     "prepare": "husky"
   },
   "lint-staged": {
-    "*.{ts,tsx,js}": [
+    "*.{ts,tsx,js,mjs,cjs}": [
       "eslint --fix",
       "prettier --write"
     ],
-    "*.{json,md,prettier}": [
+    "*.{json,md,yml}": [
       "prettier --write"
     ]
   },
   "devDependencies": {
+    "@changesets/cli": "^2.27.1",
     "@commitlint/cli": "^21.1.0",
     "@commitlint/config-conventional": "^21.1.0",
     "@playwright/test": "^1.61.1",
     "@types/node": "^24.13.2",
     "@typescript-eslint/eslint-plugin": "^8.62.0",
     "@typescript-eslint/parser": "^8.62.0",
-    "allure": "^3.13.1",
     "allure-playwright": "^3.10.1",
     "commitizen": "^4.3.2",
-    "dotenv": "^17.4.2",
     "eslint": "^10.5.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-playwright": "^2.10.4",
@@ -112,8 +54,6 @@
     "lint-staged": "^17.0.8",
     "prettier": "^3.8.4",
     "prettier-plugin-organize-imports": "^4.3.0",
-    "ts-node": "^10.9.2",
-    "tsconfig-paths": "^4.2.0",
     "typescript": "^5.9.3"
   }
 }

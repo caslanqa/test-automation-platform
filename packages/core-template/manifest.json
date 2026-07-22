@@ -1,0 +1,50 @@
+{
+  "//": "Core manifest — the base package.json scripts + devDependencies @pwtap/create writes into a new project, plus Playwright browsers to install and extra package.json fields. Single source of truth for the core scaffold; plugins add to this via their own manifests. Example: create reads coreManifest.scripts.test → \"playwright test\".",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "test:debug": "playwright test --debug",
+    "test:ui": "playwright test --ui",
+    "test:api": "playwright test --project=api",
+    "report:playwright": "playwright show-report",
+    "codegen": "playwright codegen",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write \"**/*.{ts,js,json,md}\"",
+    "type-check": "tsc --noEmit",
+    "commit": "cz",
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.1",
+    "@types/node": "^24.13.2",
+    "typescript": "^5.9.3",
+    "allure-playwright": "^3.10.1",
+    "eslint": "^10.5.0",
+    "@typescript-eslint/eslint-plugin": "^8.62.0",
+    "@typescript-eslint/parser": "^8.62.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-playwright": "^2.10.4",
+    "eslint-plugin-prettier": "^5.5.6",
+    "prettier": "^3.8.4",
+    "prettier-plugin-organize-imports": "^4.3.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.0.8",
+    "@commitlint/cli": "^21.1.0",
+    "@commitlint/config-conventional": "^21.1.0",
+    "commitizen": "^4.3.2",
+    "cz-conventional-changelog": "^3.3.0"
+  },
+  "browsers": ["chromium"],
+  "packageJson": {
+    "config": {
+      "commitizen": {
+        "path": "cz-conventional-changelog"
+      }
+    },
+    "lint-staged": {
+      "*.{ts,tsx,js}": ["eslint --fix", "prettier --write"],
+      "*.{json,md}": ["prettier --write"]
+    }
+  }
+}
