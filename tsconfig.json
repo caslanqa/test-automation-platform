@@ -4,6 +4,7 @@
   "references": [
     { "path": "packages/platform" },
     { "path": "packages/create" },
-    { "path": "packages/plugin-ai-judge" }
+    { "path": "packages/plugin-ai-judge" },
+    { "path": "packages/plugin-maestro" }
   ]
 }

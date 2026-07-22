@@ -235,6 +235,8 @@ npm run smoke      # scaffold a core-only project into a temp dir and verify it 
 
 Packages build in dependency order (`platform` → `core-template` → `create` → plugins). Plugins never import the core; they depend only on `@playwright/test` (peer), `@pwtap/platform`, and `process.env`.
 
+To build locally and install into a throwaway project **without publishing** (the tarball loop), see **[Local development & install](docs/LOCAL_DEVELOPMENT.md)**.
+
 ## Releasing and publishing
 
 Versioning and publishing are [changesets](https://github.com/changesets/changesets)-driven and run from the **Release** GitHub Action (manual `workflow_dispatch`).

@@ -29,7 +29,7 @@ export const KNOWN_PLUGINS: KnownPlugin[] = [
     description: 'Mobile testing with Maestro flows (Android + iOS)',
     flag: '--maestro',
     defaultSelected: false,
-    status: 'coming-soon',
+    status: 'stable',
   },
   {
     id: 'appium',
