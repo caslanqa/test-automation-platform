@@ -29,6 +29,15 @@ export interface DiscoveredDevice {
   name?: string;
 }
 
+/** A running screen recording, returned by `startAndroidRecording`/`startSimRecording`. */
+export interface ScreenRecording {
+  /**
+   * Stop recording and finalize the video at the path it was started with. Best-effort — never
+   * throws; returns whether a playable file was actually produced.
+   */
+  stop(): Promise<boolean>;
+}
+
 /**
  * The single OS seam. Every OS-specific command/path lives behind this interface, so supporting
  * another OS later means adding one implementation + one branch in `getPlatform()` — no changes to

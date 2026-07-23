@@ -29,14 +29,6 @@ export type MaestroDirection = 'UP' | 'DOWN' | 'LEFT' | 'RIGHT';
  */
 export type ScreenshotMode = 'off' | 'only-on-failure' | 'on';
 
-/** Resolve the screenshot mode from `MOBILE_SCREENSHOT` (default `only-on-failure`). */
-export function resolveScreenshotMode(): ScreenshotMode {
-  const value = process.env.MOBILE_SCREENSHOT?.trim().toLowerCase();
-  return value === 'on' || value === 'off' || value === 'only-on-failure'
-    ? value
-    : 'only-on-failure';
-}
-
 /**
  * Whether to attach a command's real log (the YAML sent + Maestro's raw response) even when it
  * SUCCEEDED, from `MOBILE_STEP_LOGS`. A failing command always attaches its log regardless of this
@@ -90,26 +82,41 @@ export interface McpSessionHooks {
  * if (await maestro.isVisible('Cookie banner')) await maestro.tapOn('Accept');
  * await maestro.assertVisible('Dashboard');
  */
+/** Optional {@link MaestroMcpSession} construction settings — all have sane standalone defaults. */
+export interface MaestroSessionOptions {
+  /** When to capture screenshots + hierarchy. Default `'only-on-failure'`. */
+  screenshotMode?: ScreenshotMode;
+  /** Maestro executable. Default: `MAESTRO_BIN` env, or `maestro` on PATH. */
+  binary?: string;
+  /** Attach a command's real log even on success. Default: `MOBILE_STEP_LOGS` env. */
+  verboseLogs?: boolean;
+}
+
 export class MaestroMcpSession {
   private client: McpClient | undefined;
   private appId: string | undefined;
   /** Counter for unique per-step screenshot names when the mode is `on`. */
   private shotCount = 0;
+  private readonly screenshotMode: ScreenshotMode;
+  private readonly binary: string;
+  private readonly verboseLogs: boolean;
 
   /**
    * @param device The booted device this session drives.
    * @param hooks Report/attachment hooks from the fixture.
-   * @param screenshotMode When to capture screenshots + hierarchy; defaults to `MOBILE_SCREENSHOT`.
-   * @param binary Maestro executable; defaults to `MAESTRO_BIN` env or `maestro` on PATH.
-   * @param verboseLogs Attach a command's real log even on success; defaults to `MOBILE_STEP_LOGS`.
+   * @param options Screenshot mode / Maestro binary / verbose-log overrides — see
+   *   {@link MaestroSessionOptions}. The fixture passes `screenshotMode` explicitly (resolved from
+   *   Playwright's own `screenshot` option); bespoke callers can omit it for the standalone default.
    */
   constructor(
     private readonly device: DiscoveredDevice,
     private readonly hooks: McpSessionHooks,
-    private readonly screenshotMode: ScreenshotMode = resolveScreenshotMode(),
-    private readonly binary: string = process.env.MAESTRO_BIN || 'maestro',
-    private readonly verboseLogs: boolean = resolveVerboseStepLogs(),
-  ) {}
+    options: MaestroSessionOptions = {},
+  ) {
+    this.screenshotMode = options.screenshotMode ?? 'only-on-failure';
+    this.binary = options.binary ?? (process.env.MAESTRO_BIN || 'maestro');
+    this.verboseLogs = options.verboseLogs ?? resolveVerboseStepLogs();
+  }
 
   /** Spawn `maestro mcp` and complete the MCP handshake on first use; reused on later calls. */
   private async ensureClient(): Promise<McpClient> {

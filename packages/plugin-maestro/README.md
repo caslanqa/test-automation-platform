@@ -84,7 +84,22 @@ Every step's log is the actual data Maestro produced for it, not a synthesized s
 
 A failing step **always** attaches its log; on success it's opt-in (`MOBILE_STEP_LOGS=1`) so passing
 runs stay quiet by default. On failure, imperative commands also attach a screenshot + view hierarchy
-at the point of failure (`MOBILE_SCREENSHOT=on` captures one after every command instead).
+at the point of failure.
+
+**`MOBILE_DEVICE_LOG=1`** attaches the device's own system log for the whole test (Android `logcat`,
+iOS the unified system log) — off by default.
+
+**Screen recording and screenshots aren't mobile-specific settings** — this fixture reads Playwright's
+own built-in `video`/`screenshot` options (`use.video`/`use.screenshot` in `playwright.config.ts`, or a
+project/describe override), so one central setting controls both for chromium **and** maestro alike:
+all seven video modes (`off` / `on` / `retain-on-failure` / `on-first-retry` / `on-all-retries` /
+`retain-on-first-failure` / `retain-on-failure-and-retries`) and all four screenshot modes
+(`off` / `on` / `only-on-failure` / `on-first-failure`):
+
+```ts
+// playwright.config.ts
+use: { video: 'retain-on-failure', screenshot: 'only-on-failure' }, // now applies to maestro too
+```
 
 ## Requirements
 

@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { getPlatform } from '../platform.js';
+import type { ScreenRecording } from '../types.js';
 
 const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -155,4 +156,79 @@ export async function bootAndroidAvd(
     await sleep(2_000);
   }
   throw new Error(`[pwtap] AVD '${avdName}' did not finish booting within ${timeoutMs / 1000}s`);
+}
+
+/** Clear the device's logcat buffer — call before a capture window begins. Best-effort. */
+export async function clearLogcat(serial: string): Promise<void> {
+  const platform = getPlatform();
+  await platform.run(platform.adbPath(), ['-s', serial, 'logcat', '-c'], {
+    timeoutMs: 10_000,
+    env: platform.androidEnv(),
+  });
+}
+
+/** Dump everything logcat has captured since the last {@link clearLogcat}. */
+export async function dumpLogcat(serial: string): Promise<string> {
+  const platform = getPlatform();
+  const { stdout } = await platform.run(platform.adbPath(), ['-s', serial, 'logcat', '-d'], {
+    timeoutMs: 30_000,
+    env: platform.androidEnv(),
+  });
+  return stdout;
+}
+
+/**
+ * Start recording the device's screen via `adb shell screenrecord`, capped at 3 minutes (Android's
+ * own safety limit — a forgotten {@link ScreenRecording.stop} still self-terminates rather than
+ * filling device storage). Returns `undefined` on any spawn failure (best-effort, never throws).
+ */
+export function startAndroidRecording(
+  serial: string,
+  outputPath: string,
+): ScreenRecording | undefined {
+  const platform = getPlatform();
+  const env = platform.androidEnv();
+  const remotePath = `/sdcard/pwtap-rec-${Date.now()}.mp4`;
+  let child: ReturnType<typeof spawn>;
+  try {
+    child = spawn(
+      platform.adbPath(),
+      ['-s', serial, 'shell', 'screenrecord', '--time-limit', '180', remotePath],
+      { env, stdio: 'ignore' },
+    );
+    child.on('error', () => {
+      /* surfaced via stop()'s pulled-file check instead of an unhandled 'error' crash */
+    });
+  } catch {
+    return undefined;
+  }
+  return {
+    async stop(): Promise<boolean> {
+      try {
+        // SIGINT the REMOTE screenrecord process so it finalizes the mp4 container cleanly —
+        // killing the local adb client does not reliably stop or finalize the remote recording.
+        await platform.run(
+          platform.adbPath(),
+          ['-s', serial, 'shell', 'pkill', '-SIGINT', 'screenrecord'],
+          { timeoutMs: 5_000, env },
+        );
+        await sleep(1_500); // give screenrecord a moment to flush and finalize the file
+        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+        const pulled = await platform.run(
+          platform.adbPath(),
+          ['-s', serial, 'pull', remotePath, outputPath],
+          { timeoutMs: 30_000, env },
+        );
+        await platform.run(platform.adbPath(), ['-s', serial, 'shell', 'rm', '-f', remotePath], {
+          timeoutMs: 5_000,
+          env,
+        });
+        child.kill();
+        return pulled.code === 0 && fs.existsSync(outputPath);
+      } catch {
+        child.kill();
+        return false;
+      }
+    },
+  };
 }

@@ -16,9 +16,9 @@ export type { DiscoveredDevice, MobilePlatform } from '@pwtap/platform';
 export { maestroError } from './core/maestroError.js';
 export {
   MaestroMcpSession,
-  resolveScreenshotMode,
   resolveVerboseStepLogs,
   type MaestroDirection,
+  type MaestroSessionOptions,
   type McpSessionHooks,
   type ScreenshotMode,
 } from './core/MaestroMcpSession.js';

@@ -1,4 +1,9 @@
+import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+
 import { getPlatform } from '../platform.js';
+import type { ScreenRecording } from '../types.js';
 
 const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -69,3 +74,70 @@ export async function quitSimulatorApp(): Promise<void> {
 
 // Re-exported so callers can `await sleep(...)` if they compose these; kept internal otherwise.
 export { sleep as _sleep };
+
+/** Zero-pad `n` to `len` digits. */
+function pad(n: number, len = 2): string {
+  return String(n).padStart(len, '0');
+}
+
+/**
+ * The current moment (or `at`), formatted for `log show --start`/`--end`: LOCAL wall-clock time
+ * with an EXPLICIT numeric UTC offset (`YYYY-MM-DD HH:MM:SS±HHMM`). `log show` interprets a bare
+ * "HH:MM:SS" (no offset) as local time, so a naive UTC-formatted string silently captures the wrong
+ * window — the explicit offset makes this correct regardless of the host's timezone. Call once
+ * before a capture window begins.
+ */
+export function logCaptureStart(at: Date = new Date()): string {
+  const offsetMin = -at.getTimezoneOffset(); // Date.getTimezoneOffset() is inverted (minutes BEHIND UTC)
+  const sign = offsetMin >= 0 ? '+' : '-';
+  const abs = Math.abs(offsetMin);
+  const offset = `${sign}${pad(Math.floor(abs / 60))}${pad(abs % 60)}`;
+  return (
+    `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())} ` +
+    `${pad(at.getHours())}:${pad(at.getMinutes())}:${pad(at.getSeconds())}${offset}`
+  );
+}
+
+/** Dump the simulator's unified system log since `start` (from {@link logCaptureStart}). */
+export async function dumpSimLog(udid: string, start: string): Promise<string> {
+  const { stdout } = await getPlatform().simctl(
+    ['spawn', udid, 'log', 'show', '--start', start, '--style', 'compact'],
+    { timeoutMs: 30_000 },
+  );
+  return stdout;
+}
+
+/**
+ * Start recording the simulator's screen via `simctl io recordVideo`, writing directly to
+ * `outputPath` (no device-side pull needed, unlike Android). Returns `undefined` on any spawn
+ * failure (best-effort, never throws).
+ */
+export function startSimRecording(udid: string, outputPath: string): ScreenRecording | undefined {
+  let child: ReturnType<typeof spawn>;
+  try {
+    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+    child = spawn(
+      'xcrun',
+      ['simctl', 'io', udid, 'recordVideo', '--codec=h264', '--force', outputPath],
+      { stdio: 'ignore' },
+    );
+    child.on('error', () => {
+      /* surfaced via stop()'s file-existence check instead of an unhandled 'error' crash */
+    });
+  } catch {
+    return undefined;
+  }
+  return {
+    async stop(): Promise<boolean> {
+      if (child.exitCode !== null) {
+        return fs.existsSync(outputPath); // already exited (e.g. spawn failed) — report what's there
+      }
+      // simctl finalizes the video cleanly on SIGINT to this LOCAL process — unlike Android's
+      // adb-shell case, there's no remote session that needs a separately signalled kill.
+      const exited = new Promise<void>(resolve => child.once('exit', () => resolve()));
+      child.kill('SIGINT');
+      await Promise.race([exited, sleep(5_000)]);
+      return fs.existsSync(outputPath);
+    },
+  };
+}

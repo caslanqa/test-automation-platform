@@ -3,13 +3,23 @@ import path from 'node:path';
 
 import { test as base, expect } from '@playwright/test';
 
-import type { DiscoveredDevice, MobilePlatform } from '@pwtap/platform';
-import { acquireDevice, acquireDeviceLock, deviceLockKey } from '@pwtap/platform';
+import type { DiscoveredDevice, MobilePlatform, ScreenRecording } from '@pwtap/platform';
+import {
+  acquireDevice,
+  acquireDeviceLock,
+  clearLogcat,
+  deviceLockKey,
+  dumpLogcat,
+  dumpSimLog,
+  logCaptureStart,
+  startAndroidRecording,
+  startSimRecording,
+} from '@pwtap/platform';
 
 import { ensureAppInstalled } from './core/appInstaller.js';
 import { recordBootedDevice } from './core/booted.js';
 import { maestroError } from './core/maestroError.js';
-import type { MaestroDirection } from './core/MaestroMcpSession.js';
+import type { MaestroDirection, ScreenshotMode } from './core/MaestroMcpSession.js';
 import { MaestroMcpSession, resolveVerboseStepLogs } from './core/MaestroMcpSession.js';
 import { maestroFailureDetail, parseMaestroSteps } from './core/maestroReport.js';
 import { MaestroRunner, maestroSupportsParallel } from './core/MaestroRunner.js';
@@ -29,6 +39,14 @@ export interface MobileOptions {
    * - `app` (local path or http(s) URL to an APK / iOS `.app`/`.zip`) is installed on the device once
    *   before the flow runs. Falls back to `MOBILE_APP_ANDROID` / `MOBILE_APP_IOS`. Omit for built-in
    *   apps (e.g. the Settings example) that need no install.
+   *
+   * Screen recording and screenshots are NOT separate mobile settings — this fixture reads
+   * Playwright's own built-in `video`/`screenshot` options (`use.video`/`use.screenshot` in
+   * playwright.config.ts, or a project/describe override), so one central setting governs both for
+   * chromium AND maestro alike. All seven of Playwright's video modes are honored
+   * (`off`/`on`/`retain-on-failure`/`on-first-retry`/`on-all-retries`/`retain-on-first-failure`/
+   * `retain-on-failure-and-retries`), and all four screenshot modes
+   * (`off`/`on`/`only-on-failure`/`on-first-failure`).
    *
    * For **parallel** runs, give each test its device and pass `--workers=N`: tests on the same device
    * serialize (a cross-process lock — they wait, not skip), different devices run in parallel.
@@ -130,6 +148,98 @@ function resolveHeadless(option?: boolean): boolean {
   return env ? /^(1|true|yes|on)$/i.test(env) : true;
 }
 
+/** Attach the device's real system log for the whole test — from `MOBILE_DEVICE_LOG`. */
+function resolveDeviceLogMode(): boolean {
+  const value = process.env.MOBILE_DEVICE_LOG?.trim();
+  return value ? /^(1|true|yes|on)$/i.test(value) : false;
+}
+
+/** Playwright's own `video` modes (its `VideoMode` type) — the values `use.video` resolves to. */
+type PlaywrightVideoMode =
+  | 'off'
+  | 'on'
+  | 'retain-on-failure'
+  | 'on-first-retry'
+  | 'on-all-retries'
+  | 'retain-on-first-failure'
+  | 'retain-on-failure-and-retries';
+
+/** Normalize the injected `video` fixture value — a bare mode string, or `{ mode, size, show }`. */
+function videoModeOf(video: unknown): PlaywrightVideoMode {
+  if (typeof video === 'string') {
+    return video as PlaywrightVideoMode;
+  }
+  if (video && typeof video === 'object' && 'mode' in video) {
+    return (video as { mode: PlaywrightVideoMode }).mode;
+  }
+  return 'off';
+}
+
+/**
+ * Whether to even start recording THIS attempt, given Playwright's `video` mode and the attempt
+ * number (`testInfo.retry`: `0` on the first attempt, `1` on the first retry, …). Modes scoped to
+ * retries only start recording once we're actually on a qualifying attempt, so a first attempt under
+ * `on-first-retry` never pays the recording cost for a video that would just be discarded anyway.
+ */
+function shouldStartRecording(mode: PlaywrightVideoMode, retry: number): boolean {
+  switch (mode) {
+    case 'off':
+      return false;
+    case 'retain-on-first-failure':
+      return retry === 0;
+    case 'on-first-retry':
+      return retry === 1;
+    case 'on-all-retries':
+      return retry >= 1;
+    default: // 'on' | 'retain-on-failure' | 'retain-on-failure-and-retries'
+      return true;
+  }
+}
+
+/** Whether to keep (attach) a recording that WAS started, given the mode, attempt, and outcome. */
+function shouldKeepRecording(mode: PlaywrightVideoMode, retry: number, failed: boolean): boolean {
+  switch (mode) {
+    case 'off':
+      return false;
+    case 'on':
+    case 'on-first-retry':
+    case 'on-all-retries':
+      return true; // these modes only ever record on a qualifying attempt — keep whenever recorded
+    case 'retain-on-failure':
+    case 'retain-on-first-failure':
+      return failed;
+    case 'retain-on-failure-and-retries':
+      return failed || retry >= 1;
+  }
+}
+
+/** Playwright's own `screenshot` modes (its type) — the values `use.screenshot` resolves to. */
+type PlaywrightScreenshotMode = 'off' | 'on' | 'only-on-failure' | 'on-first-failure';
+
+/** Normalize the injected `screenshot` fixture value — a bare mode string, or `{ mode, ... }`. */
+function screenshotModeOf(screenshot: unknown): PlaywrightScreenshotMode {
+  if (typeof screenshot === 'string') {
+    return screenshot as PlaywrightScreenshotMode;
+  }
+  if (screenshot && typeof screenshot === 'object' && 'mode' in screenshot) {
+    return (screenshot as { mode: PlaywrightScreenshotMode }).mode;
+  }
+  return 'off';
+}
+
+/**
+ * Collapse Playwright's `screenshot` mode down to {@link ScreenshotMode} (the 3 values
+ * `MaestroMcpSession` understands): `on-first-failure` only applies on the first attempt
+ * (`testInfo.retry === 0`) — on any retry it behaves as `off`, since a failure screenshot from the
+ * first attempt was already captured and retries wouldn't add one under this mode.
+ */
+function toSessionScreenshotMode(mode: PlaywrightScreenshotMode, retry: number): ScreenshotMode {
+  if (mode === 'on-first-failure') {
+    return retry === 0 ? 'only-on-failure' : 'off';
+  }
+  return mode;
+}
+
 /** Recursively collect the PNG screenshots Maestro wrote under `dir`. */
 function screenshots(dir: string): string[] {
   if (!fs.existsSync(dir)) {
@@ -154,7 +264,7 @@ export const test = base.extend<MobileOptions & MobileFixtures>({
   // `box: true` hides this fixture from the report's Before/After Hooks — the mobile test shows just
   // its Maestro flow steps, not a `fixture: maestro` section.
   maestro: [
-    async ({ mobile }, use, testInfo) => {
+    async ({ mobile, video, screenshot }, use, testInfo) => {
       const platform = resolvePlatform(mobile);
       const deviceName = mobile?.device || process.env.MOBILE_DEVICE || undefined;
 
@@ -164,10 +274,16 @@ export const test = base.extend<MobileOptions & MobileFixtures>({
       // `--workers>1` stays safe (just not faster). Override with MOBILE_PARALLEL.
       const lockKey = maestroSupportsParallel() ? deviceLockKey(platform, deviceName) : 'maestro';
       const release = await acquireDeviceLock(lockKey);
-      // Declared out here so `finally` can tear it down even if `use` throws mid-test.
+      // Declared out here (not inside try) so `finally` can reach them even if `use` throws mid-test.
       let session: MaestroMcpSession | undefined;
+      let recording: ScreenRecording | undefined;
+      let videoPath: string | undefined;
+      let deviceLogEnabled = false;
+      let videoMode: PlaywrightVideoMode = 'off';
+      let iosLogStart: string | undefined;
+      let device: DiscoveredDevice | null = null;
       try {
-        const device = await acquireDevice(platform, {
+        device = await acquireDevice(platform, {
           deviceName,
           headless: resolveHeadless(mobile?.headless),
           onBooted: recordBootedDevice, // record framework-booted devices so globalTeardown stops them
@@ -181,6 +297,26 @@ export const test = base.extend<MobileOptions & MobileFixtures>({
           return;
         }
 
+        // Start whole-test evidence capture (device log window / screen recording) as early as
+        // possible, so it also covers app install below. Both are best-effort and gated off by
+        // default — neither adds overhead unless explicitly enabled.
+        deviceLogEnabled = resolveDeviceLogMode();
+        if (deviceLogEnabled) {
+          if (platform === 'android') {
+            await clearLogcat(device.id);
+          } else {
+            iosLogStart = logCaptureStart();
+          }
+        }
+        videoMode = videoModeOf(video);
+        if (shouldStartRecording(videoMode, testInfo.retry)) {
+          videoPath = testInfo.outputPath('maestro-recording.mp4');
+          recording =
+            platform === 'android'
+              ? startAndroidRecording(device.id, videoPath)
+              : startSimRecording(device.id, videoPath);
+        }
+
         // Install the app under test (if configured) once before the flow runs; built-in apps need none.
         const appSource =
           mobile?.app ??
@@ -189,17 +325,30 @@ export const test = base.extend<MobileOptions & MobileFixtures>({
           await ensureAppInstalled(device, appSource);
         }
 
+        // A stable non-null binding for the closures below — TS doesn't carry the `if (!device)`
+        // narrowing of the outer `let` into nested arrow functions (e.g. `run` below).
+        const readyDevice = device;
         const runner = new MaestroRunner();
+        // Screenshot capture is likewise driven by Playwright's own `screenshot` option (not a
+        // mobile-specific setting) — same reasoning as `video` above.
+        const screenshotMode = toSessionScreenshotMode(
+          screenshotModeOf(screenshot),
+          testInfo.retry,
+        );
         // The imperative API's warm-driver session. Created here but only spawns its `maestro mcp`
         // process on the first imperative call, so batch-only tests (`maestro.run(flow)`) never pay
         // for it. Each command is reported as a step; artifacts attach without adding steps.
-        const mcp = new MaestroMcpSession(device, {
-          step: (title, body) => base.step(title, body),
-          outputDir: testInfo.outputDir,
-          // `testInfo.attach` (not attachments.push) so a screenshot/hierarchy binds to the current
-          // step — the failure evidence shows under the failing step, in the report and the trace.
-          report: (name, attachment) => testInfo.attach(name, attachment),
-        });
+        const mcp = new MaestroMcpSession(
+          readyDevice,
+          {
+            step: (title, body) => base.step(title, body),
+            outputDir: testInfo.outputDir,
+            // `testInfo.attach` (not attachments.push) so a screenshot/hierarchy binds to the current
+            // step — the failure evidence shows under the failing step, in the report and the trace.
+            report: (name, attachment) => testInfo.attach(name, attachment),
+          },
+          { screenshotMode },
+        );
         session = mcp; // hand to `finally` for teardown; `mcp` is what the closures below capture
         await use({
           device,
@@ -224,8 +373,8 @@ export const test = base.extend<MobileOptions & MobileFixtures>({
           rowValue: label => mcp.rowValue(label),
           run: async (flowPath, options) => {
             const result = await runner.run(flowPath, {
-              device: device.id,
-              platform: device.platform,
+              device: readyDevice.id,
+              platform: readyDevice.platform,
               outputDir: testInfo.outputDir,
               tags: options?.tags,
             });
@@ -300,6 +449,37 @@ export const test = base.extend<MobileOptions & MobileFixtures>({
         // device lock, so the next test on this device starts with a clean driver — two mcp processes
         // on one device would kill the driver.
         await session?.close();
+
+        if (recording && videoPath) {
+          const produced = await recording.stop();
+          const failed = testInfo.status !== testInfo.expectedStatus;
+          if (produced && shouldKeepRecording(videoMode, testInfo.retry, failed)) {
+            testInfo.attachments.push({
+              name: 'maestro-recording',
+              path: videoPath,
+              contentType: 'video/mp4',
+            });
+          }
+        }
+
+        if (deviceLogEnabled && device) {
+          try {
+            const log =
+              platform === 'android'
+                ? await dumpLogcat(device.id)
+                : await dumpSimLog(device.id, iosLogStart ?? logCaptureStart());
+            const logPath = testInfo.outputPath('device.log');
+            fs.writeFileSync(logPath, log);
+            testInfo.attachments.push({
+              name: 'device-log',
+              path: logPath,
+              contentType: 'text/plain',
+            });
+          } catch {
+            /* best-effort — device log capture never masks the real test result */
+          }
+        }
+
         release();
       }
     },

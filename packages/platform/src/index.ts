@@ -14,21 +14,28 @@ export type {
   Platform,
   RunOptions,
   RunResult,
+  ScreenRecording,
 } from './types.js';
 
 export {
   avdNameForSerial,
   bootAndroidAvd,
+  clearLogcat,
+  dumpLogcat,
   emulatorMode,
   listAvds,
   shutdownEmulator,
+  startAndroidRecording,
 } from './device/android.js';
 export { acquireDevice, findBootedDevice, type AcquireOptions } from './device/discover.js';
 export {
   bootIosSim,
+  dumpSimLog,
+  logCaptureStart,
   openSimulatorApp,
   quitSimulatorApp,
   resolveSimUdid,
   shutdownSim,
+  startSimRecording,
 } from './device/ios.js';
 export { acquireDeviceLock, deviceLockKey } from './device/lock.js';
