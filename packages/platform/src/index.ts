@@ -27,6 +27,12 @@ export {
   shutdownEmulator,
   startAndroidRecording,
 } from './device/android.js';
+export {
+  clearBootedDevices,
+  readBootedDevices,
+  recordBootedDevice,
+  stopBootedDevices,
+} from './device/booted.js';
 export { acquireDevice, findBootedDevice, type AcquireOptions } from './device/discover.js';
 export {
   bootIosSim,

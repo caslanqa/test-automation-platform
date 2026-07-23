@@ -2,12 +2,15 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import type { DiscoveredDevice } from '@pwtap/platform';
+import type { DiscoveredDevice } from '../types.js';
+import { shutdownEmulator } from './android.js';
+import { shutdownSim } from './ios.js';
 
-// Records the devices THIS run auto-booted (not reused ones), so globalTeardown can shut them down —
+// Records the devices THIS run auto-booted (not reused ones), so a teardown can shut them down —
 // leaving devices you booted yourself untouched. A file in tmp (cleared on OS reboot) shared between
 // the test workers (which record) and the main process (which tears down). Mobile runs serial, so no
-// concurrent writers.
+// concurrent writers. Shared across mobile engines (Maestro, Appium, …) — the file name predates
+// multi-engine support but is otherwise engine-neutral.
 const SESSION_FILE = path.join(os.tmpdir(), 'pwtap-mobile-booted.jsonl');
 
 /** Devices the framework booted this run. */
@@ -49,4 +52,28 @@ export function clearBootedDevices(): void {
   } catch {
     /* best-effort */
   }
+}
+
+/**
+ * Shut down the devices the framework AUTO-BOOTED this run (recorded via `recordBootedDevice`) so
+ * emulators/simulators don't linger. Devices booted by hand are never recorded, so they're left
+ * running. Pass `keepDevices: true` (an engine's own `*_KEEP_DEVICES` env var) to skip the actual
+ * shutdown but still clear the record — useful for fast iterative reruns. A no-op when nothing was
+ * booted.
+ */
+export async function stopBootedDevices(options: { keepDevices?: boolean } = {}): Promise<void> {
+  const booted = readBootedDevices();
+  if (booted.length === 0) {
+    return;
+  }
+  if (!options.keepDevices) {
+    for (const device of booted) {
+      if (device.platform === 'android') {
+        await shutdownEmulator(device.id);
+      } else {
+        await shutdownSim(device.id);
+      }
+    }
+  }
+  clearBootedDevices();
 }

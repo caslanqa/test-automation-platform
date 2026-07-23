@@ -12,12 +12,12 @@ import {
   dumpLogcat,
   dumpSimLog,
   logCaptureStart,
+  recordBootedDevice,
   startAndroidRecording,
   startSimRecording,
 } from '@pwtap/platform';
 
 import { ensureAppInstalled } from './core/appInstaller.js';
-import { recordBootedDevice } from './core/booted.js';
 import { maestroError } from './core/maestroError.js';
 import type { MaestroDirection, ScreenshotMode } from './core/MaestroMcpSession.js';
 import { MaestroMcpSession, resolveVerboseStepLogs } from './core/MaestroMcpSession.js';

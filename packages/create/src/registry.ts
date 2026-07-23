@@ -38,7 +38,7 @@ export const KNOWN_PLUGINS: KnownPlugin[] = [
     description: 'Mobile testing with Appium (iOS XCUITest, Android UiAutomator2)',
     flag: '--appium',
     defaultSelected: false,
-    status: 'coming-soon',
+    status: 'stable',
   },
   {
     id: 'ai-judge',

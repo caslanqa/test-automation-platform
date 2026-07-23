@@ -1,6 +1,4 @@
-import { shutdownEmulator, shutdownSim } from '@pwtap/platform';
-
-import { clearBootedDevices, readBootedDevices } from './core/booted.js';
+import { stopBootedDevices as platformStopBootedDevices } from '@pwtap/platform';
 
 /**
  * Shut down the devices the framework AUTO-BOOTED this run (recorded via the fixture's `onBooted`
@@ -10,20 +8,7 @@ import { clearBootedDevices, readBootedDevices } from './core/booted.js';
  * usable as a Playwright `globalTeardown` (default export).
  */
 export async function stopBootedDevices(): Promise<void> {
-  const booted = readBootedDevices();
-  if (booted.length === 0) {
-    return;
-  }
-  if (!process.env.MOBILE_KEEP_DEVICES) {
-    for (const device of booted) {
-      if (device.platform === 'android') {
-        await shutdownEmulator(device.id);
-      } else {
-        await shutdownSim(device.id);
-      }
-    }
-  }
-  clearBootedDevices();
+  await platformStopBootedDevices({ keepDevices: Boolean(process.env.MOBILE_KEEP_DEVICES) });
 }
 
 export default stopBootedDevices;

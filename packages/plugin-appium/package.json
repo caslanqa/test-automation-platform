@@ -1,0 +1,50 @@
+{
+  "name": "@pwtap/plugin-appium",
+  "version": "0.1.0",
+  "description": "Mobile testing for Playwright via Appium — a raw WebdriverIO session (app: WebdriverIO.Browser) over Android + iOS simulator, macOS-first",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/caslanqa/test-automation-platform.git",
+    "directory": "packages/plugin-appium"
+  },
+  "engines": {
+    "node": ">=20.19"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./manifest": {
+      "types": "./dist/manifest.d.ts",
+      "default": "./dist/manifest.js"
+    },
+    "./ensure": {
+      "types": "./dist/ensure.d.ts",
+      "default": "./dist/ensure.js"
+    }
+  },
+  "files": [
+    "dist",
+    "templates",
+    "docs"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "peerDependencies": {
+    "@playwright/test": ">=1.61.0"
+  },
+  "dependencies": {
+    "@pwtap/platform": "^0.2.0",
+    "webdriverio": "^9"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "prepack": "npm run build"
+  }
+}
