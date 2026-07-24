@@ -37,7 +37,7 @@
     "@playwright/test": ">=1.61.0"
   },
   "dependencies": {
-    "@pwtap/platform": "^0.2.0",
+    "@pwtap/platform": "^0.3.0",
     "electron": "^43.2.0",
     "prettier": "^3.9.6",
     "ws": "^8.21.1"
