@@ -36,6 +36,53 @@ test('login flow', async ({ maestro }) => {
 The `maestro mcp` process is spawned lazily on the first imperative call, so batch-only tests never
 pay for it.
 
+## Imperative function cookbook
+
+```ts
+test('imperative functions', async ({ maestro }) => {
+  await maestro.launchApp('com.example.app');
+
+  // Taps
+  await maestro.tapOn('Login');
+  await maestro.doubleTapOn('Search');
+  await maestro.longPressOn('Delete draft');
+
+  // Text input
+  await maestro.inputText('John Doe');
+  await maestro.hideKeyboard();
+  await maestro.eraseText();
+
+  // Assertions + branching
+  await maestro.assertVisible('Dashboard');
+  await maestro.assertNotVisible('Fatal error');
+  if (await maestro.isVisible('Cookie banner')) {
+    await maestro.tapOn('Accept');
+  }
+
+  // Navigation + gestures
+  await maestro.scroll('down');
+  await maestro.scrollUntilVisible('Settings');
+  await maestro.swipe('left');
+  await maestro.back();
+  await maestro.pressKey('enter');
+
+  // Debug helpers
+  const screenshotPath = await maestro.takeScreenshot('dashboard');
+  const screen = await maestro.inspectScreen();
+  const orderNo = await maestro.rowValue('Order #');
+
+  await expect(screenshotPath).toContain('dashboard');
+  await expect(screen.tree).toBeTruthy();
+  await expect(orderNo).toBeTruthy();
+});
+```
+
+Notes:
+
+- `isVisible()` is non-throwing and ideal for optional UI branches.
+- `assertVisible()` / `assertNotVisible()` are strict and should be used for expectations.
+- `inspectScreen()` and `rowValue()` are practical for dynamic flows when labels vary by locale.
+
 ## Selecting a device
 
 ```ts
@@ -49,8 +96,9 @@ test.use({ mobile: devices.android }); // any booted android device
 - `headless` — hidden by default; `false` shows the emulator window / Simulator app.
 - `app` — a local path or http(s) URL to an APK / iOS `.app`/`.zip`, installed once before the flow.
 
-Create devices from your installed toolchain with `npm run mobile:create-device`. Devices the
-framework auto-booted are shut down **automatically** after the run by the `maestro-teardown` project
+Create devices from your installed toolchain with `npm run mobile:create-device` (it also appends the
+new alias into both Maestro/Appium `devices` catalogs under `node_modules`). Devices the framework
+auto-booted are shut down **automatically** after the run by the `maestro-teardown` project
 (headed or headless); `npm run mobile:stop-devices` does it manually. Set `MOBILE_KEEP_DEVICES=1` to
 keep auto-booted devices for faster reruns. Devices you booted yourself are left running.
 

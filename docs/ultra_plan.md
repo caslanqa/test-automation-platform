@@ -68,6 +68,7 @@ repo root  (private, npm workspaces, engines.node ">=20.19")
 ## This PR — files & steps
 
 ### M0 · Workspace foundation
+
 - Root `package.json`: `{ "private": true, "workspaces": ["packages/*"], "engines": { "node": ">=20.19" } }`. Move dev tooling (eslint/prettier/husky/commitlint/typescript) here as root devDeps.
 - `tsconfig.base.json`: salvage `compilerOptions` from the current `tsconfig.json` (strict set) minus the client path aliases. `tsconfig.json` becomes a solution file with `references` to each package.
 - Salvage `eslint.config.js`, `.prettierrc`, `.commitlintrc.json`, `.husky/` to root.
@@ -75,7 +76,9 @@ repo root  (private, npm workspaces, engines.node ">=20.19")
 - **Verify:** single lockfile at root; `npm ls -ws` resolves; `tsc -b` green on empty packages.
 
 ### M1 · @pwtap/platform (published)
+
 `packages/platform/src/{index.ts, types.ts, macos.ts, device/{discover,lock,android,ios}.ts}`
+
 - Define `Platform` interface + `getPlatform()` factory; only `MacPlatform` today; `getPlatform` **throws** on non-darwin with a message naming the file to add.
 - Salvage macOS paths/commands out of `mobile/core/android.ts` (the `darwin` branch of `androidSdkRoot`, `adbPath`/`sdkTool`, `androidEnv`, `listAvds`, `bootAndroidAvd`, `shutdownEmulator`) and **all** of `mobile/core/ios.ts` (already 100% macOS: `xcrun simctl`, `open -a Simulator`, `osascript … quit`). Drop the `win32`/`linux` branches — they do not move.
 - Move `mobile/core/deviceLock.ts` **verbatim** (already OS-agnostic: `os.tmpdir()` + atomic `mkdir`); this is the shared `deviceLock` Maestro and Appium will both use.
@@ -83,7 +86,9 @@ repo root  (private, npm workspaces, engines.node ">=20.19")
 - **Verify (Mac):** `getPlatform().os === 'macos'`; `adbPath()` resolves under `~/Library/Android/sdk`; `simctl(['list','devices','-j'])` returns JSON; sim boot+quit works. On CI/Linux the package still type-checks; runtime device calls are Mac-only.
 
 ### M2 · core-template (private, not published)
+
 `packages/core-template/files/` — copied verbatim into every scaffold:
+
 - `api/` (salvage `api/core/ApiClient.ts`, `api/core/types.ts`, `api/services/PetService.ts`, `api/models/pet.ts`, `api/index.ts`).
 - `pages/` (salvage `pages/{BasePage,LoginPage,index}.ts`).
 - `config/` (salvage `config/{loadEnv,envUtils,index}.ts`).
@@ -100,7 +105,9 @@ repo root  (private, npm workspaces, engines.node ">=20.19")
 - **Verify:** copy `files/` to a throwaway dir, `npm i`, `tsc --noEmit` green, chromium `login.spec.ts` + `pet.api.ts` run.
 
 ### M2.5 · The managed barrel & config (new authored contract)
+
 `core-template/files/fixtures/index.ts`:
+
 ```ts
 import { mergeExpects, mergeTests } from '@playwright/test';
 import { test as uiTest, expect as uiExpect } from './ui';
@@ -109,21 +116,27 @@ import { test as apiTest } from './api';
 // pwtap:plugins:imports
 // pwtap:plugins:imports:end
 
-export const test = mergeTests(uiTest, apiTest,
+export const test = mergeTests(
+  uiTest,
+  apiTest,
   // pwtap:plugins:tests
   // pwtap:plugins:tests:end
 );
-export const expect = mergeExpects(uiExpect,
+export const expect = mergeExpects(
+  uiExpect,
   // pwtap:plugins:expects
   // pwtap:plugins:expects:end
 );
 ```
+
 - Because `ui.ts`/`api.ts` are both `base.extend` off the **same** `@playwright/test`, `mergeTests` is valid. The invariant `@playwright/test` = one copy is enforced by making it a **peer dep** in every plugin + relying on npm dedupe; option-fixture names must be unique (`session`, `mobile`, `appium`).
 - `add <plugin>` inserts, between the markers: an `import { test as <alias> } from '<pkg>'` line, the alias into `mergeTests`, and (if the plugin exports a matcher) the expect alias into `mergeExpects`. `expectAi` from `plugin-ai-judge` reaches `mergeExpects` this way. `remove` reverses it. If a marker is missing, the injector **prints the block to paste and warns** — never a half-edit.
 - `playwright.config.ts` gets the same two-marker treatment for gates + project spreads; each plugin's project is env-gated (`MAESTRO=1`/`APPIUM=1`) so bare `npm test` stays chromium+api.
 
 ### M3 · @pwtap/create (published scaffolder)
+
 `packages/create/src/{index.ts, registry.ts, manifest.ts, prompts.ts, commands/{create,add,remove}.ts, injectors/{packageJson,envJson,fixturesBarrel,pwConfig,tests,docs}.ts, util/{fs,log,run,markers}.ts}`
+
 - **Salvage the proven logic** from `bin/create-project.cjs`: `mergeJson`, `sortObj`, `deleteKeys`, `run` (strips `npm_*` env), `flagPresent` (argv + `npm_config_*`), `commandExists`, the readline prompter, the empty-dir guard, husky/git-init, and the marker-anchored `patchPlaywrightConfig` half-edit-safety pattern. Port to TS/ESM.
 - `registry.ts` = `KNOWN_PLUGINS: KnownPlugin[]` (pre-install menu; `id, package, category, description, flag, defaultSelected, status?`). Seed with maestro, appium, ai-judge(coming-soon) so the menu renders even before those packages publish.
 - `manifest.ts` = `PluginManifest` type (`devDependencies, scripts, envKeys, fixture?, playwrightProject?, examples?, docs?, readmeSection?, ensure?`); authoritative manifest loaded **post-install** via `require.resolve('<pkg>/manifest', { paths: [clientDir] })`.
@@ -133,6 +146,7 @@ export const expect = mergeExpects(uiExpect,
 - **Verify:** `smoke-scaffold.mjs` runs `create /tmp/pwtap-smoke -y` (no plugins) → `tsc --noEmit` + `playwright test` (chromium+api) pass; managed markers intact; `npm pack -w @pwtap/create` tarball contains `dist/` + `template/` and no `core-template` dep.
 
 ### M8 (this PR, dry-run only) · Publish rehearsal
+
 - Changesets version bump; `npm publish --dry-run -w @pwtap/platform -w @pwtap/create`.
 - `npm pack` content assertions: `platform` ships `dist/`; `create` ships `dist/` + `template/`; `access:"public"` set (scoped packages 402/403 otherwise). Real publish deferred to the plugin PRs.
 
@@ -144,6 +158,7 @@ export const expect = mergeExpects(uiExpect,
 - **M7 · Stubs:** `plugin-ai-judge` (salvage `utils/ai/*`, `fixtures/aiExpect.ts` → `expectAi`; proves the `mergeExpects` path end-to-end), `plugin-k6`, `plugin-desktop` (salvage `desktop/`), `plugin-security`; add to `KNOWN_PLUGINS` as `coming-soon`.
 
 ## Salvage map (verified present in this clone)
+
 - **core-template:** `api/core/{ApiClient,types}.ts`, `api/services/PetService.ts`, `api/models/pet.ts`, `api/index.ts`; `fixtures/{globalFixtures,auth,apiFixtures}.ts`; `pages/{BasePage,LoginPage,index}.ts`; `config/{loadEnv,envUtils,index}.ts`; `playwright.config.ts`; `tsconfig.json`; `env/environments.example.json`; `testData/users.example.json`.
 - **@pwtap/platform:** `mobile/core/{android,ios,deviceLock}.ts` (macOS branches only); `mobile/core/appInstaller.ts`, `mobile/core/DeviceManager.ts`, `mobile/core/session.ts` (device-discovery pieces).
 - **plugin-maestro:** `mobile/core/{MaestroRunner,MaestroMcpSession,McpClient,screen,maestroReport,maestroError,types}.ts`, `mobile/{devices,teardown}.ts`, `fixtures/mobileFixtures.ts`, `mobile/create-device.mjs`.
@@ -153,6 +168,7 @@ export const expect = mergeExpects(uiExpect,
 - **NOT present (build fresh):** any Appium/webdriverio/`native/` code; `feat/native-desktop-app-testing` branch.
 
 ## Risks
+
 - **`@pwtap` org + scoped access:** scoped packages need `publishConfig.access:"public"`; org must exist. Mitigated by dry-run-only publish this PR.
 - **`mergeTests` single-instance rule:** all merged `test` objects must share one `@playwright/test`. Enforced via peer dep + npm dedupe; verified by the smoke scaffold's `tsc` + run.
 - **Marker tampering:** if a user deletes a managed marker, `add`/`remove` prints the paste block and warns (salvaged `patchPlaywrightConfig` behavior) — no half-edits.
@@ -160,6 +176,7 @@ export const expect = mergeExpects(uiExpect,
 - **prepack drift:** `core-template` is private; `create` bundles it at pack time; CI asserts tarball contents.
 
 ## Verification (end-to-end for this PR)
+
 1. `tsc -b` green across the workspace on macOS and Linux CI.
 2. `node scripts/smoke-scaffold.mjs`: run `@pwtap/create` into a temp dir (no plugins) → `npm i` → `tsc --noEmit` → `playwright test` runs chromium + api; assert the two managed markers exist and are balanced in the generated `fixtures/index.ts` and `playwright.config.ts`.
 3. `npm pack -w @pwtap/platform -w @pwtap/create` + assert tarball contents (`create` has `template/`, no `core-template` dep; both `access:"public"`).

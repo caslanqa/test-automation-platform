@@ -1,0 +1,67 @@
+{
+  "name": "@pwtap/mobile-inspector",
+  "version": "0.1.0",
+  "description": "Embedded mobile test inspector/recorder shared by the Maestro and Appium plugins — a unified MobileApp facade, driver adapter registry, and local recording UI/codegen",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/caslanqa/test-automation-platform.git",
+    "directory": "packages/mobile-inspector"
+  },
+  "engines": {
+    "node": ">=20.19"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "ui-dist",
+    "bin",
+    "templates",
+    "docs"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "bin": {
+    "mobile-inspect": "./bin/inspect.mjs"
+  },
+  "peerDependencies": {
+    "@playwright/test": ">=1.61.0"
+  },
+  "dependencies": {
+    "@pwtap/platform": "^0.2.0",
+    "electron": "^43.2.0",
+    "prettier": "^3.9.6",
+    "ws": "^8.21.1"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "build:ui": "vite build",
+    "build:electron": "esbuild src/electron/preload.ts --bundle --platform=node --format=cjs --external:electron --outfile=dist/electron/preload.cjs",
+    "start": "electron dist/electron/main.js",
+    "inspect:electron": "node bin/inspect-electron.mjs",
+    "prepack": "npm run build && npm run build:electron && npm run build:ui"
+  },
+  "devDependencies": {
+    "@codemirror/lang-javascript": "^6.2.5",
+    "@codemirror/state": "^6.7.1",
+    "@codemirror/theme-one-dark": "^6.1.3",
+    "@codemirror/view": "^6.43.6",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@types/ws": "^8.18.1",
+    "@vitejs/plugin-react": "^4.7.0",
+    "codemirror": "^6.0.2",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "vite": "^6.4.3"
+  }
+}

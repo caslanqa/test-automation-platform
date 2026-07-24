@@ -1,3 +1,7 @@
+import { execFileSync } from 'node:child_process';
+import os from 'node:os';
+import path from 'node:path';
+
 import { copyDocs, copyExamples } from './injectors/assets.js';
 import { mergePluginEnv, removePluginEnv } from './injectors/envJson.js';
 import { applyFixture, removeFixture } from './injectors/fixturesBarrel.js';
@@ -5,6 +9,7 @@ import { mergePluginPackageJson, removePluginPackageJson } from './injectors/pac
 import { applyProject, removeProject } from './injectors/pwConfig.js';
 import { loadPluginManifest, type PluginManifest } from './manifest.js';
 import { findKnownPlugin } from './registry.js';
+import { ensureDir, exists, readJson, writeJson, writeText } from './util/fs.js';
 import { log } from './util/log.js';
 import { run } from './util/run.js';
 
@@ -31,6 +36,206 @@ function injectManifest(clientDir: string, m: PluginManifest, testsDir: string):
   if (applyProject(clientDir, m) === false) {
     log.warn(
       `playwright.config.ts is missing a pwtap marker — add this project manually:\n  ${m.playwrightProject?.gate}`,
+    );
+  }
+}
+
+interface EnvFile {
+  common?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+function envFiles(clientDir: string): string[] {
+  return [
+    path.join(clientDir, 'env', 'environments.json'),
+    path.join(clientDir, 'env', 'environments.example.json'),
+  ].filter(exists);
+}
+
+function ensureEnvJsonExists(clientDir: string): void {
+  const envDir = path.join(clientDir, 'env');
+  const envJson = path.join(envDir, 'environments.json');
+  const envExample = path.join(envDir, 'environments.example.json');
+  if (exists(envJson)) {
+    return;
+  }
+  if (exists(envExample)) {
+    writeText(envJson, `${JSON.stringify(readJson<EnvFile>(envExample), null, 2)}\n`);
+    return;
+  }
+  ensureDir(envDir);
+  writeJson(envJson, { common: {}, environments: {} });
+}
+
+function findAndroidSdkRoot(): string | undefined {
+  const home = os.homedir();
+  const direct = [
+    process.env.ANDROID_SDK_ROOT,
+    process.env.ANDROID_HOME,
+    process.platform === 'darwin' ? path.join(home, 'Library', 'Android', 'sdk') : undefined,
+    process.platform === 'linux' ? path.join(home, 'Android', 'Sdk') : undefined,
+    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Android', 'Sdk') : undefined,
+  ]
+    .filter((dir): dir is string => Boolean(dir))
+    .find(dir => exists(dir));
+  if (direct) {
+    return direct;
+  }
+  try {
+    const whichCmd = process.platform === 'win32' ? 'where' : 'which';
+    const adb = execFileSync(whichCmd, ['adb'], { encoding: 'utf8' }).split('\n')[0]?.trim();
+    if (!adb) {
+      return undefined;
+    }
+    const normalized = adb.replace(/\\/g, '/');
+    const marker = '/platform-tools/';
+    const idx = normalized.lastIndexOf(marker);
+    if (idx > 0) {
+      const sdk = normalized.slice(0, idx);
+      if (exists(sdk)) {
+        return sdk;
+      }
+    }
+  } catch {
+    // best-effort detection only
+  }
+  return undefined;
+}
+
+function needsAndroidSdk(manifests: PluginManifest[]): boolean {
+  return manifests.some(m => m.id === 'maestro' || m.id === 'appium');
+}
+
+function hasMobilePlugin(manifests: PluginManifest[]): boolean {
+  return manifests.some(m => m.id === 'maestro' || m.id === 'appium');
+}
+
+function hasAppiumPlugin(manifests: PluginManifest[]): boolean {
+  return manifests.some(m => m.id === 'appium');
+}
+
+function ensureMobileHelperScripts(clientDir: string, manifests: PluginManifest[]): void {
+  if (!hasMobilePlugin(manifests)) {
+    return;
+  }
+  const mobileDir = path.join(clientDir, 'scripts', 'mobile');
+  ensureDir(mobileDir);
+
+  const createDevice = `#!/usr/bin/env node
+import { existsSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import path from 'node:path';
+
+const root = process.cwd();
+const appiumScript = path.join(root, 'node_modules', '@pwtap', 'plugin-appium', 'bin', 'create-device.mjs');
+const maestroScript = path.join(root, 'node_modules', '@pwtap', 'plugin-maestro', 'bin', 'create-device.mjs');
+const script = existsSync(appiumScript) ? appiumScript : existsSync(maestroScript) ? maestroScript : null;
+
+if (!script) {
+  console.error('No mobile plugin installed. Install @pwtap/plugin-appium or @pwtap/plugin-maestro.');
+  process.exit(1);
+}
+const res = spawnSync(process.execPath, [script, ...process.argv.slice(2)], { stdio: 'inherit' });
+if (res.error) {
+  console.error(res.error.message);
+  process.exit(1);
+}
+process.exit(res.status ?? 0);
+`;
+
+  const stopDevices = `#!/usr/bin/env node
+import { existsSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import path from 'node:path';
+
+const root = process.cwd();
+const appiumScript = path.join(root, 'node_modules', '@pwtap', 'plugin-appium', 'bin', 'stop-devices.mjs');
+const maestroScript = path.join(root, 'node_modules', '@pwtap', 'plugin-maestro', 'bin', 'stop-devices.mjs');
+const script = existsSync(appiumScript) ? appiumScript : existsSync(maestroScript) ? maestroScript : null;
+
+if (!script) {
+  console.error('No mobile plugin installed. Install @pwtap/plugin-appium or @pwtap/plugin-maestro.');
+  process.exit(1);
+}
+const res = spawnSync(process.execPath, [script, ...process.argv.slice(2)], { stdio: 'inherit' });
+if (res.error) {
+  console.error(res.error.message);
+  process.exit(1);
+}
+process.exit(res.status ?? 0);
+`;
+
+  writeText(path.join(mobileDir, 'create-device.mjs'), createDevice);
+  writeText(path.join(mobileDir, 'stop-devices.mjs'), stopDevices);
+
+  if (hasAppiumPlugin(manifests)) {
+    const appiumReport = `#!/usr/bin/env node
+import { existsSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import path from 'node:path';
+
+const root = process.cwd();
+const binScript = path.join(root, 'node_modules', '@pwtap', 'plugin-appium', 'bin', 'appium-report.mjs');
+const templateScript = path.join(root, 'node_modules', '@pwtap', 'plugin-appium', 'templates', 'scripts', 'mobile', 'appium-report.mjs');
+const script = existsSync(binScript) ? binScript : existsSync(templateScript) ? templateScript : null;
+
+if (!script) {
+  console.error('Appium report generator not found. Reinstall @pwtap/plugin-appium.');
+  process.exit(1);
+}
+const res = spawnSync(process.execPath, [script, ...process.argv.slice(2)], { stdio: 'inherit' });
+if (res.error) {
+  console.error(res.error.message);
+  process.exit(1);
+}
+process.exit(res.status ?? 0);
+`;
+    writeText(path.join(mobileDir, 'appium-report.mjs'), appiumReport);
+  }
+}
+
+function syncAndroidSdkEnv(clientDir: string, manifests: PluginManifest[]): void {
+  if (!needsAndroidSdk(manifests)) {
+    return;
+  }
+  ensureEnvJsonExists(clientDir);
+
+  const sdkRoot = findAndroidSdkRoot();
+  if (!sdkRoot) {
+    log.warn(
+      'Android SDK not detected. Install Android Studio / command-line tools, then set ' +
+        '`ANDROID_SDK_ROOT` (and optionally `ANDROID_HOME`) in env/environments.json under common.',
+    );
+    return;
+  }
+
+  const touched: string[] = [];
+  for (const file of envFiles(clientDir)) {
+    const cfg = readJson<EnvFile>(file);
+    const common = { ...(cfg.common ?? {}) };
+    const root = typeof common.ANDROID_SDK_ROOT === 'string' ? common.ANDROID_SDK_ROOT.trim() : '';
+    const home = typeof common.ANDROID_HOME === 'string' ? common.ANDROID_HOME.trim() : '';
+    let changed = false;
+    if (!root) {
+      common.ANDROID_SDK_ROOT = sdkRoot;
+      changed = true;
+    }
+    if (!home) {
+      common.ANDROID_HOME = sdkRoot;
+      changed = true;
+    }
+    if (changed) {
+      cfg.common = common;
+      writeJson(file, cfg);
+      touched.push(path.relative(clientDir, file));
+    }
+  }
+
+  if (touched.length > 0) {
+    log.info(
+      `[mobile] Detected Android SDK at '${sdkRoot}' and wrote ANDROID_SDK_ROOT/ANDROID_HOME to: ${touched.join(
+        ', ',
+      )}`,
     );
   }
 }
@@ -72,6 +277,7 @@ export async function addPlugins({
   if (packages.length === 0) {
     return;
   }
+  const loaded: PluginManifest[] = [];
   if (install) {
     log.step(`Installing plugin${packages.length > 1 ? 's' : ''}: ${packages.join(', ')}`);
     await run('npm', ['install', '-D', ...packages], { cwd: clientDir });
@@ -82,10 +288,13 @@ export async function addPlugins({
       log.warn(`Could not load manifest for ${pkg} — is it installed? Skipping.`);
       continue;
     }
+    loaded.push(m);
     injectManifest(clientDir, m, testsDir);
     await runEnsure(clientDir, m);
     log.done(`Added ${pkg}`);
   }
+  ensureMobileHelperScripts(clientDir, loaded);
+  syncAndroidSdkEnv(clientDir, loaded);
   // Reconcile: install any devDependencies the plugin manifests added to package.json.
   if (install) {
     await run('npm', ['install'], { cwd: clientDir });

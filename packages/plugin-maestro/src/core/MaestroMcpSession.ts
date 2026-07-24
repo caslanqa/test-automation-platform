@@ -78,7 +78,7 @@ export interface McpSessionHooks {
  * @example
  * await maestro.launchApp('com.example.app');
  * await maestro.tapOn('Login');
- * await maestro.inputText('cihan');
+ * await maestro.inputText('John Doe');
  * if (await maestro.isVisible('Cookie banner')) await maestro.tapOn('Accept');
  * await maestro.assertVisible('Dashboard');
  */

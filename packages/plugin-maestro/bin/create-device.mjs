@@ -6,7 +6,10 @@
  * install Android Studio / Xcode. Interactive by default; flags skip the prompts:
  *   node bin/create-device.mjs --platform android --name Pixel_API_35 --image "system-images;android-35;google_apis_playstore;arm64-v8a"
  *   node bin/create-device.mjs --platform ios --name "My iPhone" --type "iPhone 16 Pro" --runtime "iOS 18.2"
- * After it prints the device name, use it inline:  test.use({ mobile: { platform, device: '<name>' } })
+ * In a scaffolded @pwtap project, this also appends the created device to both plugin catalogs:
+ *   - @pwtap/plugin-maestro `devices`
+ *   - @pwtap/plugin-appium `devices`
+ * so you can reference the same alias from both fixtures.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -52,9 +55,153 @@ function run(cmd, args, opts = {}) {
   return execFileSync(cmd, args, { encoding: 'utf8', timeout: 120_000, ...opts });
 }
 
+function toDeviceKey(name) {
+  const parts = name
+    .replace(/[^A-Za-z0-9]+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (parts.length === 0) {
+    return 'device';
+  }
+  const camel =
+    parts[0].toLowerCase() +
+    parts
+      .slice(1)
+      .map(p => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase())
+      .join('');
+  return /^[A-Za-z_$]/.test(camel) ? camel : `device${camel}`;
+}
+
+function listCatalogKeys(jsSource) {
+  return new Set(
+    Array.from(jsSource.matchAll(/^\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*:\s*\{/gm)).map(m => m[1]),
+  );
+}
+
+function nextAvailableKey(base, taken) {
+  if (!taken.has(base)) {
+    return base;
+  }
+  let i = 2;
+  while (taken.has(`${base}${i}`)) {
+    i += 1;
+  }
+  return `${base}${i}`;
+}
+
+function insertDeviceInJs(source, key, platform, deviceName) {
+  const line = `    ${key}: { platform: '${platform}', device: '${deviceName}' },`;
+  if (new RegExp(`^\\s*${key}\\s*:\\s*\\{`, 'm').test(source)) {
+    return source;
+  }
+  if (source.includes('\n    android:')) {
+    return source.replace('\n    android:', `\n${line}\n    android:`);
+  }
+  return source.replace('\n};', `\n${line}\n};`);
+}
+
+function insertDeviceInDts(source, key, platform, deviceName) {
+  const block = [
+    `    readonly ${key}: {`,
+    `        readonly platform: "${platform}";`,
+    `        readonly device: "${deviceName}";`,
+    '    };',
+  ].join('\n');
+  if (new RegExp(`^\\s*readonly\\s+${key}\\s*:`, 'm').test(source)) {
+    return source;
+  }
+  if (source.includes('\n    readonly android:')) {
+    return source.replace('\n    readonly android:', `\n${block}\n    readonly android:`);
+  }
+  return source.replace('\n};', `\n${block}\n};`);
+}
+
+function syncDeviceCatalogs(platform, name) {
+  const catalogs = [
+    {
+      label: '@pwtap/plugin-maestro',
+      js: path.join(
+        process.cwd(),
+        'node_modules',
+        '@pwtap',
+        'plugin-maestro',
+        'dist',
+        'devices.js',
+      ),
+      dts: path.join(
+        process.cwd(),
+        'node_modules',
+        '@pwtap',
+        'plugin-maestro',
+        'dist',
+        'devices.d.ts',
+      ),
+    },
+    {
+      label: '@pwtap/plugin-appium',
+      js: path.join(process.cwd(), 'node_modules', '@pwtap', 'plugin-appium', 'dist', 'devices.js'),
+      dts: path.join(
+        process.cwd(),
+        'node_modules',
+        '@pwtap',
+        'plugin-appium',
+        'dist',
+        'devices.d.ts',
+      ),
+    },
+  ];
+
+  const found = catalogs.filter(c => fs.existsSync(c.js) && fs.existsSync(c.dts));
+  if (found.length === 0) {
+    return { key: toDeviceKey(name), updated: [] };
+  }
+
+  const taken = new Set();
+  for (const catalog of found) {
+    const js = fs.readFileSync(catalog.js, 'utf8');
+    for (const key of listCatalogKeys(js)) {
+      taken.add(key);
+    }
+  }
+  const key = nextAvailableKey(toDeviceKey(name), taken);
+  const updated = [];
+
+  for (const catalog of found) {
+    try {
+      const js = fs.readFileSync(catalog.js, 'utf8');
+      const dts = fs.readFileSync(catalog.dts, 'utf8');
+      fs.writeFileSync(catalog.js, insertDeviceInJs(js, key, platform, name));
+      fs.writeFileSync(catalog.dts, insertDeviceInDts(dts, key, platform, name));
+      updated.push(catalog.label);
+    } catch (err) {
+      log.warn(
+        `Could not update ${catalog.label} devices catalog: ` +
+          (err instanceof Error ? err.message : String(err)),
+      );
+    }
+  }
+
+  return { key, updated };
+}
+
 function usage(platform, name) {
+  const { key, updated } = syncDeviceCatalogs(platform, name);
   log.ok(`Created ${platform} device "${name}".`);
-  log.info(`Use it:  test.use({ mobile: { platform: '${platform}', device: '${name}' } })`);
+  if (updated.length > 0) {
+    log.ok(`Added alias '${key}' to devices catalogs: ${updated.join(', ')}`);
+    log.info(
+      'Use it:\n' +
+        `  test.use({ mobile: devices.${key} })\n` +
+        `  test.use({ appium: devices.${key} })`,
+    );
+  } else {
+    log.info(
+      `Could not find installed plugin catalogs under node_modules; use inline for now:\n` +
+        `  test.use({ mobile: { platform: '${platform}', device: '${name}' } })\n` +
+        `  test.use({ appium: { platform: '${platform}', device: '${name}' } })`,
+    );
+  }
 }
 
 // --- Android ------------------------------------------------------------------------------------
