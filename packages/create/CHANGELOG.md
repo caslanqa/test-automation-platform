@@ -1,5 +1,11 @@
 # @pwtap/create
 
+## 0.4.1
+
+### Patch Changes
+
+- 5e8e969: Register `@pwtap/plugin-appium` as a stable plugin in the scaffolder menu — mobile testing via Appium: a raw WebdriverIO session (`app: WebdriverIO.Browser`, no curated facade), Android (UiAutomator2) + iOS simulator (XCUITest), macOS-first. Add it with `npx create-pwtap add appium`.
+
 ## 0.4.0
 
 ### Minor Changes

@@ -1,5 +1,7 @@
 import { getPlatform } from '@pwtap/platform';
 
+const DRIVER_INSTALL_TIMEOUT_MS = 3 * 60_000;
+
 /** Whether `appium driver list --installed` reports `name` as installed (best-effort text search). */
 async function driverInstalled(bin: string, name: string): Promise<boolean> {
   const res = await getPlatform().run(bin, ['driver', 'list', '--installed'], {
@@ -9,11 +11,31 @@ async function driverInstalled(bin: string, name: string): Promise<boolean> {
   return res.code === 0 && `${res.stdout}${res.stderr}`.toLowerCase().includes(name);
 }
 
+/** Install a missing Appium driver — best-effort; a failure just falls back to an actionable warning. */
+async function installDriver(
+  bin: string,
+  name: string,
+  warn: (message: string) => void,
+): Promise<void> {
+  console.info(`[appium] installing the ${name} driver (appium driver install ${name})…`);
+  const res = await getPlatform().run(bin, ['driver', 'install', name], {
+    timeoutMs: DRIVER_INSTALL_TIMEOUT_MS,
+  });
+  if (res.code !== 0) {
+    warn(
+      `failed to install the ${name} driver automatically — install it manually: ` +
+        `appium driver install ${name}`,
+    );
+  }
+}
+
 /**
- * Advisory host check run after `create-pwtap add appium` — it only warns, never throws, so a
- * missing tool can't break scaffolding. Flags the externally-installed prerequisites Appium needs:
- * the Appium CLI, the `uiautomator2`/`xcuitest` drivers, and an Android SDK / Xcode for the platform
- * you target.
+ * Advisory host check run after `create-pwtap add appium`. For the Appium drivers specifically, it
+ * doesn't just warn — it installs the missing ones (`appium driver install uiautomator2` / `xcuitest`)
+ * automatically, since a missing driver deterministically fails every session on that platform with
+ * the same confusing WebDriver error ("Could not find a driver for automationName…"). Everything else
+ * here (the Appium CLI itself, Android SDK / Xcode) only warns, never throws, so a missing tool can't
+ * break scaffolding.
  */
 export async function ensure(): Promise<void> {
   const p = getPlatform();
@@ -28,12 +50,10 @@ export async function ensure(): Promise<void> {
     return; // driver checks below need the CLI itself
   }
   if (!(await driverInstalled(bin, 'uiautomator2'))) {
-    warn(
-      'the UiAutomator2 driver is not installed — needed for Android: appium driver install uiautomator2',
-    );
+    await installDriver(bin, 'uiautomator2', warn);
   }
   if (!(await driverInstalled(bin, 'xcuitest'))) {
-    warn('the XCUITest driver is not installed — needed for iOS: appium driver install xcuitest');
+    await installDriver(bin, 'xcuitest', warn);
   }
   if (!p.androidSdkRoot() && !p.which('adb')) {
     warn(

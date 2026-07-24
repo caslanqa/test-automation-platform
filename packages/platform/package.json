@@ -1,6 +1,6 @@
 {
   "name": "@pwtap/platform",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "macOS-first platform seam (paths, shell, device discovery/boot, device lock) for Playwright Test Automation Platform plugins",
   "type": "module",
   "license": "MIT",

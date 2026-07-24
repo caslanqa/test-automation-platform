@@ -1,5 +1,12 @@
 # @pwtap/plugin-maestro
 
+## 0.3.1
+
+### Patch Changes
+
+- Updated dependencies [5e8e969]
+  - @pwtap/platform@0.3.0
+
 ## 0.3.0
 
 ### Minor Changes

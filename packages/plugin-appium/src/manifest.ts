@@ -42,6 +42,9 @@ export const manifest = {
     // fullyParallel + a per-device lock (in the fixture) = the device pool: tests on the SAME device
     // serialize, DIFFERENT devices/platforms run concurrently (with --workers). `teardown` runs the
     // appium-teardown project after the run, shutting down framework-booted devices automatically.
+    // `timeout: 180_000` (vs. Playwright's 30s default) — XCUITest's FIRST session on a given
+    // simulator/Xcode build rebuilds WebDriverAgent from scratch, which alone can take well over a
+    // minute; a short timeout makes that look like iOS "randomly" never launching.
     project:
       "...(appiumEnabled ? [{ name: 'appium', testMatch: /.*\\.appium\\.ts$/, fullyParallel: true, timeout: 180_000, retries: 1, teardown: 'appium-teardown' }, { name: 'appium-teardown', testMatch: /appium\\.teardown\\.ts$/ }] : [])",
   },

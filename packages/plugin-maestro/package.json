@@ -1,6 +1,6 @@
 {
   "name": "@pwtap/plugin-maestro",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Mobile testing for Playwright via Maestro — YAML flows and a Playwright-style imperative API (tapOn/assertVisible/…) over Android + iOS simulator, macOS-first",
   "type": "module",
   "license": "MIT",
