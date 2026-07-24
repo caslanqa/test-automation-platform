@@ -158,6 +158,13 @@ to a server you manage yourself instead (its lifecycle is then your responsibili
 connects, never spawns or stops it). `APPIUM_BIN` overrides the binary name/path if `appium` isn't
 right for your setup.
 
+**iOS's first session can be slow — this is why the `appium` project defaults to a 180s `timeout`.**
+XCUITest builds and installs WebDriverAgent on the simulator the first time it's needed for a given
+Xcode/simulator combination; that build alone can take well over a minute. Once built, it's cached
+(per simulator) and later sessions are fast — so this shows up as "iOS randomly doesn't launch" rather
+than a consistent failure. If you still see timeouts, run any one iOS test by hand first to warm the
+cache, or raise the `appium` project's `timeout` further in `playwright.config.ts`.
+
 ## Device logs
 
 `APPIUM_DEVICE_LOG=1` attaches the device's own system log for the whole test as `device-log`:
