@@ -1,10 +1,15 @@
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 import { getPlatform, type MobilePlatform } from '@pwtap/platform';
 
 export interface AppiumServerHandle {
   /** Base URL, e.g. `http://127.0.0.1:4723` — feed as `hostname`/`port`/`path` to `remote()`. */
   baseUrl: string;
+  /** Server log file path (only when this process spawned Appium). */
+  logPath?: string;
   /** Stop the server THIS process spawned. No-op when connected to an externally-managed one. */
   stop(): Promise<void>;
 }
@@ -77,7 +82,17 @@ export function ensureAppiumServer(workerIndex: number): Promise<AppiumServerHan
     }
     const port = DEFAULT_PORT + workerIndex;
     const baseUrl = `http://127.0.0.1:${port}`;
-    const child = spawn(bin, ['--port', String(port), '--base-path', '/'], { stdio: 'ignore' });
+    const logPath = path.join(
+      os.tmpdir(),
+      `pwtap-appium-server-w${workerIndex}-${process.pid}-${Date.now()}.log`,
+    );
+    const logStream = fs.createWriteStream(logPath, { flags: 'a' });
+    const child = spawn(bin, ['--port', String(port), '--base-path', '/'], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    child.stdout.on('data', chunk => logStream.write(chunk));
+    child.stderr.on('data', chunk => logStream.write(chunk));
+    child.on('exit', () => logStream.end());
     child.on('error', () => {
       /* surfaced via the readiness timeout below */
     });
@@ -85,6 +100,7 @@ export function ensureAppiumServer(workerIndex: number): Promise<AppiumServerHan
     await waitUntilReady(baseUrl, READY_TIMEOUT_MS);
     return {
       baseUrl,
+      logPath,
       stop: async () => {
         child.kill();
       },

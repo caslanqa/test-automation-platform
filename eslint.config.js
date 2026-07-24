@@ -18,12 +18,19 @@ export default [
       'packages/create/template/**',
       '**/templates/**',
       '**/*.log',
+      // Build-tool config files that intentionally sit outside their package's tsconfig `include`
+      // (e.g. Vite must stay outside `rootDir` so `tsc -b` never tries to compile it) — no type
+      // info is needed to lint these, and typescript-eslint's `allowDefaultProject` fallback for
+      // them is unreliable across a full multi-project repo lint run. Prettier still formats them
+      // via `npm run format`/`format:check`.
+      '**/vite.config.ts',
     ],
   },
 
-  // Base config for all TypeScript files
+  // Base config for all TypeScript files (including the mobile-inspector's React UI, the only
+  // consumer of `.tsx` in the monorepo today)
   {
-    files: ['**/*.ts'],
+    files: ['**/*.ts', '**/*.tsx'],
     languageOptions: {
       parser: tsparser,
       parserOptions: {

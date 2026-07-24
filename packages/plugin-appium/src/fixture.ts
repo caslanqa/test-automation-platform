@@ -17,7 +17,11 @@ import {
 } from '@pwtap/platform';
 
 import { resolveAppArtifact } from './core/appArtifact.js';
-import { assertPlatformSupported, ensureAppiumServer } from './core/appiumServer.js';
+import {
+  assertPlatformSupported,
+  ensureAppiumServer,
+  type AppiumServerHandle,
+} from './core/appiumServer.js';
 import { buildCapabilities } from './core/caps.js';
 import { closeSession, createSession } from './core/session.js';
 
@@ -116,6 +120,21 @@ function resolveHeadless(option?: boolean): boolean {
 function resolveDeviceLogMode(): boolean {
   const value = process.env.APPIUM_DEVICE_LOG?.trim();
   return value ? /^(1|true|yes|on)$/i.test(value) : false;
+}
+
+/** Diagnostics bundle mode (`off` | `fail` | `always`). Defaults to `fail` to avoid noisy reports. */
+function diagnosticsMode(): 'off' | 'fail' | 'always' {
+  const value = process.env.APPIUM_DIAGNOSTICS?.trim().toLowerCase();
+  if (!value) {
+    return 'fail';
+  }
+  if (value === 'always' || value === 'on' || value === '1' || value === 'true') {
+    return 'always';
+  }
+  if (value === 'off' || value === '0' || value === 'false') {
+    return 'off';
+  }
+  return 'fail';
 }
 
 /** Playwright's own `video` modes (its `VideoMode` type) — the values `use.video` resolves to. */
@@ -256,6 +275,7 @@ export const test = base.extend<AppiumOptions & AppiumFixtures>({
   app: [
     async ({ appium, device, video, screenshot }, use, testInfo) => {
       let session: WebdriverIO.Browser | undefined;
+      let server: AppiumServerHandle | undefined;
       let recording: ScreenRecording | undefined;
       let videoPath: string | undefined;
       let deviceLogEnabled = false;
@@ -289,7 +309,7 @@ export const test = base.extend<AppiumOptions & AppiumFixtures>({
             : process.env.APPIUM_APP_IOS);
         const app = appSource ? await resolveAppArtifact(appSource) : undefined;
 
-        const server = await ensureAppiumServer(testInfo.workerIndex);
+        server = await ensureAppiumServer(testInfo.workerIndex);
         const capabilities = buildCapabilities({
           device,
           app,
@@ -299,8 +319,11 @@ export const test = base.extend<AppiumOptions & AppiumFixtures>({
 
         await use(toCallableApp(session));
       } finally {
+        const failed = testInfo.status !== testInfo.expectedStatus;
+        const mode = diagnosticsMode();
+        const shouldAttachDiagnostics = mode === 'always' || (mode === 'fail' && failed);
+
         if (session) {
-          const failed = testInfo.status !== testInfo.expectedStatus;
           if (shouldTakeScreenshot(screenshotModeOf(screenshot), testInfo.retry, failed)) {
             try {
               const screenshotPath = testInfo.outputPath('appium-screenshot.png');
@@ -314,6 +337,34 @@ export const test = base.extend<AppiumOptions & AppiumFixtures>({
               /* best-effort — never let screenshot capture mask the real test result */
             }
           }
+
+          if (shouldAttachDiagnostics) {
+            try {
+              const sessionPath = testInfo.outputPath('appium-session-details.json');
+              fs.writeFileSync(
+                sessionPath,
+                `${JSON.stringify(await session.getSession(), null, 2)}\n`,
+              );
+              testInfo.attachments.push({
+                name: 'appium-session-details',
+                path: sessionPath,
+                contentType: 'application/json',
+              });
+            } catch {
+              /* best-effort */
+            }
+            try {
+              const sourcePath = testInfo.outputPath('appium-page-source.xml');
+              fs.writeFileSync(sourcePath, await session.getPageSource());
+              testInfo.attachments.push({
+                name: 'appium-page-source',
+                path: sourcePath,
+                contentType: 'application/xml',
+              });
+            } catch {
+              /* best-effort */
+            }
+          }
         }
 
         // Close the session BEFORE stopping the recording/device log so the driver has released the
@@ -322,7 +373,6 @@ export const test = base.extend<AppiumOptions & AppiumFixtures>({
 
         if (recording && videoPath) {
           const produced = await recording.stop();
-          const failed = testInfo.status !== testInfo.expectedStatus;
           if (produced && shouldKeepRecording(videoMode, testInfo.retry, failed)) {
             testInfo.attachments.push({
               name: 'appium-recording',
@@ -347,6 +397,18 @@ export const test = base.extend<AppiumOptions & AppiumFixtures>({
             });
           } catch {
             /* best-effort — device log capture never masks the real test result */
+          }
+        }
+
+        if (shouldAttachDiagnostics && server?.logPath && fs.existsSync(server.logPath)) {
+          try {
+            testInfo.attachments.push({
+              name: 'appium-server-log',
+              path: server.logPath,
+              contentType: 'text/plain',
+            });
+          } catch {
+            /* best-effort */
           }
         }
       }

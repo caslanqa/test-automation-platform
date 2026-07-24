@@ -15,8 +15,8 @@ export const manifest = {
   devDependencies: {},
   scripts: {
     'test:maestro': 'MAESTRO=1 playwright test --project=maestro',
-    'mobile:create-device': 'node node_modules/@pwtap/plugin-maestro/bin/create-device.mjs',
-    'mobile:stop-devices': 'node node_modules/@pwtap/plugin-maestro/bin/stop-devices.mjs',
+    'mobile:create-device': 'node scripts/mobile/create-device.mjs',
+    'mobile:stop-devices': 'node scripts/mobile/stop-devices.mjs',
   },
   envKeys: {
     MOBILE_PLATFORM: 'android',

@@ -24,6 +24,8 @@ export {
   dumpLogcat,
   emulatorMode,
   listAvds,
+  listBootedAndroidDevices,
+  listInstalledAndroidApps,
   shutdownEmulator,
   startAndroidRecording,
 } from './device/android.js';
@@ -37,6 +39,8 @@ export { acquireDevice, findBootedDevice, type AcquireOptions } from './device/d
 export {
   bootIosSim,
   dumpSimLog,
+  listInstalledIosApps,
+  listIosSimulators,
   logCaptureStart,
   openSimulatorApp,
   quitSimulatorApp,

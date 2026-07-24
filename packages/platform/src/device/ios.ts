@@ -39,6 +39,60 @@ export async function resolveSimUdid(nameOrUdid: string): Promise<string | undef
 }
 
 /**
+ * All available iOS simulators (`xcrun simctl list devices`), normalized for device pickers (e.g.
+ * the Mobile Inspector's device list). Reuses the same `simctl` call as {@link resolveSimUdid} so
+ * callers never need to shell out to `simctl` themselves.
+ */
+export async function listIosSimulators(): Promise<
+  Array<{ udid: string; name: string; booted: boolean }>
+> {
+  return (await listSimulators())
+    .filter(
+      (d): d is SimDevice & { udid: string; name: string } =>
+        Boolean(d.udid && d.name) && d.isAvailable !== false,
+    )
+    .map(d => ({ udid: d.udid, name: d.name, booted: d.state === 'Booted' }));
+}
+
+/**
+ * Apps installed on a booted simulator (`xcrun simctl listapps <udid>`), normalized for the app
+ * picker. `simctl` returns a plist keyed by bundle id with `CFBundleDisplayName`/`CFBundleName` and
+ * an `ApplicationType` of `System`/`User`. We parse it leniently (regex over the plist text rather
+ * than a full plist parser) and skip system apps unless `includeSystem` is set. Empty on any
+ * failure (best-effort — a missing Xcode/simctl must not crash the picker).
+ */
+export async function listInstalledIosApps(
+  udid: string,
+  includeSystem = false,
+): Promise<Array<{ id: string; name: string; system: boolean }>> {
+  const { stdout, code } = await getPlatform().simctl(['listapps', udid], { timeoutMs: 20_000 });
+  if (code !== 0) {
+    return [];
+  }
+  const apps: Array<{ id: string; name: string; system: boolean }> = [];
+  // Each app is a `"bundle.id" = { ... };` block; capture the block to read its fields.
+  const blockRe = /"([^"]+)"\s*=\s*\{([\s\S]*?)\};/g;
+  let match: RegExpExecArray | null;
+  while ((match = blockRe.exec(stdout)) !== null) {
+    const id = match[1];
+    const body = match[2];
+    if (!id.includes('.')) {
+      continue; // skip non-bundle-id keys
+    }
+    const typeMatch = /ApplicationType\s*=\s*"?(\w+)"?/.exec(body);
+    const system = (typeMatch?.[1] ?? '') === 'System';
+    if (system && !includeSystem) {
+      continue;
+    }
+    const nameMatch =
+      /CFBundleDisplayName\s*=\s*"?([^";]+)"?/.exec(body) ??
+      /CFBundleName\s*=\s*"?([^";]+)"?/.exec(body);
+    apps.push({ id, name: (nameMatch?.[1] ?? id).trim(), system });
+  }
+  return apps;
+}
+
+/**
  * Boot an iOS simulator (by name or UDID) and wait until ready; returns the resolved UDID. Only the
  * runtime is booted (no window) — visibility is separate (`openSimulatorApp`/`quitSimulatorApp`).
  */

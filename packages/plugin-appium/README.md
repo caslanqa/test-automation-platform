@@ -22,7 +22,7 @@ test.use({ appium: devices.android }); // or { platform: 'android', device: 'Pix
 
 test('sign in', async ({ app }) => {
   await app('~Login').click();
-  await app('~Username').setValue('cihan');
+  await app('~Username').setValue('John Doe');
   const dashboard = app('~Dashboard');
   await expect.poll(() => dashboard.isDisplayed()).toBe(true);
 });
@@ -44,6 +44,37 @@ a built-in app (e.g. the Settings/Preferences example), skip `app` and target it
 `capabilities` escape hatch (`appium:appPackage`/`appium:appActivity` on Android, `appium:bundleId` on
 iOS) — see the scaffolded `tests/appium/settings.appium.ts`.
 
+## Appium API cookbook
+
+```ts
+test('appium api cookbook', async ({ app, device }) => {
+  await app('~Login').click();
+  await app('~Username').setValue('John Doe');
+  await app('~Password').setValue('secret');
+  await app('~Submit').click();
+
+  const row = app('~Order row');
+  await row.waitForDisplayed({ timeout: 10_000 });
+  await expect.poll(() => row.isDisplayed()).toBe(true);
+
+  const items = await app.$$('android=new UiSelector().className("android.widget.TextView")');
+  await expect(items.length).toBeGreaterThan(0);
+
+  if (device.platform === 'android') {
+    await app.execute('mobile: scrollGesture', {
+      left: 0,
+      top: 0,
+      width: 300,
+      height: 700,
+      direction: 'down',
+      percent: 0.7,
+    });
+  } else {
+    await app.execute('mobile: scroll', { direction: 'down' });
+  }
+});
+```
+
 ## Locators
 
 Priority order (fastest/most stable first): accessibility ID (`~loginButton`, works on both
@@ -63,11 +94,29 @@ await submit.click();
 See `docs/APPIUM_TESTING.md` (scaffolded into your project) for the full locator reference, waiting
 patterns, and gesture commands (`execute('mobile: scrollGesture' | 'mobile: swipe', {...})`).
 
+### Locator strategy cheat sheet
+
+| Priority | Strategy                    | Best use case                                | Notes                                                 |
+| -------- | --------------------------- | -------------------------------------------- | ----------------------------------------------------- |
+| 1        | `~accessibilityId`          | Cross-platform, stable UI controls           | Fastest + most maintainable; ask devs for stable IDs. |
+| 2        | `id=...` / resource-id      | Android elements with stable unique IDs      | Good fallback when accessibility IDs are missing.     |
+| 3        | `android=UiSelector(...)`   | Android-only, rich attribute filtering       | Prefer short selectors over long chained trees.       |
+| 4        | `-ios predicate string:...` | iOS-only attribute queries                   | Usually faster and cleaner than XPath.                |
+| 5        | `-ios class chain:...`      | iOS hierarchical matching with better perf   | Use when predicate is not enough.                     |
+| 6        | XPath                       | Last resort for hard-to-reach legacy screens | Most brittle/slow; avoid absolute deep paths.         |
+
+Recommended flow: start with `~accessibilityId`, then platform-specific selectors, use XPath only if
+you have no stable alternative.
+
 ## Running
 
 ```bash
-npm run test:appium          # APPIUM=1 playwright test --project=appium
+npm run test:appium          # runs Appium tests + auto-generates test-results/appium-report/index.html
+npm run report:appium        # regenerates only the Appium HTML report from existing results.json
 ```
+
+`report:appium` is Appium-focused (separate from Playwright HTML): it summarizes Appium-only tests,
+diagnostics attachments, and server-command/error counts.
 
 A bare `npm test` stays UI + API — the `appium` project is gated behind `APPIUM=1`.
 
@@ -93,7 +142,14 @@ APPIUM=1 npx playwright test --project=appium --workers=3
 Select with `test.use({ appium })`: a named `device` (Android AVD / iOS simulator name or UDID)
 auto-boots if not running; omit it to use any booted device. **When no matching device is available
 the test skips (never fails).** Create a device via Android Studio's AVD Manager / Xcode's Simulator
-app — or, if `@pwtap/plugin-maestro` is also installed, its `npm run mobile:create-device` script.
+app, or run:
+
+```bash
+npm run mobile:create-device
+```
+
+The script appends the created device alias into both plugin `devices` catalogs, so the same
+alias can be referenced from Appium and Maestro test blocks.
 
 Devices the framework **auto-booted** are shut down **automatically** after the run by the
 `appium-teardown` project (headed or headless) — set `APPIUM_KEEP_DEVICES=1` to keep them for faster
@@ -118,6 +174,44 @@ use: { video: 'retain-on-failure', screenshot: 'only-on-failure' }, // now appli
 
 **`APPIUM_DEVICE_LOG=1`** attaches the device's own system log for the whole test (Android `logcat`,
 iOS the unified system log) — off by default.
+
+## AI judge example (visual assertion)
+
+If `@pwtap/plugin-ai-judge` is installed, you can assert a mobile screen with rubric scoring:
+
+```ts
+import { test, expect } from '@fixtures';
+
+test('home screen passes ai rubric', async ({ app }, testInfo) => {
+  const shot = testInfo.outputPath('home.png');
+  await app.saveScreenshot(shot);
+
+  await expect({
+    image: shot,
+    rubric: 'Home screen shows "Welcome", primary CTA is visible, and no error banner is present.',
+  }).toPassRubric({ minScore: 80 });
+});
+```
+
+Reference-image comparison is also supported:
+
+```ts
+await expect({ image: shot }).toMatchImage('testData/baselines/home.png', { minScore: 90 });
+```
+
+## Environment variables (quick reference)
+
+| Key                                     | One-line description                                                   |
+| --------------------------------------- | ---------------------------------------------------------------------- |
+| `APPIUM_PLATFORM`                       | Default platform for tests that do not set `test.use({ appium })`.     |
+| `APPIUM_DEVICE`                         | Default device alias/UDID when test-level device is not set.           |
+| `APPIUM_HEADLESS`                       | Controls emulator/simulator visibility (`true` hidden, `false` shown). |
+| `APPIUM_APP_ANDROID` / `APPIUM_APP_IOS` | Default app artifact path/URL applied to `appium:app`.                 |
+| `APPIUM_SERVER_URL`                     | Reuses an externally managed Appium server instead of spawning one.    |
+| `APPIUM_DEVICE_LOG`                     | Attaches device OS log (`logcat` / `log show`) for each test.          |
+| `APPIUM_DIAGNOSTICS`                    | Controls diagnostics bundle (`off`, `fail`, `always`).                 |
+| `APPIUM_KEEP_DEVICES`                   | Keeps framework-booted devices alive after the run.                    |
+| `APPIUM_BIN`                            | Custom Appium CLI binary path/name instead of default `appium`.        |
 
 ## Requirements
 

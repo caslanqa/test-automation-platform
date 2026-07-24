@@ -26,10 +26,15 @@
     "./ensure": {
       "types": "./dist/ensure.d.ts",
       "default": "./dist/ensure.js"
+    },
+    "./inspector": {
+      "types": "./dist/inspector.d.ts",
+      "default": "./dist/inspector.js"
     }
   },
   "files": [
     "dist",
+    "bin",
     "templates",
     "docs"
   ],
@@ -40,7 +45,9 @@
     "@playwright/test": ">=1.61.0"
   },
   "dependencies": {
-    "@pwtap/platform": "^0.3.0",
+    "@pwtap/mobile-inspector": "^0.1.0",
+    "@pwtap/platform": "^0.2.0",
+    "fast-xml-parser": "^5.0.0",
     "webdriverio": "^9"
   },
   "scripts": {

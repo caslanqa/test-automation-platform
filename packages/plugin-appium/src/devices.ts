@@ -21,8 +21,8 @@ export interface DeviceSpec {
  * test.use({ appium: { platform: 'android', device: 'MyAvd' } }); // inline
  *
  * Add a `device` (AVD name / iOS simulator name or UDID) to have it auto-booted on first use. Create
- * one via Android Studio's AVD Manager / Xcode's Simulator app — or, if `@pwtap/plugin-maestro` is
- * also installed, its `npm run mobile:create-device` script. When a named device isn't present the
+ * one via Android Studio's AVD Manager / Xcode's Simulator app, or `npm run mobile:create-device`.
+ * When a named device isn't present the
  * test SKIPS (never fails), so these examples are safe to keep.
  */
 export const devices = {
