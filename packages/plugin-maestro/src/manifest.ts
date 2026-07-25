@@ -17,6 +17,7 @@ export const manifest = {
     'test:maestro': 'MAESTRO=1 playwright test --project=maestro',
     'mobile:create-device': 'node scripts/mobile/create-device.mjs',
     'mobile:stop-devices': 'node scripts/mobile/stop-devices.mjs',
+    'mobile:inspect': 'mobile-inspect .',
   },
   envKeys: {
     MOBILE_PLATFORM: 'android',

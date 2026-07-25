@@ -18,6 +18,7 @@ export const manifest = {
       'APPIUM=1 playwright test --project=appium; code=$?; node scripts/mobile/appium-report.mjs; exit $code',
     'mobile:create-device': 'node scripts/mobile/create-device.mjs',
     'mobile:stop-devices': 'node scripts/mobile/stop-devices.mjs',
+    'mobile:inspect': 'mobile-inspect .',
     'report:appium': 'node scripts/mobile/appium-report.mjs',
   },
   envKeys: {
