@@ -1,6 +1,6 @@
 {
   "name": "@pwtap/plugin-appium",
-  "version": "0.1.4",
+  "version": "1.0.0",
   "description": "Mobile testing for Playwright via Appium — a raw WebdriverIO session (app: WebdriverIO.Browser) over Android + iOS simulator, macOS-first",
   "type": "module",
   "license": "MIT",
@@ -45,8 +45,8 @@
     "@playwright/test": ">=1.61.0"
   },
   "dependencies": {
-    "@pwtap/mobile-inspector": "^0.1.2",
-    "@pwtap/platform": "^0.3.2",
+    "@pwtap/mobile-inspector": "^1.0.0",
+    "@pwtap/platform": "^1.0.0",
     "fast-xml-parser": "^5.0.0",
     "webdriverio": "^9"
   },

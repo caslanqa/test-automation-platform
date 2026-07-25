@@ -1,5 +1,17 @@
 # @pwtap/plugin-appium
 
+## 1.0.0
+
+### Major Changes
+
+- 5f96d85: mobile inspector issue fix
+
+### Patch Changes
+
+- Updated dependencies [5f96d85]
+  - @pwtap/mobile-inspector@1.0.0
+  - @pwtap/platform@1.0.0
+
 ## 0.1.4
 
 ### Patch Changes

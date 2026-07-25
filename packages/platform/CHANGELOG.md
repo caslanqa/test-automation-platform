@@ -1,5 +1,11 @@
 # @pwtap/platform
 
+## 1.0.0
+
+### Major Changes
+
+- 5f96d85: mobile inspector issue fix
+
 ## 0.3.2
 
 ### Patch Changes
