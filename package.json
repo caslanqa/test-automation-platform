@@ -7,7 +7,7 @@
   "author": "CaslanQA",
   "license": "MIT",
   "engines": {
-    "node": ">=20.19"
+    "node": ">=22.23"
   },
   "workspaces": [
     "packages/*"

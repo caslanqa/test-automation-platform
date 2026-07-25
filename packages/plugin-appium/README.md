@@ -218,7 +218,7 @@ await expect({ image: shot }).toMatchImage('testData/baselines/home.png', { minS
 - **Appium CLI** (`npm install -g appium`) + the **`uiautomator2`**/**`xcuitest`** drivers
   (`appium driver install uiautomator2` / `xcuitest`).
 - **Android**: Android SDK (`ANDROID_HOME`) + an emulator. **iOS**: Xcode + a simulator (simulator-only; real iOS devices are not yet supported).
-- Node ≥ 20.19. `create-pwtap add appium` runs an advisory host check for these.
+- Node ≥ 22.23. `create-pwtap add appium` runs an advisory host check for these.
 
 ## License
 

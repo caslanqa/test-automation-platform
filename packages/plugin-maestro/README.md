@@ -156,7 +156,7 @@ use: { video: 'retain-on-failure', screenshot: 'only-on-failure' }, // now appli
 
 - **Maestro CLI** + a **JDK 17+**.
 - **Android**: Android SDK (`ANDROID_HOME`) + an emulator. **iOS**: Xcode + a simulator (simulator-only; real iOS devices are not yet supported).
-- Node ≥ 20.19. `create-pwtap add maestro` runs an advisory host check for these.
+- Node ≥ 22.23. `create-pwtap add maestro` runs an advisory host check for these.
 
 ## License
 
