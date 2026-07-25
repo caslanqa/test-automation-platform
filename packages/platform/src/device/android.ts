@@ -67,6 +67,24 @@ export async function listBootedAndroidDevices(): Promise<
   );
 }
 
+/** Visible Android display size used by accessibility bounds and pointer actions. */
+export async function getAndroidViewportSize(
+  serial: string,
+): Promise<{ width: number; height: number } | undefined> {
+  const platform = getPlatform();
+  const { stdout, code } = await platform.run(
+    platform.adbPath(),
+    ['-s', serial, 'shell', 'wm', 'size'],
+    { timeoutMs: 10_000, env: platform.androidEnv() },
+  );
+  if (code !== 0) {
+    return undefined;
+  }
+  const matches = [...stdout.matchAll(/(?:Override|Physical) size:\s*(\d+)x(\d+)/g)];
+  const match = matches.find(item => item[0].startsWith('Override')) ?? matches[0];
+  return match ? { width: Number(match[1]), height: Number(match[2]) } : undefined;
+}
+
 /**
  * List packages installed on a booted Android device (`adb -s <serial> shell pm list packages`).
  * When `thirdPartyOnly` is true (default) system/OS packages are excluded (`-3`) so the app picker

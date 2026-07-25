@@ -45,7 +45,8 @@ export class RecorderSession {
   private lastHierarchy: MobileNode[] = [];
   private lastFrameId = -1;
   private pollTimer: NodeJS.Timeout | undefined;
-  private busy = false;
+  private frameRefresh: Promise<void> | undefined;
+  private hierarchyRefresh: Promise<boolean> | undefined;
   private closed = false;
   /** Authoritative editable source draft and its monotonic revision (see `editCode`/`run`/`save`). */
   private draftSource = '';
@@ -91,13 +92,16 @@ export class RecorderSession {
         case 'refreshFrame':
           return await this.refreshFrame();
         case 'refreshHierarchy':
-          return await this.refreshHierarchy();
+          await this.refreshHierarchy();
+          return;
         case 'inspectAt':
-          return this.inspectAt(message.x, message.y, message.frameId);
+          return await this.inspectAt(message.x, message.y, message.frameId);
         case 'tapAt':
           return await this.tapAt(message.x, message.y, message.frameId);
         case 'perform':
           return await this.perform(message.action);
+        case 'record':
+          return this.record(message.action);
         case 'removeAction':
           return this.removeAction(message.index);
         case 'clearTimeline':
@@ -162,6 +166,8 @@ export class RecorderSession {
       this.connectedDriverId = driverId;
       this.timeline = [];
       this.redoStack = [];
+      this.lastHierarchy = [];
+      this.lastFrameId = -1;
       this.draftDirty = false;
       this.draftSource = '';
       this.send({
@@ -171,9 +177,12 @@ export class RecorderSession {
         capabilities: driver.capabilities,
       });
       this.sendTimelineAndCode();
-      await this.refreshFrame();
       await this.refreshHierarchy();
-      this.pollTimer = setInterval(() => void this.refreshFrame(), FRAME_POLL_MS);
+      await this.refreshFrame();
+      this.pollTimer = setInterval(() => {
+        void this.refreshFrame();
+        void this.refreshHierarchy();
+      }, FRAME_POLL_MS);
     } catch (error) {
       this.send({ type: 'error', message: `connect failed: ${errorMessage(error)}` });
     }
@@ -184,47 +193,83 @@ export class RecorderSession {
       clearInterval(this.pollTimer);
       this.pollTimer = undefined;
     }
-    if (this.session) {
+    const session = this.session;
+    this.session = undefined;
+    this.connectedDriverId = undefined;
+    this.frameRefresh = undefined;
+    this.hierarchyRefresh = undefined;
+    if (session) {
       try {
-        await this.session.close();
+        await session.close();
       } catch (error) {
         this.log('warn', `error while closing driver session: ${errorMessage(error)}`);
       }
-      this.session = undefined;
-      this.connectedDriverId = undefined;
       this.send({ type: 'disconnected' });
     }
   }
 
   async refreshFrame(): Promise<void> {
-    if (!this.session || this.busy) {
-      return;
-    }
-    this.busy = true;
-    try {
-      const frame = await this.session.captureScreen();
-      this.lastFrameId = frame.frameId;
-      this.send({ type: 'frame', frame });
-    } catch (error) {
-      this.log('warn', `frame capture failed: ${errorMessage(error)}`);
-    } finally {
-      this.busy = false;
-    }
-  }
-
-  async refreshHierarchy(): Promise<void> {
     if (!this.session) {
       return;
     }
+    if (this.frameRefresh) {
+      return this.frameRefresh;
+    }
+    const session = this.session;
+    const refresh = (async (): Promise<void> => {
+      try {
+        const frame = await session.captureScreen();
+        if (this.session === session) {
+          this.lastFrameId = frame.frameId;
+          this.send({ type: 'frame', frame });
+        }
+      } catch (error) {
+        this.log('warn', `frame capture failed: ${errorMessage(error)}`);
+      }
+    })();
+    this.frameRefresh = refresh;
     try {
-      this.lastHierarchy = await this.session.inspectHierarchy();
-      this.send({ type: 'hierarchy', nodes: this.lastHierarchy });
-    } catch (error) {
-      this.log('warn', `hierarchy read failed: ${errorMessage(error)}`);
+      await refresh;
+    } finally {
+      if (this.frameRefresh === refresh) {
+        this.frameRefresh = undefined;
+      }
     }
   }
 
-  /** Hit-test a device-pixel tap against the last known hierarchy, then record+perform it as `tap`. */
+  async refreshHierarchy(): Promise<boolean> {
+    if (!this.session) {
+      return false;
+    }
+    if (this.hierarchyRefresh) {
+      return this.hierarchyRefresh;
+    }
+    const session = this.session;
+    const refresh = (async (): Promise<boolean> => {
+      try {
+        const hierarchy = await session.inspectHierarchy();
+        if (this.session === session) {
+          this.lastHierarchy = hierarchy;
+          this.send({ type: 'hierarchy', nodes: hierarchy });
+          return true;
+        }
+        return false;
+      } catch (error) {
+        this.log('warn', `hierarchy read failed: ${errorMessage(error)}`);
+        return false;
+      }
+    })();
+    this.hierarchyRefresh = refresh;
+    try {
+      return await refresh;
+    } finally {
+      if (this.hierarchyRefresh === refresh) {
+        this.hierarchyRefresh = undefined;
+      }
+    }
+  }
+
+  /** Hit-test a tap against a fresh hierarchy, then record and perform it. */
   async tapAt(x: number, y: number, frameId: number): Promise<void> {
     if (!this.session) {
       return;
@@ -233,7 +278,12 @@ export class RecorderSession {
       this.log('warn', 'ignored tap against a stale frame — refresh and try again');
       return;
     }
-    const node = hitTest(this.lastHierarchy, x, y);
+    const fresh = await this.refreshHierarchy();
+    if (frameId !== this.lastFrameId) {
+      this.log('warn', 'ignored tap after the frame changed during hierarchy refresh');
+      return;
+    }
+    const node = fresh ? hitTest(this.lastHierarchy, x, y) : undefined;
     const locator = node ? locatorForNode(node) : { point: { x, y }, label: 'coordinate tap' };
     await this.perform({ kind: 'tap', locator });
   }
@@ -244,7 +294,7 @@ export class RecorderSession {
    * same way `tapAt` rejects them. When nothing matches, returns a single coordinate candidate so the
    * user still has a (fragile) way to act on empty screen space.
    */
-  inspectAt(x: number, y: number, frameId: number): void {
+  async inspectAt(x: number, y: number, frameId: number): Promise<void> {
     if (!this.session) {
       return;
     }
@@ -253,7 +303,13 @@ export class RecorderSession {
       this.send({ type: 'inspected', node: null, candidates: [] });
       return;
     }
-    const node = hitTest(this.lastHierarchy, x, y) ?? null;
+    const fresh = await this.refreshHierarchy();
+    if (frameId !== this.lastFrameId) {
+      this.log('warn', 'ignored inspect after the frame changed during hierarchy refresh');
+      this.send({ type: 'inspected', node: null, candidates: [] });
+      return;
+    }
+    const node = fresh ? (hitTest(this.lastHierarchy, x, y) ?? null) : null;
     const candidates = node
       ? locatorCandidates(node, this.lastHierarchy)
       : [
@@ -288,7 +344,20 @@ export class RecorderSession {
       this.sendTimelineAndCode(action);
       await this.refreshHierarchy();
       await this.refreshFrame();
+    } else {
+      this.log('error', `${action.kind} failed: ${result.error ?? 'unknown driver error'}`);
     }
+  }
+
+  /** Record a declarative step that cannot be true in the current UI state without executing it. */
+  record(action: MobileAction): void {
+    if (!this.session) {
+      this.send({ type: 'error', message: 'not connected to a device' });
+      return;
+    }
+    this.timeline.push(action);
+    this.redoStack = [];
+    this.sendTimelineAndCode(action);
   }
 
   removeAction(index: number): void {

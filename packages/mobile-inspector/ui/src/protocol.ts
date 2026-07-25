@@ -59,6 +59,8 @@ export interface ScreenFrame {
   imageBase64: string;
   width: number;
   height: number;
+  coordinateWidth?: number;
+  coordinateHeight?: number;
   orientation: 'portrait' | 'landscape';
   capturedAt: number;
 }
@@ -134,6 +136,7 @@ export type ClientMessage =
   | { type: 'tapAt'; x: number; y: number; frameId: number }
   | { type: 'inspectAt'; x: number; y: number; frameId: number }
   | { type: 'perform'; action: MobileAction }
+  | { type: 'record'; action: MobileAction }
   | { type: 'removeAction'; index: number }
   | { type: 'clearTimeline' }
   | { type: 'undo' }

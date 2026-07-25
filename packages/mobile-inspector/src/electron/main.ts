@@ -19,7 +19,14 @@ import fsSync from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { app, BrowserWindow, dialog, session as electronSession, ipcMain } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  clipboard,
+  dialog,
+  session as electronSession,
+  ipcMain,
+} from 'electron';
 
 import { parseClientMessage } from '../service/protocol.js';
 import { RecorderSession } from '../service/recorderSession.js';
@@ -92,6 +99,13 @@ function registerIpc(window: BrowserWindow): void {
     const base = path.basename(picked).replace(/\.(apk|app|ipa|zip)$/i, '');
     const inferredAppId = /^[\w.]+\.[\w.]+$/.test(base) ? base : undefined;
     return { path: picked, inferredAppId };
+  });
+
+  ipcMain.handle(IpcChannels.copyText, (_event, value: unknown): void => {
+    if (typeof value !== 'string' || value.length > 100_000) {
+      throw new Error('clipboard value must be a string no longer than 100,000 characters');
+    }
+    clipboard.writeText(value);
   });
 
   ipcMain.handle(IpcChannels.pickSaveLocation, async (): Promise<PickPathResult | null> => {

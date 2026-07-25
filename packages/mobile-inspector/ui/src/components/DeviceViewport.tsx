@@ -16,7 +16,8 @@ interface DeviceViewportProps {
 /**
  * Renders the latest device screenshot. Left-click records a tap; right-click asks the main process
  * to hit-test the point and returns ranked locator candidates (surfaced by the parent as a context
- * menu). Click coordinates are converted from on-screen CSS pixels back to native device pixels.
+ * menu). Click coordinates are converted from on-screen CSS pixels to the driver's interaction
+ * coordinate space.
  *
  * The frame's on-screen box is computed explicitly in JS (via `ResizeObserver`) rather than relying
  * on CSS `aspect-ratio` inside a flex container: a flex item's `aspect-ratio` only resolves reliably
@@ -38,6 +39,11 @@ export function DeviceViewport({
 }: DeviceViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
+  const gestureRef = useRef<{
+    pointerId: number;
+    clientX: number;
+    clientY: number;
+  } | null>(null);
   const [hoverNode, setHoverNode] = useState<MobileNode | null>(null);
   const [renderSize, setRenderSize] = useState<{ width: number; height: number } | null>(null);
 
@@ -64,24 +70,61 @@ export function DeviceViewport({
     return () => ro.disconnect();
   }, [frame?.width, frame?.height]);
 
-  function toDeviceCoords(event: React.MouseEvent): { x: number; y: number } | null {
+  function toDeviceCoords(event: {
+    clientX: number;
+    clientY: number;
+  }): { x: number; y: number } | null {
     const img = imgRef.current;
     if (!img || !frame) {
       return null;
     }
     const rect = img.getBoundingClientRect();
-    const scaleX = frame.width / rect.width;
-    const scaleY = frame.height / rect.height;
+    const scaleX = (frame.coordinateWidth ?? frame.width) / rect.width;
+    const scaleY = (frame.coordinateHeight ?? frame.height) / rect.height;
     return {
       x: Math.round((event.clientX - rect.left) * scaleX),
       y: Math.round((event.clientY - rect.top) * scaleY),
     };
   }
 
-  function onClick(event: React.MouseEvent<HTMLImageElement>): void {
-    const p = toDeviceCoords(event);
-    if (p && frame) {
-      send({ type: 'tapAt', x: p.x, y: p.y, frameId: frame.frameId });
+  function onPointerDown(event: React.PointerEvent<HTMLImageElement>): void {
+    if (event.button !== 0) {
+      return;
+    }
+    gestureRef.current = {
+      pointerId: event.pointerId,
+      clientX: event.clientX,
+      clientY: event.clientY,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function onPointerUp(event: React.PointerEvent<HTMLImageElement>): void {
+    const start = gestureRef.current;
+    gestureRef.current = null;
+    if (!start || start.pointerId !== event.pointerId || !frame) {
+      return;
+    }
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    const dx = event.clientX - start.clientX;
+    const dy = event.clientY - start.clientY;
+    if (Math.max(Math.abs(dx), Math.abs(dy)) < 16) {
+      const point = toDeviceCoords(event);
+      if (point) {
+        send({ type: 'tapAt', x: point.x, y: point.y, frameId: frame.frameId });
+      }
+      return;
+    }
+    const direction =
+      Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : dy > 0 ? 'down' : 'up';
+    send({ type: 'perform', action: { kind: 'swipe', direction } });
+  }
+
+  function onPointerCancel(event: React.PointerEvent<HTMLImageElement>): void {
+    if (gestureRef.current?.pointerId === event.pointerId) {
+      gestureRef.current = null;
     }
   }
 
@@ -102,6 +145,11 @@ export function DeviceViewport({
   }
 
   const highlight = selectedNode?.bounds ?? hoverNode?.bounds;
+  const coordinateWidth = frame?.coordinateWidth ?? frame?.width ?? 1;
+  const coordinateHeight = frame?.coordinateHeight ?? frame?.height ?? 1;
+  const visibleHighlight = highlight
+    ? intersectBounds(highlight, coordinateWidth, coordinateHeight)
+    : null;
 
   return (
     <div className="device-viewport" ref={containerRef}>
@@ -114,20 +162,22 @@ export function DeviceViewport({
             ref={imgRef}
             src={`data:image/png;base64,${frame.imageBase64}`}
             alt="device screen"
-            onClick={onClick}
+            onPointerDown={onPointerDown}
+            onPointerUp={onPointerUp}
+            onPointerCancel={onPointerCancel}
             onContextMenu={onContext}
             onMouseMove={onMouseMove}
             onMouseLeave={() => setHoverNode(null)}
             draggable={false}
           />
-          {highlight && (
+          {visibleHighlight && (
             <div
               className={`hover-overlay${selectedNode?.bounds ? ' selected' : ''}`}
               style={{
-                left: `${(highlight.x / frame.width) * 100}%`,
-                top: `${(highlight.y / frame.height) * 100}%`,
-                width: `${(highlight.width / frame.width) * 100}%`,
-                height: `${(highlight.height / frame.height) * 100}%`,
+                left: `${(visibleHighlight.x / coordinateWidth) * 100}%`,
+                top: `${(visibleHighlight.y / coordinateHeight) * 100}%`,
+                width: `${(visibleHighlight.width / coordinateWidth) * 100}%`,
+                height: `${(visibleHighlight.height / coordinateHeight) * 100}%`,
               }}
             />
           )}
@@ -141,21 +191,39 @@ export function DeviceViewport({
   );
 }
 
+function intersectBounds(
+  bounds: { x: number; y: number; width: number; height: number },
+  viewportWidth: number,
+  viewportHeight: number,
+): { x: number; y: number; width: number; height: number } | null {
+  const x = Math.max(0, bounds.x);
+  const y = Math.max(0, bounds.y);
+  const right = Math.min(viewportWidth, bounds.x + bounds.width);
+  const bottom = Math.min(viewportHeight, bounds.y + bounds.height);
+  return right > x && bottom > y ? { x, y, width: right - x, height: bottom - y } : null;
+}
+
 function findSmallestNodeAt(nodes: MobileNode[], x: number, y: number): MobileNode | null {
-  let best: MobileNode | null = null;
-  let bestArea = Infinity;
+  let smallest: MobileNode | null = null;
+  let smallestArea = Infinity;
+  let smallestStable: MobileNode | null = null;
+  let smallestStableArea = Infinity;
 
   const visit = (node: MobileNode): void => {
     const b = node.bounds;
     if (b && x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height) {
       const area = b.width * b.height;
-      if (area < bestArea) {
-        bestArea = area;
-        best = node;
+      if (area < smallestArea) {
+        smallestArea = area;
+        smallest = node;
+      }
+      if ((node.accessibilityId || node.resourceId || node.text) && area < smallestStableArea) {
+        smallestStableArea = area;
+        smallestStable = node;
       }
     }
     node.children?.forEach(visit);
   };
   nodes.forEach(visit);
-  return best;
+  return smallestStable ?? smallest;
 }

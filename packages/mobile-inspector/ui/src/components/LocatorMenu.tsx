@@ -18,9 +18,13 @@ interface LocatorMenuProps {
  */
 export function LocatorMenu({ anchor, candidates, loading, onClose, send }: LocatorMenuProps) {
   const [selected, setSelected] = useState(0);
+  const [fillOpen, setFillOpen] = useState(false);
+  const [fillValue, setFillValue] = useState('');
 
   useEffect(() => {
     setSelected(0);
+    setFillOpen(false);
+    setFillValue('');
   }, [candidates]);
 
   useEffect(() => {
@@ -51,8 +55,19 @@ export function LocatorMenu({ anchor, candidates, loading, onClose, send }: Loca
 
   async function copyLocator(): Promise<void> {
     if (candidate) {
-      await navigator.clipboard.writeText(candidate.display);
+      await window.pwtapInspector?.copyText(candidate.display);
     }
+    onClose();
+  }
+
+  function submitFill(): void {
+    if (!candidate) {
+      return;
+    }
+    send({
+      type: 'perform',
+      action: { kind: 'fill', locator: candidate.locator, value: fillValue },
+    });
     onClose();
   }
 
@@ -96,7 +111,7 @@ export function LocatorMenu({ anchor, candidates, loading, onClose, send }: Loca
             <button className="btn btn-small" onClick={() => perform(l => tap(l))}>
               Tap
             </button>
-            <button className="btn btn-small" onClick={() => perform(l => fill(l))}>
+            <button className="btn btn-small" onClick={() => setFillOpen(true)}>
               Fill…
             </button>
             <button
@@ -111,7 +126,7 @@ export function LocatorMenu({ anchor, candidates, loading, onClose, send }: Loca
               className="btn btn-small"
               onClick={() =>
                 perform(l => ({
-                  type: 'perform',
+                  type: 'record',
                   action: { kind: 'assertNotVisible', locator: l },
                 }))
               }
@@ -131,6 +146,29 @@ export function LocatorMenu({ anchor, candidates, loading, onClose, send }: Loca
             </button>
           </div>
         )}
+        {candidate && fillOpen && (
+          <form
+            className="locator-fill"
+            onSubmit={event => {
+              event.preventDefault();
+              submitFill();
+            }}
+          >
+            <input
+              autoFocus
+              value={fillValue}
+              onChange={event => setFillValue(event.target.value)}
+              placeholder="Value to fill"
+              aria-label="Value to fill"
+            />
+            <button className="btn btn-small btn-primary" type="submit">
+              Apply
+            </button>
+            <button className="btn btn-small" type="button" onClick={() => setFillOpen(false)}>
+              Cancel
+            </button>
+          </form>
+        )}
       </div>
     </>
   );
@@ -138,9 +176,4 @@ export function LocatorMenu({ anchor, candidates, loading, onClose, send }: Loca
 
 function tap(locator: MobileLocator): ClientMessage {
   return { type: 'perform', action: { kind: 'tap', locator } };
-}
-
-function fill(locator: MobileLocator): ClientMessage {
-  const value = window.prompt('Value to fill:') ?? '';
-  return { type: 'perform', action: { kind: 'fill', locator, value } };
 }

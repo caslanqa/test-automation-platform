@@ -32,6 +32,7 @@ import {
   acquireDeviceLock,
   deviceLockKey,
   recordBootedDevice,
+  stopIosAutomation,
 } from '@pwtap/platform';
 
 import type { AppiumServerHandle } from './core/appiumServer.js';
@@ -219,6 +220,7 @@ class AppiumDriverSession implements DriverSession {
   readonly driverId = 'appium';
   private frameCounter = 0;
   private releaseLock: (() => void) | undefined;
+  private closed = false;
 
   constructor(
     private readonly session: WebdriverIO.Browser,
@@ -239,11 +241,14 @@ class AppiumDriverSession implements DriverSession {
     await this.session.saveScreenshot(filePath);
     const buf = await fs.readFile(filePath);
     const size = readImageSize(buf) ?? { width: 0, height: 0 };
+    const coordinateSize = await this.session.getWindowSize();
     return {
       frameId: this.frameCounter++,
       imageBase64: buf.toString('base64'),
       width: size.width,
       height: size.height,
+      coordinateWidth: coordinateSize.width,
+      coordinateHeight: coordinateSize.height,
       orientation: size.width > size.height ? 'landscape' : 'portrait',
       capturedAt: Date.now(),
     };
@@ -484,9 +489,34 @@ class AppiumDriverSession implements DriverSession {
   }
 
   async close(): Promise<void> {
-    await closeSession(this.session);
-    this.releaseLock?.();
-    this.releaseLock = undefined;
+    if (this.closed) {
+      return;
+    }
+    this.closed = true;
+    const errors: unknown[] = [];
+    try {
+      await closeSession(this.session);
+    } catch (error) {
+      errors.push(error);
+    }
+    if (this.platform === 'ios') {
+      try {
+        await stopIosAutomation(this.device.id);
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    try {
+      await this.server.stop();
+    } catch (error) {
+      errors.push(error);
+    } finally {
+      this.releaseLock?.();
+      this.releaseLock = undefined;
+    }
+    if (errors.length > 0) {
+      throw new AggregateError(errors, '[appium-inspector] failed to close the driver session');
+    }
   }
 }
 
@@ -536,7 +566,20 @@ class AppiumInspectorDriver implements MobileInspectorDriver {
         release,
       );
     } catch (error) {
-      release();
+      let cleanupError: unknown;
+      try {
+        await server?.stop();
+      } catch (caught) {
+        cleanupError = caught;
+      } finally {
+        release();
+      }
+      if (cleanupError) {
+        throw new AggregateError(
+          [error, cleanupError],
+          '[appium-inspector] connection and server cleanup failed',
+        );
+      }
       throw error;
     }
   }

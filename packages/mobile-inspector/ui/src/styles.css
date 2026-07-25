@@ -53,11 +53,37 @@ body {
 /* ---------- workspace three panes ---------- */
 .workspace {
   display: grid;
-  grid-template-columns: 1fr 1.1fr 340px;
-  gap: 1px;
   background: #3c3c3c;
   flex: 1;
   min-height: 0;
+  overflow: hidden;
+}
+.workspace.resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+.pane-resizer {
+  position: relative;
+  background: #3c3c3c;
+  cursor: col-resize;
+  touch-action: none;
+  z-index: 3;
+}
+.pane-resizer::after {
+  content: '';
+  position: absolute;
+  inset: 0 2px;
+  background: transparent;
+  transition: background 120ms ease;
+}
+.pane-resizer:hover::after,
+.pane-resizer:focus-visible::after,
+.workspace.resizing .pane-resizer::after {
+  background: #0e639c;
+}
+.pane-resizer:focus-visible {
+  outline: 1px solid #75beff;
+  outline-offset: -1px;
 }
 .pane {
   background: #1e1e1e;
@@ -105,12 +131,15 @@ body {
 .device-viewport-frame {
   position: relative;
   flex: none;
+  overflow: hidden;
 }
 .device-viewport-frame img {
   width: 100%;
   height: 100%;
   display: block;
   cursor: crosshair;
+  touch-action: none;
+  user-select: none;
 }
 .device-viewport-empty {
   display: flex;
@@ -517,6 +546,22 @@ body {
   padding: 6px 4px 2px;
   border-top: 1px solid #3c3c3c;
   margin-top: 4px;
+}
+.locator-fill {
+  display: flex;
+  gap: 4px;
+  padding: 6px 4px 2px;
+  border-top: 1px solid #3c3c3c;
+}
+.locator-fill input {
+  min-width: 0;
+  flex: 1;
+  background: #3c3c3c;
+  color: #ddd;
+  border: 1px solid #555;
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-size: 11px;
 }
 
 /* ---------- misc ---------- */

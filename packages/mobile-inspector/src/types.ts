@@ -170,7 +170,7 @@ export interface MobileApp {
 
 /** One normalized node in a device's UI hierarchy — Maestro's compact tree and Appium's XML both map here. */
 export interface MobileNode {
-  /** Bounds in device pixels. */
+  /** Bounds in the frame's interaction coordinate space. */
   bounds?: { x: number; y: number; width: number; height: number };
   text?: string;
   accessibilityId?: string;
@@ -192,6 +192,13 @@ export interface ScreenFrame {
   /** Device pixel dimensions of `imageBase64`, for coordinate transforms in the UI. */
   width: number;
   height: number;
+  /**
+   * Coordinate space used by hierarchy bounds and pointer actions. This can differ from the encoded
+   * image size (Maestro scales screenshots; iOS screenshots use Retina pixels while XCTest uses
+   * logical points).
+   */
+  coordinateWidth?: number;
+  coordinateHeight?: number;
   /** Device orientation at capture time. */
   orientation: 'portrait' | 'landscape';
   capturedAt: number;

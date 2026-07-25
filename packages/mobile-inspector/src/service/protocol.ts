@@ -39,11 +39,13 @@ export type ClientMessage =
   | { type: 'disconnect' }
   | { type: 'refreshFrame' }
   | { type: 'refreshHierarchy' }
-  /** Hit-test a tap at device-pixel coordinates against the last hierarchy, record + perform it. */
+  /** Hit-test a tap in the frame's interaction coordinate space, record + perform it. */
   | { type: 'tapAt'; x: number; y: number; frameId: number }
   /** Hit-test WITHOUT acting — return the matched node and its ranked locator candidates. */
   | { type: 'inspectAt'; x: number; y: number; frameId: number }
   | { type: 'perform'; action: MobileAction }
+  /** Add an action to the generated flow without executing it against the current device state. */
+  | { type: 'record'; action: MobileAction }
   | { type: 'removeAction'; index: number }
   | { type: 'clearTimeline' }
   | { type: 'undo' }
@@ -154,6 +156,10 @@ export function parseClientMessage(raw: unknown): ClientMessage | null {
     case 'perform': {
       const action = (raw as { action?: unknown }).action;
       return isMobileAction(action) ? { type: 'perform', action } : null;
+    }
+    case 'record': {
+      const action = (raw as { action?: unknown }).action;
+      return isMobileAction(action) ? { type: 'record', action } : null;
     }
     case 'removeAction': {
       const index = (raw as { index?: unknown }).index;

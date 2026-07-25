@@ -29,6 +29,9 @@ const bridge: InspectorBridge = {
   pickExistingTestFile() {
     return ipcRenderer.invoke(IpcChannels.pickExistingTestFile);
   },
+  copyText(text: string) {
+    return ipcRenderer.invoke(IpcChannels.copyText, text);
+  },
 };
 
 contextBridge.exposeInMainWorld('pwtapInspector', Object.freeze(bridge));

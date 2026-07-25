@@ -89,17 +89,28 @@ function area(node: MobileNode): number {
   return node.bounds ? node.bounds.width * node.bounds.height : Infinity;
 }
 
+function hasStableLocator(node: MobileNode): boolean {
+  return !!(node.accessibilityId || node.resourceId || node.text);
+}
+
 /**
- * Find the smallest-area node whose bounds contain `(x, y)` — the most specific element under a
- * tap/click, mirroring how the picker overlay should highlight the innermost element rather than a
- * large ancestor container. Returns `undefined` when nothing in `hierarchy` contains the point.
+ * Find the smallest stable-locatable node whose bounds contain `(x, y)`. Native trees frequently
+ * place anonymous implementation children inside an actionable parent (for example an EditText);
+ * blindly choosing the smallest node reduces those controls to fragile coordinate locators. Fall
+ * back to the smallest anonymous node only when no containing node has id/text/a11y metadata.
  */
 export function hitTest(hierarchy: MobileNode[], x: number, y: number): MobileNode | undefined {
-  let best: MobileNode | undefined;
+  let smallest: MobileNode | undefined;
+  let smallestStable: MobileNode | undefined;
   const visit = (nodes: MobileNode[]): void => {
     for (const node of nodes) {
-      if (containsPoint(node, x, y) && (!best || area(node) < area(best))) {
-        best = node;
+      if (containsPoint(node, x, y)) {
+        if (!smallest || area(node) < area(smallest)) {
+          smallest = node;
+        }
+        if (hasStableLocator(node) && (!smallestStable || area(node) < area(smallestStable))) {
+          smallestStable = node;
+        }
       }
       if (node.children?.length) {
         visit(node.children);
@@ -107,7 +118,7 @@ export function hitTest(hierarchy: MobileNode[], x: number, y: number): MobileNo
     }
   };
   visit(hierarchy);
-  return best;
+  return smallestStable ?? smallest;
 }
 
 /**

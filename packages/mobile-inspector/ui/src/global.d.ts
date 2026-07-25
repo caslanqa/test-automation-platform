@@ -22,6 +22,7 @@ export interface InspectorBridge {
   pickAppFile(): Promise<PickAppFileResult | null>;
   pickSaveLocation(): Promise<PickPathResult | null>;
   pickExistingTestFile(): Promise<PickPathResult | null>;
+  copyText(text: string): Promise<void>;
 }
 
 declare global {

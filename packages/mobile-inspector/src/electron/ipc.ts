@@ -21,6 +21,8 @@ export const IpcChannels = {
   pickSaveLocation: 'pwtap-inspector:pickSaveLocation',
   /** renderer -> main (invoke): open a native file dialog to pick an existing test file to append to. */
   pickExistingTestFile: 'pwtap-inspector:pickExistingTestFile',
+  /** renderer -> main (invoke): copy trusted renderer text through Electron's native clipboard. */
+  copyText: 'pwtap-inspector:copyText',
 } as const;
 
 /** Result of the native "pick an app artifact" dialog. `null` when the user cancels. */
@@ -57,6 +59,8 @@ export interface InspectorBridge {
    * for the "append to existing file" save flow. Resolves `null` on cancel or if outside the project.
    */
   pickExistingTestFile(): Promise<PickPathResult | null>;
+  /** Copy text using Electron's native clipboard (works under file:// and denied web permissions). */
+  copyText(text: string): Promise<void>;
 }
 
 export type { ClientMessage, ServerMessage };
