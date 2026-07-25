@@ -12,7 +12,7 @@ so nothing touches the registry.
 - [6. Smoke test](#6-smoke-test)
 - [Notes](#notes)
 
-> Prerequisite: **Node.js ≥ 20.19**. Replace `<repo>` below with this repository's absolute path
+> Prerequisite: **Node.js ≥ 22.23**. Replace `<repo>` below with this repository's absolute path
 > (e.g. `/Users/you/Automation_Projects/test-automation-platform`).
 
 ## 1. Build the toolchain

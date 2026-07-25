@@ -46,7 +46,7 @@ The full draft is M0–M8. That is far too large for one reviewable PR. **This P
 ## Target monorepo layout
 
 ```
-repo root  (private, npm workspaces, engines.node ">=20.19")
+repo root  (private, npm workspaces, engines.node ">=22.23")
 ├─ package.json                # { private:true, workspaces:["packages/*"] }
 ├─ tsconfig.base.json          # strict opts salvaged from current tsconfig.json
 ├─ tsconfig.json              # solution file: "references" to each package
@@ -69,7 +69,7 @@ repo root  (private, npm workspaces, engines.node ">=20.19")
 
 ### M0 · Workspace foundation
 
-- Root `package.json`: `{ "private": true, "workspaces": ["packages/*"], "engines": { "node": ">=20.19" } }`. Move dev tooling (eslint/prettier/husky/commitlint/typescript) here as root devDeps.
+- Root `package.json`: `{ "private": true, "workspaces": ["packages/*"], "engines": { "node": ">=22.23" } }`. Move dev tooling (eslint/prettier/husky/commitlint/typescript) here as root devDeps.
 - `tsconfig.base.json`: salvage `compilerOptions` from the current `tsconfig.json` (strict set) minus the client path aliases. `tsconfig.json` becomes a solution file with `references` to each package.
 - Salvage `eslint.config.js`, `.prettierrc`, `.commitlintrc.json`, `.husky/` to root.
 - Init Changesets; add `.github/workflows/ci.yml` (install, `tsc -b`, lint, run `scripts/smoke-scaffold.mjs`).

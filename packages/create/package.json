@@ -10,7 +10,7 @@
     "directory": "packages/create"
   },
   "engines": {
-    "node": ">=20.19"
+    "node": ">=22.23"
   },
   "bin": {
     "create-pwtap": "./dist/index.js"

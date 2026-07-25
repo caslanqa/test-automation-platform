@@ -10,7 +10,7 @@
     "directory": "packages/plugin-appium"
   },
   "engines": {
-    "node": ">=20.19"
+    "node": ">=22.23"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -45,8 +45,8 @@
     "@playwright/test": ">=1.61.0"
   },
   "dependencies": {
-    "@pwtap/mobile-inspector": "^0.1.0",
-    "@pwtap/platform": "^0.2.0",
+    "@pwtap/mobile-inspector": "^0.1.1",
+    "@pwtap/platform": "^0.3.0",
     "fast-xml-parser": "^5.0.0",
     "webdriverio": "^9"
   },

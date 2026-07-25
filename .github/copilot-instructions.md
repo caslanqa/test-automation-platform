@@ -155,8 +155,8 @@ The platform monorepo does **not** use aliases; import relatively.
 
 ### Node Version
 
-- **Minimum:** Node.js ≥ 20.19
-- All packages declare `"engines": { "node": ">=20.19" }` in `package.json`
+- **Minimum:** Node.js ≥ 22.23
+- All packages declare `"engines": { "node": ">=22.23" }` in `package.json`
 
 ---
 

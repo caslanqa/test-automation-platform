@@ -57,7 +57,7 @@ registerProvider('gemini', new GeminiProvider(), { prefix: 'gemini/' });
 
 ## Requirements
 
-- Peer: `@playwright/test >= 1.61`. Node ≥ 20.19.
+- Peer: `@playwright/test >= 1.61`. Node ≥ 22.23.
 - A reachable provider at run time; the example spec **skips** when `JUDGE_MODEL` is unset, so core tests are unaffected.
 
 ## License

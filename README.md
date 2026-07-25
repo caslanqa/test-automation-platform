@@ -37,7 +37,7 @@ Three ideas hold it together:
 
 ## Requirements
 
-- **Node.js ≥ 20.19**
+- **Node.js ≥ 22.23**
 - **macOS-first.** UI + API work everywhere Node runs; the mobile/desktop engines target macOS today. Other OSes throw a clear "add this file" error rather than misbehaving silently.
 
 ## Quickstart

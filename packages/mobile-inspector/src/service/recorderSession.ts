@@ -9,16 +9,16 @@ import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+import { type MobilePlatform } from '@pwtap/platform';
+import prettier from 'prettier';
+
+import { hitTest, locatorCandidates, locatorForNode } from '../locator.js';
 import {
   listBootedAndroidDevices,
   listInstalledAndroidApps,
   listInstalledIosApps,
   resolveSimUdid,
-  type MobilePlatform,
-} from '@pwtap/platform';
-import prettier from 'prettier';
-
-import { hitTest, locatorCandidates, locatorForNode } from '../locator.js';
+} from '../platformCompat.js';
 import { discoverDriverMap } from '../registry.js';
 import type {
   ActionResult,

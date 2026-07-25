@@ -78,7 +78,7 @@ Interactively (no `-y`), `create` first collects **package.json metadata** — n
 
 ## Requirements
 
-- **Node.js ≥ 20.19**
+- **Node.js ≥ 22.23**
 - macOS-first; other OSes are additive (mobile/desktop engines are macOS today).
 
 ## License
