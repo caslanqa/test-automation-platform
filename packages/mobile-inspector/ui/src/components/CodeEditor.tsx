@@ -86,7 +86,7 @@ export function CodeEditor({ source, revision, send }: CodeEditorProps) {
   async function copy(): Promise<void> {
     const text = viewRef.current?.state.doc.toString() ?? '';
     if (text) {
-      await navigator.clipboard.writeText(text);
+      await window.pwtapInspector?.copyText(text);
       setCopied(true);
       setTimeout(() => setCopied(false), 1200);
     }

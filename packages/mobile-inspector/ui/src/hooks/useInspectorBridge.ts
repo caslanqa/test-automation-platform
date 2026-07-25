@@ -103,6 +103,10 @@ export function useInspectorBridge(): {
   }, []);
 
   const send = useCallback((message: ClientMessage) => {
+    if (message.type === 'inspectAt') {
+      // Never expose the previous element's locator candidates while a new hit-test is in flight.
+      setState(s => ({ ...s, inspected: null }));
+    }
     bridgeRef.current?.send(message);
   }, []);
 

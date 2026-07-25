@@ -55,6 +55,92 @@ export async function listIosSimulators(): Promise<
 }
 
 /**
+ * Visible iOS simulator viewport in logical points. `simctl io enumerate` reports the integrated
+ * display's physical pixel size and preferred UI scale (e.g. 1206x2622 @3 => 402x874 points).
+ */
+export async function getIosSimulatorViewportSize(
+  udid: string,
+): Promise<{ width: number; height: number } | undefined> {
+  const { stdout, code } = await getPlatform().simctl(['io', udid, 'enumerate'], {
+    timeoutMs: 15_000,
+  });
+  if (code !== 0) {
+    return undefined;
+  }
+  const lcd =
+    /Name:\s*LCD[\s\S]*?Pixel Size:\s*\{(\d+),\s*(\d+)\}[\s\S]*?Preferred UI Scale:\s*(\d+(?:\.\d+)?)/.exec(
+      stdout,
+    );
+  if (!lcd) {
+    return undefined;
+  }
+  const scale = Number(lcd[3]);
+  if (!Number.isFinite(scale) || scale <= 0) {
+    return undefined;
+  }
+  return {
+    width: Math.round(Number(lcd[1]) / scale),
+    height: Math.round(Number(lcd[2]) / scale),
+  };
+}
+
+/**
+ * Stop host-side XCTest/WebDriverAgent processes targeting one simulator. XCUITest intentionally
+ * keeps WDA's detached xcodebuild process alive after deleting a session; that process prevents a
+ * different automation engine from immediately claiming the same simulator.
+ */
+export async function stopIosAutomation(udid: string): Promise<void> {
+  const pattern = `xcodebuild.*${udid}|${udid}.*XCTRunner|xctest.*${udid}`;
+  const { stdout } = await getPlatform().run('/usr/bin/pgrep', ['-if', pattern], {
+    timeoutMs: 5_000,
+  });
+  const pids = stdout
+    .split('\n')
+    .map(value => Number(value.trim()))
+    .filter(pid => Number.isInteger(pid) && pid > 1 && pid !== process.pid);
+  for (const pid of pids) {
+    try {
+      process.kill(pid, 'SIGTERM');
+    } catch {
+      // The process may have exited between pgrep and kill.
+    }
+  }
+  const waitForExit = async (timeoutMs: number): Promise<number[]> => {
+    const deadline = Date.now() + timeoutMs;
+    let alive: number[] = [];
+    do {
+      alive = pids.filter(pid => {
+        try {
+          process.kill(pid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      });
+      if (alive.length === 0) {
+        return [];
+      }
+      await sleep(100);
+    } while (Date.now() < deadline);
+    return alive;
+  };
+  const remaining = await waitForExit(5_000);
+  for (const pid of remaining) {
+    try {
+      process.kill(pid, 'SIGKILL');
+    } catch {
+      // The process may have exited between the final check and kill.
+    }
+  }
+  const stubborn = await waitForExit(2_000);
+  if (stubborn.length > 0) {
+    throw new Error(
+      `[pwtap] failed to stop iOS automation processes for simulator ${udid}: ${stubborn.join(', ')}`,
+    );
+  }
+}
+
+/**
  * Apps installed on a booted simulator (`xcrun simctl listapps <udid>`), normalized for the app
  * picker. `simctl` returns a plist keyed by bundle id with `CFBundleDisplayName`/`CFBundleName` and
  * an `ApplicationType` of `System`/`User`. We parse it leniently (regex over the plist text rather

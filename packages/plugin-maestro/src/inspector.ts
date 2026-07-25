@@ -27,7 +27,10 @@ import type { DiscoveredDevice } from '@pwtap/platform';
 import {
   acquireDevice,
   acquireDeviceLock,
+  bootIosSim,
   deviceLockKey,
+  getAndroidViewportSize,
+  getIosSimulatorViewportSize,
   recordBootedDevice,
 } from '@pwtap/platform';
 
@@ -58,6 +61,8 @@ const CAPABILITIES: DriverCapabilities = {
     aiAssert: true,
   },
 };
+
+const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 
 /** No-op step/report hooks for a standalone (non-Playwright-test) inspector session. */
 function inspectorHooks(outputDir: string): McpSessionHooks {
@@ -142,10 +147,17 @@ function toMobileHierarchy(screen: MaestroScreen): MobileNode[] {
  * rounds to whole percent rather than keeping sub-percent precision. */
 function toPercentPoint(
   point: { x: number; y: number },
-  frame: { width: number; height: number },
+  frame: {
+    width: number;
+    height: number;
+    coordinateWidth?: number;
+    coordinateHeight?: number;
+  },
 ): string {
-  const px = frame.width > 0 ? Math.min(100, Math.max(0, (point.x / frame.width) * 100)) : 0;
-  const py = frame.height > 0 ? Math.min(100, Math.max(0, (point.y / frame.height) * 100)) : 0;
+  const width = frame.coordinateWidth ?? frame.width;
+  const height = frame.coordinateHeight ?? frame.height;
+  const px = width > 0 ? Math.min(100, Math.max(0, (point.x / width) * 100)) : 0;
+  const py = height > 0 ? Math.min(100, Math.max(0, (point.y / height) * 100)) : 0;
   return `${Math.round(px)}%,${Math.round(py)}%`;
 }
 
@@ -161,6 +173,7 @@ class MaestroDriverSession implements DriverSession {
   constructor(
     private readonly maestro: MaestroMcpSession,
     readonly device: InspectorDevice,
+    private readonly coordinateSize: { width: number; height: number } | undefined,
     release: () => void,
   ) {
     this.releaseLock = release;
@@ -171,12 +184,21 @@ class MaestroDriverSession implements DriverSession {
     const filePath = await this.maestro.takeScreenshot(name);
     const buf = await fs.readFile(filePath);
     const size = readImageSize(buf) ?? { width: 0, height: 0 };
+    const imageLandscape = size.width > size.height;
+    const coordinatesLandscape =
+      this.coordinateSize !== undefined && this.coordinateSize.width > this.coordinateSize.height;
+    const coordinateSize =
+      this.coordinateSize && imageLandscape !== coordinatesLandscape
+        ? { width: this.coordinateSize.height, height: this.coordinateSize.width }
+        : this.coordinateSize;
     return {
       frameId: this.frameCounter++,
       imageBase64: buf.toString('base64'),
       width: size.width,
       height: size.height,
-      orientation: size.width > size.height ? 'landscape' : 'portrait',
+      coordinateWidth: coordinateSize?.width,
+      coordinateHeight: coordinateSize?.height,
+      orientation: imageLandscape ? 'landscape' : 'portrait',
       capturedAt: Date.now(),
     };
   }
@@ -305,20 +327,45 @@ class MaestroInspectorDriver implements MobileInspectorDriver {
         );
       }
       const outputDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pwtap-mobile-inspector-'));
-      const maestro = new MaestroMcpSession(acquired, inspectorHooks(outputDir), {
-        screenshotMode: 'off',
-      });
       // Maestro has no install primitive of its own — install the build first (same helper the
       // plugin's own fixture uses) so `launchApp` below can find it.
       if (options.appSource) {
         await ensureAppInstalled(acquired, options.appSource);
       }
-      // Maestro scopes every command (even `back`/`tap`) to an app id and throws until one has been
-      // launched — unlike Appium, where an omitted app just attaches to whatever is foregrounded.
-      if (options.appId) {
-        await maestro.launchApp(options.appId);
+      const coordinateSize =
+        acquired.platform === 'android'
+          ? await getAndroidViewportSize(acquired.id)
+          : await getIosSimulatorViewportSize(acquired.id);
+      for (let attempt = 1; ; attempt += 1) {
+        const maestro = new MaestroMcpSession(acquired, inspectorHooks(outputDir), {
+          screenshotMode: 'off',
+        });
+        try {
+          // Maestro initializes its device connection lazily on the first command. A freshly
+          // released iOS driver can briefly report "not connected", so rebuild MCP once.
+          if (options.appId) {
+            await maestro.launchApp(options.appId);
+          } else {
+            await maestro.inspectScreen();
+          }
+          return new MaestroDriverSession(
+            maestro,
+            toInspectorDevice(acquired, true),
+            coordinateSize,
+            release,
+          );
+        } catch (error) {
+          await maestro.close();
+          const message = error instanceof Error ? error.message : String(error);
+          if (attempt >= 2 || !/not connected|failed to connect/i.test(message)) {
+            throw error;
+          }
+          await sleep(2_000);
+          if (acquired.platform === 'ios') {
+            await bootIosSim(acquired.id);
+          }
+        }
       }
-      return new MaestroDriverSession(maestro, toInspectorDevice(acquired, true), release);
     } catch (error) {
       release();
       throw error;

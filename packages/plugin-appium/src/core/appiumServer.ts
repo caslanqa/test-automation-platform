@@ -50,6 +50,23 @@ async function waitUntilReady(baseUrl: string, timeoutMs: number): Promise<void>
   }
 }
 
+function stopProcessTree(
+  child: ReturnType<typeof spawn>,
+  signal: NodeJS.Signals = 'SIGTERM',
+): void {
+  if (child.exitCode !== null || child.pid === undefined) {
+    return;
+  }
+  try {
+    // Appium starts WDA/xcodebuild and other driver processes. A detached process group lets the
+    // inspector stop only that owned tree instead of leaving automation children attached to a
+    // simulator when the user switches drivers.
+    process.kill(-child.pid, signal);
+  } catch {
+    child.kill(signal);
+  }
+}
+
 let cached: Promise<AppiumServerHandle> | undefined;
 
 /**
@@ -65,7 +82,7 @@ export function ensureAppiumServer(workerIndex: number): Promise<AppiumServerHan
   if (cached) {
     return cached;
   }
-  cached = (async () => {
+  const pending = (async () => {
     const external = process.env.APPIUM_SERVER_URL?.trim();
     if (external) {
       const baseUrl = external.replace(/\/+$/, '');
@@ -89,6 +106,7 @@ export function ensureAppiumServer(workerIndex: number): Promise<AppiumServerHan
     const logStream = fs.createWriteStream(logPath, { flags: 'a' });
     const child = spawn(bin, ['--port', String(port), '--base-path', '/'], {
       stdio: ['ignore', 'pipe', 'pipe'],
+      detached: true,
     });
     child.stdout.on('data', chunk => logStream.write(chunk));
     child.stderr.on('data', chunk => logStream.write(chunk));
@@ -96,15 +114,41 @@ export function ensureAppiumServer(workerIndex: number): Promise<AppiumServerHan
     child.on('error', () => {
       /* surfaced via the readiness timeout below */
     });
-    process.on('exit', () => child.kill());
-    await waitUntilReady(baseUrl, READY_TIMEOUT_MS);
+    process.on('exit', () => stopProcessTree(child));
+    try {
+      await waitUntilReady(baseUrl, READY_TIMEOUT_MS);
+    } catch (error) {
+      stopProcessTree(child);
+      throw error;
+    }
     return {
       baseUrl,
       logPath,
       stop: async () => {
-        child.kill();
+        if (child.exitCode === null) {
+          let exited = false;
+          const exit = new Promise<void>(resolve =>
+            child.once('exit', () => {
+              exited = true;
+              resolve();
+            }),
+          );
+          stopProcessTree(child);
+          await Promise.race([exit, new Promise<void>(resolve => setTimeout(resolve, 5_000))]);
+          if (!exited) {
+            stopProcessTree(child, 'SIGKILL');
+            await Promise.race([exit, new Promise<void>(resolve => setTimeout(resolve, 2_000))]);
+          }
+        }
+        cached = undefined;
       },
     };
   })();
-  return cached;
+  cached = pending;
+  void pending.catch(() => {
+    if (cached === pending) {
+      cached = undefined;
+    }
+  });
+  return pending;
 }
