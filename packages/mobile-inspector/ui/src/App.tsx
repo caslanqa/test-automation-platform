@@ -1,0 +1,334 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+
+import { CodeEditor } from './components/CodeEditor';
+import { ConnectionDrawer } from './components/ConnectionDrawer';
+import { ConsolePanel } from './components/ConsolePanel';
+import { DeviceViewport } from './components/DeviceViewport';
+import { HierarchyTree } from './components/HierarchyTree';
+import { LocatorMenu } from './components/LocatorMenu';
+import { RunOutput } from './components/RunOutput';
+import { SaveDialog, type SaveResult } from './components/SaveDialog';
+import { Timeline } from './components/Timeline';
+import type { PickAppFileResult, PickPathResult } from './global';
+import { useInspectorBridge } from './hooks/useInspectorBridge';
+import type { MobileNode } from './protocol';
+
+type BottomTab = 'timeline' | 'output' | 'logs';
+type PaneDivider = 'device-code' | 'code-tree';
+
+const DEFAULT_PANE_RATIOS: [number, number, number] = [1, 1.1, 0.8];
+const PANE_RATIOS_KEY = 'pwtap-inspector-pane-ratios';
+const DIVIDER_WIDTH = 6;
+const MIN_PANE_WIDTHS = [220, 280, 220] as const;
+
+async function pickAppFile(): Promise<PickAppFileResult | null> {
+  return (await window.pwtapInspector?.pickAppFile()) ?? null;
+}
+
+async function pickSaveLocation(): Promise<PickPathResult | null> {
+  return (await window.pwtapInspector?.pickSaveLocation()) ?? null;
+}
+
+async function pickExistingTestFile(): Promise<PickPathResult | null> {
+  return (await window.pwtapInspector?.pickExistingTestFile()) ?? null;
+}
+
+export function App() {
+  const { state, send } = useInspectorBridge();
+  const [drawerOpen, setDrawerOpen] = useState(true);
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [bottomTab, setBottomTab] = useState<BottomTab>('timeline');
+  const [selectedNode, setSelectedNode] = useState<MobileNode | null>(null);
+  const [menuAnchor, setMenuAnchor] = useState<{ x: number; y: number } | null>(null);
+  const [paneRatios, setPaneRatios] = useState<[number, number, number]>(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(PANE_RATIOS_KEY) ?? '') as unknown;
+      return Array.isArray(saved) &&
+        saved.length === 3 &&
+        saved.every(value => typeof value === 'number' && value > 0)
+        ? (saved as [number, number, number])
+        : DEFAULT_PANE_RATIOS;
+    } catch {
+      return DEFAULT_PANE_RATIOS;
+    }
+  });
+  const [resizing, setResizing] = useState(false);
+  const workspaceRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<{
+    divider: PaneDivider;
+    startX: number;
+    ratios: [number, number, number];
+  } | null>(null);
+
+  // Auto-close the connection drawer once a device is connected; reopen on disconnect.
+  useEffect(() => {
+    setDrawerOpen(!state.connected);
+  }, [state.connected]);
+
+  // Surface run output automatically while a test is running.
+  useEffect(() => {
+    if (state.runState === 'running') {
+      setBottomTab('output');
+    }
+  }, [state.runState]);
+
+  useEffect(() => {
+    localStorage.setItem(PANE_RATIOS_KEY, JSON.stringify(paneRatios));
+  }, [paneRatios]);
+
+  const onContextMenu = useCallback((anchor: { x: number; y: number }) => {
+    setMenuAnchor(anchor);
+  }, []);
+
+  const running = state.runState === 'running';
+
+  function beginPaneResize(divider: PaneDivider, event: React.PointerEvent<HTMLDivElement>): void {
+    dragRef.current = { divider, startX: event.clientX, ratios: paneRatios };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setResizing(true);
+  }
+
+  function resizePanes(event: React.PointerEvent<HTMLDivElement>): void {
+    const drag = dragRef.current;
+    const workspace = workspaceRef.current;
+    if (!drag || !workspace) {
+      return;
+    }
+    const availableWidth = workspace.clientWidth - DIVIDER_WIDTH * 2;
+    if (availableWidth <= 0) {
+      return;
+    }
+    const totalRatio = drag.ratios.reduce((sum, value) => sum + value, 0);
+    const widths = drag.ratios.map(value => (value / totalRatio) * availableWidth);
+    const delta = event.clientX - drag.startX;
+
+    if (drag.divider === 'device-code') {
+      const pairWidth = widths[0] + widths[1];
+      widths[0] = clamp(widths[0] + delta, MIN_PANE_WIDTHS[0], pairWidth - MIN_PANE_WIDTHS[1]);
+      widths[1] = pairWidth - widths[0];
+    } else {
+      const pairWidth = widths[1] + widths[2];
+      widths[1] = clamp(widths[1] + delta, MIN_PANE_WIDTHS[1], pairWidth - MIN_PANE_WIDTHS[2]);
+      widths[2] = pairWidth - widths[1];
+    }
+    setPaneRatios(widths.map(width => width / availableWidth) as [number, number, number]);
+  }
+
+  function endPaneResize(event: React.PointerEvent<HTMLDivElement>): void {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    dragRef.current = null;
+    setResizing(false);
+  }
+
+  function nudgePaneDivider(divider: PaneDivider, direction: -1 | 1): void {
+    const step = 0.03 * direction;
+    setPaneRatios(current => {
+      const next: [number, number, number] = [...current];
+      const leftIndex = divider === 'device-code' ? 0 : 1;
+      const rightIndex = leftIndex + 1;
+      if (next[leftIndex] + step <= 0.1 || next[rightIndex] - step <= 0.1) {
+        return current;
+      }
+      next[leftIndex] += step;
+      next[rightIndex] -= step;
+      return next;
+    });
+  }
+
+  if (!state.bridgeReady) {
+    return (
+      <div className="boot-screen">
+        <div>
+          <h2>PWTAP Mobile Inspector</h2>
+          <p className="muted">
+            This window must run inside the Electron host. Launch it with
+            <code> npm run start</code> (or <code>mobile-inspect &lt;projectRoot&gt;</code>).
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="app">
+      <header className="topbar">
+        <div className="topbar-title">PWTAP Mobile Inspector</div>
+        <button className="btn" onClick={() => setDrawerOpen(o => !o)}>
+          {state.connected ? '● Connected' : 'Connection'}
+        </button>
+        <div className="topbar-status muted">
+          {state.connected
+            ? `${state.connected.driver} · ${state.connected.device.name}`
+            : state.connecting
+              ? 'connecting…'
+              : 'not connected'}
+        </div>
+        <div className="topbar-spacer" />
+        <button
+          className="btn btn-primary"
+          onClick={() => send({ type: 'run', source: state.code })}
+          disabled={running || !state.code.trim()}
+        >
+          {running ? 'Running…' : 'Run'}
+        </button>
+        <button
+          className="btn btn-danger"
+          onClick={() => send({ type: 'stopRun' })}
+          disabled={!running}
+        >
+          Stop
+        </button>
+        <button
+          className="btn"
+          onClick={() => {
+            send({ type: 'listTestFiles' });
+            setSaveOpen(true);
+          }}
+          disabled={!state.code.trim()}
+        >
+          Save…
+        </button>
+      </header>
+
+      <div
+        ref={workspaceRef}
+        className={`workspace${resizing ? ' resizing' : ''}`}
+        style={{
+          gridTemplateColumns: `${paneRatios[0]}fr ${DIVIDER_WIDTH}px ${paneRatios[1]}fr ${DIVIDER_WIDTH}px ${paneRatios[2]}fr`,
+        }}
+      >
+        <section className="pane pane-left">
+          <div className="panel-title">Device</div>
+          <DeviceViewport
+            frame={state.frame}
+            hierarchy={state.hierarchy}
+            connecting={state.connecting}
+            send={send}
+            onContextMenu={onContextMenu}
+            selectedNode={selectedNode}
+          />
+          <ConnectionDrawer
+            open={drawerOpen}
+            onClose={() => setDrawerOpen(false)}
+            drivers={state.drivers}
+            devices={state.devices}
+            apps={state.apps}
+            connected={state.connected}
+            connecting={state.connecting}
+            send={send}
+            pickAppFile={pickAppFile}
+          />
+        </section>
+
+        <div
+          className="pane-resizer"
+          role="separator"
+          aria-label="Resize device and code panels"
+          aria-orientation="vertical"
+          tabIndex={0}
+          onPointerDown={event => beginPaneResize('device-code', event)}
+          onPointerMove={resizePanes}
+          onPointerUp={endPaneResize}
+          onPointerCancel={endPaneResize}
+          onKeyDown={event => {
+            if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+              event.preventDefault();
+              nudgePaneDivider('device-code', event.key === 'ArrowLeft' ? -1 : 1);
+            }
+          }}
+        />
+
+        <section className="pane pane-center">
+          <CodeEditor source={state.code} revision={state.codeRevision} send={send} />
+        </section>
+
+        <div
+          className="pane-resizer"
+          role="separator"
+          aria-label="Resize code and accessibility tree panels"
+          aria-orientation="vertical"
+          tabIndex={0}
+          onPointerDown={event => beginPaneResize('code-tree', event)}
+          onPointerMove={resizePanes}
+          onPointerUp={endPaneResize}
+          onPointerCancel={endPaneResize}
+          onKeyDown={event => {
+            if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+              event.preventDefault();
+              nudgePaneDivider('code-tree', event.key === 'ArrowLeft' ? -1 : 1);
+            }
+          }}
+        />
+
+        <section className="pane pane-right">
+          <HierarchyTree
+            nodes={state.hierarchy}
+            selectedNode={selectedNode}
+            onSelect={setSelectedNode}
+          />
+        </section>
+      </div>
+
+      <footer className="bottom-drawer">
+        <nav className="bottom-tabs">
+          <button
+            className={`tab${bottomTab === 'timeline' ? ' active' : ''}`}
+            onClick={() => setBottomTab('timeline')}
+          >
+            Timeline ({state.timeline.length})
+          </button>
+          <button
+            className={`tab${bottomTab === 'output' ? ' active' : ''}`}
+            onClick={() => setBottomTab('output')}
+          >
+            Run output{running ? ' ●' : ''}
+          </button>
+          <button
+            className={`tab${bottomTab === 'logs' ? ' active' : ''}`}
+            onClick={() => setBottomTab('logs')}
+          >
+            Logs ({state.logs.length})
+          </button>
+        </nav>
+        <div className="bottom-body">
+          {bottomTab === 'timeline' && <Timeline actions={state.timeline} send={send} />}
+          {bottomTab === 'output' && (
+            <RunOutput
+              lines={state.runOutput}
+              runState={state.runState}
+              exitCode={state.runExitCode}
+            />
+          )}
+          {bottomTab === 'logs' && <ConsolePanel logs={state.logs} lastResult={state.lastResult} />}
+        </div>
+      </footer>
+
+      <LocatorMenu
+        anchor={menuAnchor}
+        candidates={state.inspected?.candidates ?? []}
+        loading={!state.inspected}
+        onClose={() => setMenuAnchor(null)}
+        send={send}
+      />
+
+      {saveOpen && (
+        <SaveDialog
+          testFiles={state.testFiles}
+          pickSaveLocation={pickSaveLocation}
+          pickExistingTestFile={pickExistingTestFile}
+          onCancel={() => setSaveOpen(false)}
+          onConfirm={(result: SaveResult) => {
+            send({ type: 'save', ...result, source: state.code });
+            setSaveOpen(false);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), Math.max(min, max));
+}

@@ -7,14 +7,18 @@
  *
  * @example
  * // after `npx create-pwtap add appium`, gated behind APPIUM=1:
- * //   npm run test:appium   →  APPIUM=1 playwright test --project=appium
+ * //   npm run test:appium   →  runs tests and auto-generates appium HTML report
  */
 export const manifest = {
   id: 'appium',
   name: '@pwtap/plugin-appium',
   devDependencies: {},
   scripts: {
-    'test:appium': 'APPIUM=1 playwright test --project=appium',
+    'test:appium':
+      'APPIUM=1 playwright test --project=appium; code=$?; node scripts/mobile/appium-report.mjs; exit $code',
+    'mobile:create-device': 'node scripts/mobile/create-device.mjs',
+    'mobile:stop-devices': 'node scripts/mobile/stop-devices.mjs',
+    'report:appium': 'node scripts/mobile/appium-report.mjs',
   },
   envKeys: {
     APPIUM_PLATFORM: 'android',
@@ -24,6 +28,7 @@ export const manifest = {
     APPIUM_APP_IOS: '',
     APPIUM_SERVER_URL: '',
     APPIUM_DEVICE_LOG: '',
+    APPIUM_DIAGNOSTICS: 'fail',
     APPIUM_KEEP_DEVICES: '',
     APPIUM_BIN: '',
   },
@@ -38,9 +43,12 @@ export const manifest = {
     // serialize, DIFFERENT devices/platforms run concurrently (with --workers). `teardown` runs the
     // appium-teardown project after the run, shutting down framework-booted devices automatically.
     project:
-      "...(appiumEnabled ? [{ name: 'appium', testMatch: /.*\\.appium\\.ts$/, fullyParallel: true, teardown: 'appium-teardown' }, { name: 'appium-teardown', testMatch: /appium\\.teardown\\.ts$/ }] : [])",
+      "...(appiumEnabled ? [{ name: 'appium', testMatch: /.*\\.appium\\.ts$/, fullyParallel: true, timeout: 180_000, retries: 1, teardown: 'appium-teardown' }, { name: 'appium-teardown', testMatch: /appium\\.teardown\\.ts$/ }] : [])",
   },
-  examples: [{ src: 'templates/tests', dest: 'tests/appium' }],
+  examples: [
+    { src: 'templates/tests', dest: 'tests/appium' },
+    { src: 'templates/scripts/mobile', dest: 'scripts/mobile' },
+  ],
   docs: [{ src: 'docs/APPIUM_TESTING.md', dest: 'docs/APPIUM_TESTING.md' }],
   ensure: 'ensure',
   readmeSection: [

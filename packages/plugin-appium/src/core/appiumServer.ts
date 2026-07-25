@@ -1,10 +1,15 @@
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 import { getPlatform, type MobilePlatform } from '@pwtap/platform';
 
 export interface AppiumServerHandle {
   /** Base URL, e.g. `http://127.0.0.1:4723` — feed as `hostname`/`port`/`path` to `remote()`. */
   baseUrl: string;
+  /** Server log file path (only when this process spawned Appium). */
+  logPath?: string;
   /** Stop the server THIS process spawned. No-op when connected to an externally-managed one. */
   stop(): Promise<void>;
 }
@@ -45,6 +50,20 @@ async function waitUntilReady(baseUrl: string, timeoutMs: number): Promise<void>
   }
 }
 
+function stopProcessTree(child: ReturnType<typeof spawn>): void {
+  if (child.exitCode !== null || child.pid === undefined) {
+    return;
+  }
+  try {
+    // Appium starts WDA/xcodebuild and other driver processes. A detached process group lets the
+    // inspector stop only that owned tree instead of leaving automation children attached to a
+    // simulator when the user switches drivers.
+    process.kill(-child.pid, 'SIGTERM');
+  } catch {
+    child.kill();
+  }
+}
+
 let cached: Promise<AppiumServerHandle> | undefined;
 
 /**
@@ -77,16 +96,33 @@ export function ensureAppiumServer(workerIndex: number): Promise<AppiumServerHan
     }
     const port = DEFAULT_PORT + workerIndex;
     const baseUrl = `http://127.0.0.1:${port}`;
-    const child = spawn(bin, ['--port', String(port), '--base-path', '/'], { stdio: 'ignore' });
+    const logPath = path.join(
+      os.tmpdir(),
+      `pwtap-appium-server-w${workerIndex}-${process.pid}-${Date.now()}.log`,
+    );
+    const logStream = fs.createWriteStream(logPath, { flags: 'a' });
+    const child = spawn(bin, ['--port', String(port), '--base-path', '/'], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: true,
+    });
+    child.stdout.on('data', chunk => logStream.write(chunk));
+    child.stderr.on('data', chunk => logStream.write(chunk));
+    child.on('exit', () => logStream.end());
     child.on('error', () => {
       /* surfaced via the readiness timeout below */
     });
-    process.on('exit', () => child.kill());
+    process.on('exit', () => stopProcessTree(child));
     await waitUntilReady(baseUrl, READY_TIMEOUT_MS);
     return {
       baseUrl,
+      logPath,
       stop: async () => {
-        child.kill();
+        if (child.exitCode === null) {
+          const exited = new Promise<void>(resolve => child.once('exit', () => resolve()));
+          stopProcessTree(child);
+          await Promise.race([exited, new Promise<void>(resolve => setTimeout(resolve, 5_000))]);
+        }
+        cached = undefined;
       },
     };
   })();

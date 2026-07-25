@@ -24,7 +24,7 @@ test.use({ mobile: devices.android }); // or { platform: 'android', device: 'Pix
 test('sign in', async ({ maestro }) => {
   await maestro.launchApp('com.example.app');
   await maestro.tapOn('Login');
-  await maestro.inputText('cihan');
+  await maestro.inputText('John Doe');
   if (await maestro.isVisible('Cookie banner')) await maestro.tapOn('Accept');
   await maestro.assertVisible('Dashboard');
 });
@@ -36,6 +36,39 @@ test('smoke flow', async ({ maestro }) => {
 ```
 
 The imperative surface covers `launchApp`, `tapOn`/`doubleTapOn`/`longPressOn`, `inputText`/`eraseText`, `assertVisible`/`assertNotVisible`, `isVisible` (branch in TS — never fails), `scroll`/`scrollUntilVisible`/`swipe`, `back`/`pressKey`/`hideKeyboard`, `takeScreenshot`, `inspectScreen`, and `rowValue`. Each command shows as a native Playwright step; YAML flows are replayed step-by-step in the report too.
+
+## Imperative API quick examples
+
+```ts
+test('maestro api cookbook', async ({ maestro }) => {
+  await maestro.launchApp('com.example.app');
+  await maestro.tapOn('Login');
+  await maestro.doubleTapOn('Search');
+  await maestro.longPressOn('Delete');
+
+  await maestro.inputText('John Doe');
+  await maestro.eraseText();
+  await maestro.hideKeyboard();
+
+  await maestro.scroll('down');
+  await maestro.scrollUntilVisible('Settings');
+  await maestro.swipe('left');
+  await maestro.back();
+  await maestro.pressKey('enter');
+
+  await maestro.assertVisible('Dashboard');
+  await maestro.assertNotVisible('Error');
+  if (await maestro.isVisible('Cookie banner')) await maestro.tapOn('Accept');
+
+  const shotPath = await maestro.takeScreenshot('home-screen');
+  const screen = await maestro.inspectScreen();
+  const rowValue = await maestro.rowValue('Order #');
+
+  await expect(shotPath).toContain('home-screen');
+  await expect(screen.tree).toBeTruthy();
+  await expect(rowValue).toBeDefined();
+});
+```
 
 ## Running
 
@@ -71,6 +104,10 @@ npm run mobile:create-device      # create an AVD / simulator (interactive)
 npm run mobile:stop-devices       # manually shut down framework-booted devices
 ```
 
+`mobile:create-device` appends the created device into both plugin `devices` catalogs (Maestro +
+Appium), so the same alias can be used in `test.use({ mobile: devices.<alias> })` and
+`test.use({ appium: devices.<alias> })`.
+
 Devices the framework **auto-booted** are shut down **automatically** after the run by the
 `maestro-teardown` project (headed or headless) — set `MOBILE_KEEP_DEVICES=1` to keep them for faster
 reruns. Devices you booted yourself are left running.
@@ -100,6 +137,20 @@ all seven video modes (`off` / `on` / `retain-on-failure` / `on-first-retry` / `
 // playwright.config.ts
 use: { video: 'retain-on-failure', screenshot: 'only-on-failure' }, // now applies to maestro too
 ```
+
+## Environment variables (quick reference)
+
+| Key                                     | One-line description                                                      |
+| --------------------------------------- | ------------------------------------------------------------------------- |
+| `MOBILE_PLATFORM`                       | Default target platform for tests that do not set `test.use({ mobile })`. |
+| `MOBILE_DEVICE`                         | Default device alias/UDID used when test-level device is omitted.         |
+| `MOBILE_HEADLESS`                       | Controls device UI visibility (`true` hidden, `false` visible).           |
+| `MOBILE_APP_ANDROID` / `MOBILE_APP_IOS` | Default app artifact path/URL to install before test commands.            |
+| `MOBILE_STEP_LOGS`                      | Attaches successful-step logs too (failures are always attached).         |
+| `MOBILE_DEVICE_LOG`                     | Captures device OS log (`logcat` / `log show`) for each test.             |
+| `MOBILE_KEEP_DEVICES`                   | Keeps framework-booted devices alive after run for faster reruns.         |
+| `MOBILE_PARALLEL`                       | Overrides auto parallel capability detection (`1` force on, `0` off).     |
+| `MAESTRO_BIN`                           | Custom Maestro CLI binary path/name instead of default `maestro`.         |
 
 ## Requirements
 

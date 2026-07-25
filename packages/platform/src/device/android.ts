@@ -39,6 +39,83 @@ export async function avdNameForSerial(serial: string): Promise<string | undefin
   return stdout.split('\n')[0]?.trim() || undefined;
 }
 
+/**
+ * Every currently-online Android device/emulator (`adb devices`), regardless of whether THIS
+ * framework booted it — unlike the `booted.json` registry (`readBootedDevices`), which only tracks
+ * devices booted by a framework run and is meant for its own teardown, not general live status. Use
+ * this when you need the real OS-level picture (e.g. a device picker), such as the Mobile Inspector.
+ */
+export async function listBootedAndroidDevices(): Promise<
+  Array<{ serial: string; avdName?: string }>
+> {
+  const platform = getPlatform();
+  const { stdout, code } = await platform.run(platform.adbPath(), ['devices'], {
+    timeoutMs: 10_000,
+    env: platform.androidEnv(),
+  });
+  if (code !== 0) {
+    return [];
+  }
+  const serials = stdout
+    .split('\n')
+    .slice(1) // header line: "List of devices attached"
+    .map(line => line.trim())
+    .filter(line => line.endsWith('\tdevice'))
+    .map(line => line.split('\t')[0]);
+  return Promise.all(
+    serials.map(async serial => ({ serial, avdName: await avdNameForSerial(serial) })),
+  );
+}
+
+/** Visible Android display size used by accessibility bounds and pointer actions. */
+export async function getAndroidViewportSize(
+  serial: string,
+): Promise<{ width: number; height: number } | undefined> {
+  const platform = getPlatform();
+  const { stdout, code } = await platform.run(
+    platform.adbPath(),
+    ['-s', serial, 'shell', 'wm', 'size'],
+    { timeoutMs: 10_000, env: platform.androidEnv() },
+  );
+  if (code !== 0) {
+    return undefined;
+  }
+  // Prefer an override size when present; otherwise use the physical display size.
+  const matches = [...stdout.matchAll(/(?:Override|Physical) size:\s*(\d+)x(\d+)/g)];
+  const match = matches.find(item => item[0].startsWith('Override')) ?? matches[0];
+  return match ? { width: Number(match[1]), height: Number(match[2]) } : undefined;
+}
+
+/**
+ * List packages installed on a booted Android device (`adb -s <serial> shell pm list packages`).
+ * When `thirdPartyOnly` is true (default) system/OS packages are excluded (`-3`) so the app picker
+ * shows the user's own installed apps first. Returns package names; the OS provides no display label
+ * here, so callers use the package id as the label. Empty on any failure (best-effort).
+ */
+export async function listInstalledAndroidApps(
+  serial: string,
+  thirdPartyOnly = true,
+): Promise<Array<{ id: string; system: boolean }>> {
+  const platform = getPlatform();
+  const args = ['-s', serial, 'shell', 'pm', 'list', 'packages'];
+  if (thirdPartyOnly) {
+    args.push('-3');
+  }
+  const { stdout, code } = await platform.run(platform.adbPath(), args, {
+    timeoutMs: 15_000,
+    env: platform.androidEnv(),
+  });
+  if (code !== 0) {
+    return [];
+  }
+  return stdout
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line.startsWith('package:'))
+    .map(line => ({ id: line.slice('package:'.length).trim(), system: !thirdPartyOnly }))
+    .filter(app => app.id.length > 0);
+}
+
 // An emulator's window mode (`-no-window` or not) is fixed at boot and can't change on a running
 // instance. We record the mode we booted each AVD in (in a temp file cleared on reboot) so a reused
 // emulator can be restarted when a test asks for the other mode (see acquireDevice).

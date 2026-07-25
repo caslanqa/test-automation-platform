@@ -30,6 +30,47 @@ little benefit; wrap a logical action in your own `test.step()` if you want it i
 WebdriverIO elements also don't auto-wait like Playwright locators — use `expect.poll(...)` for
 retry-until-true assertions.
 
+## Appium function cookbook
+
+```ts
+test('appium functions', async ({ app, device }) => {
+  // Core interactions
+  await app('~Login').click();
+  await app('~Username').setValue('John Doe');
+  await app('~Password').setValue('secret');
+  await app('~Submit').click();
+
+  // Waits and assertions
+  const banner = app('~Welcome');
+  await banner.waitForDisplayed({ timeout: 10_000 });
+  await expect.poll(() => banner.getText()).toContain('Welcome');
+
+  // Multiple elements
+  const rows = await app.$$('android=new UiSelector().className("android.widget.TextView")');
+  await expect(rows.length).toBeGreaterThan(0);
+
+  // Nested selection
+  const list = app('~Orders');
+  if (await list.isDisplayed()) {
+    await list.$('~Order 42').click();
+  }
+
+  // Platform gestures
+  if (device.platform === 'android') {
+    await app.execute('mobile: swipeGesture', {
+      left: 0,
+      top: 0,
+      width: 280,
+      height: 720,
+      direction: 'up',
+      percent: 0.75,
+    });
+  } else {
+    await app.execute('mobile: swipe', { direction: 'up' });
+  }
+});
+```
+
 ## Writing tests: locators
 
 `app` gives you every WebdriverIO selector strategy. Priority order (fastest/most stable first,
@@ -63,6 +104,30 @@ test('login', async ({ app, device }) => {
 
 Or just use `~accessibilityId` everywhere and set matching accessibility identifiers in the app under
 test — the simplest cross-platform strategy when you control the app.
+
+### Practical locator patterns (recommended)
+
+```ts
+// 1) Accessibility ID (first choice)
+const login = app('~loginButton');
+
+// 2) Android resource/text query
+const androidSubmit = app('android=new UiSelector().resourceId("com.acme:id/submit")');
+const androidByText = app('android=new UiSelector().textContains("Continue")');
+
+// 3) iOS predicate / class chain
+const iosSubmit = app('-ios predicate string:type == "XCUIElementTypeButton" AND name == "Submit"');
+const iosCell = app('-ios class chain:**/XCUIElementTypeCell[`name CONTAINS "Order"`]');
+```
+
+### Locator anti-patterns (avoid)
+
+- Long absolute XPath chains tied to hierarchy depth.
+- Text-only locators for frequently localized screens.
+- Repeated index-based locators (e.g. `(...)[4]`) on dynamic lists.
+
+When a screen is flaky, prioritize adding a stable accessibility identifier in the app and switch to
+`~accessibilityId`.
 
 ## Writing tests: waiting, multiple elements, gestures
 
@@ -111,7 +176,7 @@ await app.execute('mobile: swipe', { direction: 'left' });
 
 Reaching for a logical grouping in the report: since there's no automatic per-command step (see
 above), wrap a multi-call action in your own step —
-`await test.step('log in', async () => { await app('~user').setValue('cihan'); await app('~submit').click(); })`.
+`await test.step('log in', async () => { await app('~user').setValue('John Doe'); await app('~submit').click(); })`.
 
 ## Selecting a device
 
@@ -130,9 +195,10 @@ test.use({ appium: devices.android }); // any booted android device
   `appium:appActivity` on Android, `appium:bundleId` on iOS, to target a built-in app with no `app`
   artifact), merged on top of the computed capabilities.
 
-Create devices via Android Studio's AVD Manager / Xcode's Simulator app, or — if
-`@pwtap/plugin-maestro` is also installed — its `npm run mobile:create-device` script (the
-booted-device registry is shared, so either plugin's teardown shuts down every auto-booted device).
+Create devices via Android Studio's AVD Manager / Xcode's Simulator app, or `npm run
+mobile:create-device` (the booted-device registry is shared, so either plugin's teardown shuts down
+every auto-booted device; the script also appends the created alias into both plugins' `devices`
+catalogs).
 Devices the framework auto-booted are shut down **automatically** after the run by the
 `appium-teardown` project (headed or headless). Set `APPIUM_KEEP_DEVICES=1` to keep auto-booted
 devices for faster reruns. Devices you booted yourself are left running.
@@ -142,9 +208,16 @@ devices for faster reruns. Devices you booted yourself are left running.
 ```bash
 npm run test:appium                                        # APPIUM=1 playwright test --project=appium
 APPIUM=1 npx playwright test --project=appium --workers=3  # parallel across devices
+npm run report:appium                                      # independent HTML report for appium results
 ```
 
+`npm run test:appium` automatically generates `test-results/appium-report/index.html` at the end of
+the run (even when tests fail).
+
 A bare `npm test` runs only chromium + api — the `appium` project is gated behind `APPIUM=1`.
+
+`report:appium` reads `test-results/results.json` and generates
+`test-results/appium-report/index.html` with Appium-only test rows and attachment links.
 
 The `appium` project is `fullyParallel`, and each test reserves its device with a cross-process lock
 keyed `<platform>:<device>` — **this is the device pool**: same device → serialize (wait, not skip),
@@ -164,6 +237,33 @@ right for your setup.
 Android's `logcat` (cleared at test start, dumped at test end) or iOS's unified system log (`log
 show`, windowed to the test's duration). Off by default (extra shell calls per test); best-effort — a
 capture failure never fails or masks the real test result.
+
+## AI judge with Appium screenshots
+
+With `@pwtap/plugin-ai-judge`, Appium screenshots can be graded by rubric or compared to a baseline.
+
+```ts
+import { test, expect } from '@fixtures';
+
+test('dashboard visual quality', async ({ app }, testInfo) => {
+  const screenshotPath = testInfo.outputPath('dashboard.png');
+  await app.saveScreenshot(screenshotPath);
+
+  await expect({
+    image: screenshotPath,
+    rubric:
+      'Dashboard title is visible, key card section is readable, and no blocking error is shown.',
+  }).toPassRubric({ minScore: 80 });
+});
+```
+
+Compare-mode example:
+
+```ts
+await expect({ image: screenshotPath }).toMatchImage('testData/baselines/dashboard.png', {
+  minScore: 90,
+});
+```
 
 ## Screenshots and screen recording — controlled by Playwright's own config
 
@@ -218,6 +318,7 @@ Both are best-effort: a capture failure never fails or masks the real test resul
 | `APPIUM_APP_ANDROID` / `APPIUM_APP_IOS` | App under test (path or URL) — set as the `appium:app` capability      |
 | `APPIUM_SERVER_URL`                     | Connect to an externally-managed Appium server instead of spawning one |
 | `APPIUM_DEVICE_LOG`                     | `1` attaches the device's OS system log for the whole test             |
+| `APPIUM_DIAGNOSTICS`                    | `off` / `fail` / `always` for session/page-source/server-log bundles   |
 | `APPIUM_KEEP_DEVICES`                   | Keep auto-booted devices after the run (faster reruns)                 |
 | `APPIUM_BIN`                            | Path to the Appium binary (defaults to `appium` on PATH)               |
 

@@ -39,6 +39,146 @@ export async function resolveSimUdid(nameOrUdid: string): Promise<string | undef
 }
 
 /**
+ * All available iOS simulators (`xcrun simctl list devices`), normalized for device pickers (e.g.
+ * the Mobile Inspector's device list). Reuses the same `simctl` call as {@link resolveSimUdid} so
+ * callers never need to shell out to `simctl` themselves.
+ */
+export async function listIosSimulators(): Promise<
+  Array<{ udid: string; name: string; booted: boolean }>
+> {
+  return (await listSimulators())
+    .filter(
+      (d): d is SimDevice & { udid: string; name: string } =>
+        Boolean(d.udid && d.name) && d.isAvailable !== false,
+    )
+    .map(d => ({ udid: d.udid, name: d.name, booted: d.state === 'Booted' }));
+}
+
+/**
+ * Visible iOS simulator viewport in logical points. `simctl io enumerate` reports the integrated
+ * display's physical pixel size and preferred UI scale (e.g. 1206x2622 @3 => 402x874 points).
+ */
+export async function getIosSimulatorViewportSize(
+  udid: string,
+): Promise<{ width: number; height: number } | undefined> {
+  const { stdout, code } = await getPlatform().simctl(['io', udid, 'enumerate'], {
+    timeoutMs: 15_000,
+  });
+  if (code !== 0) {
+    return undefined;
+  }
+  const lcd =
+    /Name:\s*LCD[\s\S]*?Pixel Size:\s*\{(\d+),\s*(\d+)\}[\s\S]*?Preferred UI Scale:\s*(\d+(?:\.\d+)?)/.exec(
+      stdout,
+    );
+  if (!lcd) {
+    return undefined;
+  }
+  const scale = Number(lcd[3]);
+  if (!Number.isFinite(scale) || scale <= 0) {
+    return undefined;
+  }
+  return {
+    width: Math.round(Number(lcd[1]) / scale),
+    height: Math.round(Number(lcd[2]) / scale),
+  };
+}
+
+/**
+ * Stop host-side XCTest/WebDriverAgent processes targeting one simulator. XCUITest intentionally
+ * keeps WDA's detached xcodebuild process alive after deleting a session; that process prevents a
+ * different automation engine (for example Maestro) from immediately claiming the same simulator.
+ */
+export async function stopIosAutomation(udid: string): Promise<void> {
+  const pattern = `xcodebuild.*${udid}|${udid}.*XCTRunner|xctest.*${udid}`;
+  const { stdout } = await getPlatform().run('/usr/bin/pgrep', ['-if', pattern], {
+    timeoutMs: 5_000,
+  });
+  const pids = stdout
+    .split('\n')
+    .map(value => Number(value.trim()))
+    .filter(pid => Number.isInteger(pid) && pid > 1 && pid !== process.pid);
+  for (const pid of pids) {
+    try {
+      process.kill(pid, 'SIGTERM');
+    } catch {
+      // The process may have exited between pgrep and kill.
+    }
+  }
+  const waitForExit = async (timeoutMs: number): Promise<number[]> => {
+    const deadline = Date.now() + timeoutMs;
+    let alive: number[] = [];
+    do {
+      alive = pids.filter(pid => {
+        try {
+          process.kill(pid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      });
+      if (alive.length === 0) {
+        return [];
+      }
+      await sleep(100);
+    } while (Date.now() < deadline);
+    return alive;
+  };
+  const remaining = await waitForExit(5_000);
+  for (const pid of remaining) {
+    try {
+      process.kill(pid, 'SIGKILL');
+    } catch {
+      // The process may have exited between the final check and kill.
+    }
+  }
+  const stubborn = await waitForExit(2_000);
+  if (stubborn.length > 0) {
+    throw new Error(
+      `[pwtap] failed to stop iOS automation processes for simulator ${udid}: ${stubborn.join(', ')}`,
+    );
+  }
+}
+
+/**
+ * Apps installed on a booted simulator (`xcrun simctl listapps <udid>`), normalized for the app
+ * picker. `simctl` returns a plist keyed by bundle id with `CFBundleDisplayName`/`CFBundleName` and
+ * an `ApplicationType` of `System`/`User`. We parse it leniently (regex over the plist text rather
+ * than a full plist parser) and skip system apps unless `includeSystem` is set. Empty on any
+ * failure (best-effort — a missing Xcode/simctl must not crash the picker).
+ */
+export async function listInstalledIosApps(
+  udid: string,
+  includeSystem = false,
+): Promise<Array<{ id: string; name: string; system: boolean }>> {
+  const { stdout, code } = await getPlatform().simctl(['listapps', udid], { timeoutMs: 20_000 });
+  if (code !== 0) {
+    return [];
+  }
+  const apps: Array<{ id: string; name: string; system: boolean }> = [];
+  // Each app is a `"bundle.id" = { ... };` block; capture the block to read its fields.
+  const blockRe = /"([^"]+)"\s*=\s*\{([\s\S]*?)\};/g;
+  let match: RegExpExecArray | null;
+  while ((match = blockRe.exec(stdout)) !== null) {
+    const id = match[1];
+    const body = match[2];
+    if (!id.includes('.')) {
+      continue; // skip non-bundle-id keys
+    }
+    const typeMatch = /ApplicationType\s*=\s*"?(\w+)"?/.exec(body);
+    const system = (typeMatch?.[1] ?? '') === 'System';
+    if (system && !includeSystem) {
+      continue;
+    }
+    const nameMatch =
+      /CFBundleDisplayName\s*=\s*"?([^";]+)"?/.exec(body) ??
+      /CFBundleName\s*=\s*"?([^";]+)"?/.exec(body);
+    apps.push({ id, name: (nameMatch?.[1] ?? id).trim(), system });
+  }
+  return apps;
+}
+
+/**
  * Boot an iOS simulator (by name or UDID) and wait until ready; returns the resolved UDID. Only the
  * runtime is booted (no window) — visibility is separate (`openSimulatorApp`/`quitSimulatorApp`).
  */

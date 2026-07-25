@@ -23,7 +23,10 @@ export {
   clearLogcat,
   dumpLogcat,
   emulatorMode,
+  getAndroidViewportSize,
   listAvds,
+  listBootedAndroidDevices,
+  listInstalledAndroidApps,
   shutdownEmulator,
   startAndroidRecording,
 } from './device/android.js';
@@ -37,11 +40,15 @@ export { acquireDevice, findBootedDevice, type AcquireOptions } from './device/d
 export {
   bootIosSim,
   dumpSimLog,
+  getIosSimulatorViewportSize,
+  listInstalledIosApps,
+  listIosSimulators,
   logCaptureStart,
   openSimulatorApp,
   quitSimulatorApp,
   resolveSimUdid,
   shutdownSim,
   startSimRecording,
+  stopIosAutomation,
 } from './device/ios.js';
 export { acquireDeviceLock, deviceLockKey } from './device/lock.js';

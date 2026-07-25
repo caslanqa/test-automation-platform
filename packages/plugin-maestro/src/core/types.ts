@@ -40,6 +40,8 @@ export type MaestroSelector =
   | {
       text?: string;
       id?: string;
+      /** `"x%,y%"` — taps/long-presses at a raw screen point instead of matching an element. */
+      point?: string;
       index?: number;
       enabled?: boolean;
       checked?: boolean;
