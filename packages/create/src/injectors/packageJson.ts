@@ -36,7 +36,9 @@ export function removePluginPackageJson(clientDir: string, m: PluginManifest): v
   const pkg = readJson<PackageJson>(file);
   for (const key of Object.keys(m.scripts)) {
     if (
-      (key === 'mobile:create-device' || key === 'mobile:stop-devices') &&
+      (key === 'mobile:create-device' ||
+        key === 'mobile:stop-devices' ||
+        key === 'mobile:inspect') &&
       hasOtherMobilePlugin(pkg, m.name)
     ) {
       continue;
