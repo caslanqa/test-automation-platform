@@ -1,6 +1,6 @@
 {
   "name": "@pwtap/mobile-inspector",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Embedded mobile test inspector/recorder shared by the Maestro and Appium plugins — a unified MobileApp facade, driver adapter registry, and local recording UI/codegen",
   "type": "module",
   "license": "MIT",
@@ -37,7 +37,7 @@
     "@playwright/test": ">=1.61.0"
   },
   "dependencies": {
-    "@pwtap/platform": "^0.3.0",
+    "@pwtap/platform": "^0.3.1",
     "electron": "^43.2.0",
     "prettier": "^3.9.6",
     "ws": "^8.21.1"
