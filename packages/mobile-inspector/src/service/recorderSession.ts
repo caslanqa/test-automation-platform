@@ -7,12 +7,6 @@
  * only thing that closes this is the launch itself, which is also what guarantees a device lock is never
  * leaked. See `server.ts` for the transport that owns it.
  */
-import { spawn, type ChildProcess } from 'node:child_process';
-import fsSync from 'node:fs';
-import fs from 'node:fs/promises';
-import { createRequire } from 'node:module';
-import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 
 import { type MobilePlatform } from '@pwtap/platform';
 
@@ -26,7 +20,6 @@ import type {
   MobileAction,
   MobileInspectorDriver,
   MobileNode,
-  TestFileEntry,
 } from '@pwtap/mobile-core';
 import {
   assignNodeIdentity,
@@ -42,7 +35,11 @@ import {
   resolveStableDeviceName,
 } from '@pwtap/mobile-core';
 import { generateTestSource, statementForAction, type GeneratedTarget } from './codegen.js';
+import { Draft } from './draft.js';
 import type { ClientMessage, RecorderEvent } from './protocol.js';
+import { Recorder } from './recorder.js';
+import { TestRunner } from './testRunner.js';
+import { TestWriter } from './testWriter.js';
 
 const FRAME_POLL_MS = 1500;
 
@@ -60,21 +57,16 @@ export class RecorderSession {
   private lastDevices: InspectorDevice[] = [];
   /** The `connected` event for the live session, replayed to a re-attaching client (see `snapshot`). */
   private connectedSummary: Extract<RecorderEvent, { type: 'connected' }> | undefined;
-  private timeline: MobileAction[] = [];
-  private redoStack: MobileAction[] = [];
   private lastHierarchy: MobileNode[] = [];
   private lastFrameId = -1;
   private pollTimer: NodeJS.Timeout | undefined;
   private frameRefresh: Promise<void> | undefined;
   private hierarchyRefresh: Promise<boolean> | undefined;
   private closed = false;
-  /** Authoritative editable source draft and its monotonic revision (see `editCode`/`run`/`save`). */
-  private draftSource = '';
-  private draftRevision = 0;
-  /** True once the user has manually edited the draft — stops timeline changes from clobbering it. */
-  private draftDirty = false;
-  /** The in-flight `playwright test` child, if any (see `run`/`stopRun`). */
-  private runChild: ChildProcess | undefined;
+  private readonly recorder = new Recorder();
+  private readonly draft = new Draft();
+  private readonly runner: TestRunner;
+  private readonly writer: TestWriter;
 
   private readonly projectRoot: string;
   private readonly send: (event: RecorderEvent) => void;
@@ -92,6 +84,8 @@ export class RecorderSession {
     this.projectRoot = projectRoot;
     this.send = send;
     this.drivers = drivers;
+    this.runner = new TestRunner(projectRoot, send);
+    this.writer = new TestWriter(projectRoot, send);
   }
 
   private async driverMap(): Promise<Map<string, MobileInspectorDriver>> {
@@ -152,9 +146,10 @@ export class RecorderSession {
     if (this.lastHierarchy.length > 0) {
       events.push({ type: 'hierarchy', nodes: this.lastHierarchy });
     }
-    events.push({ type: 'timeline', actions: this.timeline });
-    events.push({ type: 'code', source: this.draftSource, revision: this.draftRevision });
-    if (this.runChild) {
+    const { source, revision } = this.draft.state;
+    events.push({ type: 'timeline', actions: this.recorder.actions });
+    events.push({ type: 'code', source, revision });
+    if (this.runner.running) {
       events.push({ type: 'runStatus', state: 'started' });
     }
     return events;
@@ -274,12 +269,10 @@ export class RecorderSession {
         appId: options.appId,
         appSource: options.appSource,
       };
-      this.timeline = [];
-      this.redoStack = [];
+      this.recorder.clear();
+      this.draft.reset();
       this.lastHierarchy = [];
       this.lastFrameId = -1;
-      this.draftDirty = false;
-      this.draftSource = '';
       // Retained so a re-attaching client can be told what it is looking at without reconnecting the
       // device (see `snapshot`, ADR-011).
       this.connectedSummary = {
@@ -464,8 +457,7 @@ export class RecorderSession {
     }
     this.send({ type: 'actionResult', action, result });
     if (result.ok) {
-      this.timeline.push(action);
-      this.redoStack = [];
+      this.recorder.append(action);
       this.sendTimelineAndCode(action);
       await this.refreshHierarchy();
       await this.refreshFrame();
@@ -480,67 +472,58 @@ export class RecorderSession {
       this.send({ type: 'error', message: 'not connected to a device' });
       return;
     }
-    this.timeline.push(action);
-    this.redoStack = [];
+    this.recorder.append(action);
     this.sendTimelineAndCode(action);
   }
 
   removeAction(index: number): void {
-    if (index >= 0 && index < this.timeline.length) {
-      this.timeline.splice(index, 1);
+    if (this.recorder.remove(index)) {
       this.sendTimelineAndCode();
     }
   }
 
   clearTimeline(): void {
-    this.timeline = [];
-    this.redoStack = [];
+    this.recorder.clear();
     this.sendTimelineAndCode();
   }
 
   undo(): void {
-    const action = this.timeline.pop();
-    if (action) {
-      this.redoStack.push(action);
+    if (this.recorder.undo()) {
       this.sendTimelineAndCode();
     }
   }
 
   redo(): void {
-    const action = this.redoStack.pop();
+    const action = this.recorder.redo();
     if (action) {
-      this.timeline.push(action);
       this.sendTimelineAndCode(action);
     }
   }
 
   private sendTimelineAndCode(appended?: MobileAction): void {
-    this.send({ type: 'timeline', actions: this.timeline });
-    if (!this.draftDirty) {
-      // Clean draft: regenerate authoritatively from the timeline. With no target yet (nothing has been
-      // connected in this session) there is nothing honest to generate — the driver, platform and app are
-      // unknown and guessing one produces a test that silently targets the wrong thing.
-      this.draftSource = this.lastTarget
-        ? generateTestSource({
-            target: this.lastTarget,
-            testName: 'recorded flow',
-            actions: this.timeline,
-          })
-        : '// Connect a device to start recording.\n';
-      this.draftRevision += 1;
-    } else if (appended) {
-      // Hand-edited draft: preserve the user's edits and splice the newly recorded action's statement
-      // in before the test's closing brace, rather than dropping it. Non-append timeline changes
-      // (remove/undo/clear) can't be safely reconciled with arbitrary manual edits, so they leave the
-      // edited draft untouched (manual edits win).
-      this.draftSource = insertStatementIntoTest(this.draftSource, statementForAction(appended));
-      this.draftRevision += 1;
+    const actions = this.recorder.actions;
+    this.send({ type: 'timeline', actions });
+    const target = this.lastTarget;
+    const regenerated = this.draft.regenerate(() =>
+      // With no target (nothing connected yet) there is nothing honest to generate: guessing a driver
+      // produces a test that silently targets the wrong thing.
+      target
+        ? generateTestSource({ target, testName: 'recorded flow', actions })
+        : '// Connect a device to start recording.\n',
+    );
+    if (!regenerated && appended) {
+      // The user owns the buffer, so their edits win — but a newly recorded action is spliced in rather
+      // than dropped. Non-append changes (remove/undo/clear) cannot be reconciled with arbitrary edits.
+      this.draft.spliceIntoUserDraft(source =>
+        insertStatementIntoTest(source, statementForAction(appended)),
+      );
     }
     this.emitCode();
   }
 
   private emitCode(): void {
-    this.send({ type: 'code', source: this.draftSource, revision: this.draftRevision });
+    const { source, revision } = this.draft.state;
+    this.send({ type: 'code', source, revision });
   }
 
   /**
@@ -549,12 +532,9 @@ export class RecorderSession {
    * edit is stale and we resend the current draft instead of silently clobbering newer content.
    */
   editCode(source: string, revision: number): void {
-    if (revision < this.draftRevision) {
-      this.emitCode(); // stale — client edited an out-of-date draft; give it the current one
-      return;
-    }
-    this.draftSource = source;
-    this.draftDirty = true;
+    // A refused edit still gets an answer: the current draft, so the editor can reconcile instead of
+    // silently losing what was typed.
+    this.draft.takeOver(source, revision);
     this.emitCode();
   }
 
@@ -596,159 +576,36 @@ export class RecorderSession {
     }
   }
 
-  /**
-   * Enumerate existing recorded test files anywhere under the project (any `*.mobile.ts`), for the
-   * "append to existing file" save picker. Best-effort recursive scan skipping VCS/build/dependency
-   * directories and hidden folders, capped at a sane file count so a huge/misconfigured project can't
-   * make this hang.
-   */
+  /** Existing recordings under the project, for the "append to existing file" picker. */
   async listTestFiles(): Promise<void> {
-    const SKIP_DIRS = new Set([
-      'node_modules',
-      '.git',
-      'dist',
-      'build',
-      'ui-dist',
-      'coverage',
-      'test-results',
-      'playwright-report',
-    ]);
-    const MAX_FILES = 500;
-    const files: TestFileEntry[] = [];
-    // Every installed driver's extension, not one hard-coded suffix — a project can hold both
-    // `*.maestro.ts` and `*.appium.ts` recordings and the picker must offer both.
-    const extensions = await this.knownExtensions();
-
-    const walk = async (dir: string): Promise<void> => {
-      if (files.length >= MAX_FILES) {
-        return;
-      }
-      let entries: import('node:fs').Dirent[];
-      try {
-        entries = await fs.readdir(dir, { withFileTypes: true, encoding: 'utf8' });
-      } catch {
-        return;
-      }
-      for (const entry of entries) {
-        if (files.length >= MAX_FILES) {
-          return;
-        }
-        if (entry.name.startsWith('.')) {
-          continue;
-        }
-        const full = path.join(dir, entry.name);
-        if (entry.isDirectory()) {
-          if (SKIP_DIRS.has(entry.name)) {
-            continue;
-          }
-          await walk(full);
-        } else if (entry.isFile() && extensions.some(ext => entry.name.endsWith(ext))) {
-          const relativePath = path.relative(this.projectRoot, full).split(path.sep).join('/');
-          files.push({ relativePath, name: entry.name });
-        }
-      }
-    };
-    await walk(this.projectRoot);
-    files.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
-    this.send({ type: 'testFiles', files });
+    await this.writer.listTestFiles(await this.knownExtensions());
   }
 
-  /**
-   * Write the authoritative `source` to `targetPath` (a project-relative path — possibly including
-   * subdirectories — chosen via the location/file pickers in the UI). Confined to the project root
-   * only (no `..` escape). Per `plan.md`'s "explicit confirmation" decision, neither mode silently
-   * clobbers the wrong thing:
-   * - `mode: 'new'` — `targetPath` must NOT already exist (`.mobile.ts` is appended if missing).
-   * - `mode: 'append'` — `targetPath` MUST already exist; the recorded test is merged into it (see
-   *   {@link mergeIntoExistingTest}) rather than overwritten, so existing tests are preserved.
-   */
   async save(
     mode: 'new' | 'append',
     targetPath: string,
     testName: string,
     source: string,
   ): Promise<void> {
-    const relative = targetPath.trim().replace(/^[/\\]+/, '');
-    if (!relative) {
-      this.send({ type: 'error', message: 'no target file specified' });
-      return;
-    }
-    const resolved = resolveSaveExtension({
-      relative,
+    await this.writer.save({
       mode,
+      targetPath,
+      testName,
+      source,
       extensions: await this.knownExtensions(),
       binding: await this.currentBinding(),
     });
-    if ('error' in resolved) {
-      this.send({ type: 'error', message: resolved.error });
-      return;
-    }
-    const finalRelative = resolved.relativePath;
-    const target = path.resolve(this.projectRoot, finalRelative);
-    if (!target.startsWith(this.projectRoot + path.sep)) {
-      this.send({ type: 'error', message: 'save location must be inside the project' });
-      return;
-    }
-
-    const exists = await fs
-      .access(target)
-      .then(() => true)
-      .catch(() => false);
-
-    if (mode === 'new' && exists) {
-      this.send({
-        type: 'error',
-        message: `${finalRelative} already exists — choose "append to existing file" or a different name`,
-      });
-      return;
-    }
-    if (mode === 'append' && !exists) {
-      this.send({
-        type: 'error',
-        message: `${finalRelative} does not exist — choose "new file" to create it`,
-      });
-      return;
-    }
-
-    const body =
-      mode === 'append'
-        ? mergeIntoExistingTest(await fs.readFile(target, 'utf8'), source, testName)
-        : source;
-
-    let formatted = body;
-    const prettier = await loadProjectPrettier(this.projectRoot);
-    if (!prettier) {
-      this.log('info', 'prettier is not installed in this project — writing the file unformatted');
-    } else {
-      try {
-        const config = (await prettier.resolveConfig(target)) ?? undefined;
-        formatted = await prettier.format(body, { ...config, filepath: target });
-      } catch (error) {
-        this.log('warn', `prettier formatting skipped: ${errorMessage(error)}`);
-      }
-    }
-    // Atomic write: write to a temp file in the same dir, then rename over the target.
-    const dir = path.dirname(target);
-    await fs.mkdir(dir, { recursive: true });
-    const tmp = path.join(dir, `.${path.basename(target)}.${process.pid}.tmp`);
-    await fs.writeFile(tmp, formatted, 'utf8');
-    await fs.rename(tmp, target);
-    this.send({ type: 'saved', path: target });
   }
 
   /**
-   * Run the authoritative `source` through the project's own Playwright binary. To avoid two live
-   * sessions fighting over one device, any inspector-owned driver session is disconnected first. The
-   * source is written to a confined temporary `*.mobile.ts` under the project, executed with
-   * `playwright test <file>` (no shell — argv only), its stdout/stderr streamed to the UI, and the
-   * temp file removed when the run finishes or is cancelled.
+   * A live inspector session and a Playwright run cannot drive the same device, so the device is released
+   * first — which is exactly why the draft must survive a disconnect (ADR-011).
    */
   async run(source: string): Promise<void> {
-    if (this.runChild) {
+    if (this.runner.running) {
       this.send({ type: 'error', message: 'a run is already in progress' });
       return;
     }
-    // A live inspector session and a Playwright run can't drive the same device at once.
     if (this.session) {
       this.log('info', 'disconnecting the live inspector session before running the test');
       await this.disconnect();
@@ -761,55 +618,11 @@ export class RecorderSession {
       });
       return;
     }
-    let pwBin: string;
-    try {
-      pwBin = resolvePlaywrightBin(this.projectRoot);
-    } catch (error) {
-      this.send({ type: 'error', message: errorMessage(error) });
-      return;
-    }
-    // A real, non-hidden path whose extension the target project's `testMatch` actually matches, in a
-    // dedicated directory that gets swept on startup. Playwright filters CLI file arguments against the
-    // files it collected, so a name the project does not match yields "no tests found", and a `.spec.ts`
-    // name would instead be collected by the browser project (architecture.md §8).
-    const runDir = path.resolve(this.projectRoot, 'tests', '__inspector__');
-    await fs.mkdir(runDir, { recursive: true });
-    await sweepStaleRuns(runDir);
-    const tmpFile = path.join(runDir, `run-${Date.now()}${binding.extension}`);
-    await fs.writeFile(tmpFile, source, 'utf8');
-
-    const child = spawn(pwBin, ['test', tmpFile, `--project=${binding.project}`], {
-      cwd: this.projectRoot,
-      // The driver's project is env-gated, so without its gate variable the project does not even exist
-      // in the resolved config and the run finds nothing to do.
-      env: { ...process.env, [binding.gateEnv]: '1' },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    this.runChild = child;
-    this.send({ type: 'runStatus', state: 'started' });
-
-    child.stdout?.on('data', (buf: Buffer) =>
-      this.send({ type: 'runOutput', stream: 'stdout', chunk: buf.toString() }),
-    );
-    child.stderr?.on('data', (buf: Buffer) =>
-      this.send({ type: 'runOutput', stream: 'stderr', chunk: buf.toString() }),
-    );
-    child.on('error', err => {
-      this.send({ type: 'error', message: `failed to start test run: ${errorMessage(err)}` });
-    });
-    child.on('close', code => {
-      this.runChild = undefined;
-      void fs.rm(tmpFile, { force: true });
-      this.send({ type: 'runStatus', state: 'finished', exitCode: code });
-    });
+    await this.runner.run(source, binding);
   }
 
-  /** Cancel the in-flight run by killing exactly the child we spawned (no name-based kill). */
   stopRun(): void {
-    if (!this.runChild) {
-      return;
-    }
-    this.runChild.kill('SIGTERM');
+    this.runner.stop();
   }
 
   /** Called once when the owning WebSocket closes — never leaves a device/lock/server behind. */
@@ -821,96 +634,6 @@ export class RecorderSession {
     this.stopRun();
     await this.disconnect();
   }
-}
-
-/** The slice of Prettier's API the save step uses. */
-interface ProjectPrettier {
-  resolveConfig(filePath: string): Promise<Record<string, unknown> | null>;
-  format(source: string, options: Record<string, unknown>): Promise<string>;
-}
-
-/**
- * Resolve **the project's own** Prettier rather than bundling a copy (architecture.md ADR-014).
- *
- * Every scaffolded project already declares Prettier, and using its copy is both lighter and more correct:
- * the user's version and their `.prettierrc` are the ones that should shape a file written into their repo.
- * Shipping a second Prettier inside a dev tool added ~10 MB to every install to do the same job slightly
- * differently. Returns `undefined` when the project has none, so the caller can degrade audibly instead of
- * crashing a save.
- */
-async function loadProjectPrettier(projectRoot: string): Promise<ProjectPrettier | undefined> {
-  try {
-    const require = createRequire(`${projectRoot}/`);
-    const resolved = require.resolve('prettier', { paths: [projectRoot] });
-    const mod = (await import(pathToFileURL(resolved).href)) as {
-      default?: ProjectPrettier;
-    } & ProjectPrettier;
-    const api = mod.default ?? mod;
-    return typeof api.format === 'function' ? api : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * Delete leftover temporary run files. A crash (or a killed process) can leave one behind, and because it
- * lives under `tests/` with a real driver extension, a later plain `npm test` would happily collect and
- * run it. Best-effort: a sweep failure must never block the run the user asked for.
- */
-async function sweepStaleRuns(runDir: string): Promise<void> {
-  try {
-    const entries = await fs.readdir(runDir);
-    await Promise.all(
-      entries
-        .filter(name => name.startsWith('run-'))
-        .map(name => fs.rm(path.join(runDir, name), { force: true })),
-    );
-  } catch {
-    // Nothing to sweep, or the directory is unreadable — either way the run proceeds.
-  }
-}
-
-/**
- * Decide the final project-relative path a recording is saved to.
- *
- * The extension names the driver (architecture.md §8), so it comes from the driver the recording was made
- * against — never a fixed suffix. Saving a Maestro recording as `*.appium.ts` would file it under a
- * project that gates on a different env var and applies a different timeout, and it would silently never
- * run under `npm run test:maestro`. A name the user already suffixed correctly is left alone, and
- * `append` mode never rewrites the path at all: the target file exists and its name is the user's.
- */
-export function resolveSaveExtension(input: {
-  relative: string;
-  mode: 'new' | 'append';
-  extensions: string[];
-  binding: DriverTestBinding | undefined;
-}): { relativePath: string } | { error: string } {
-  const { relative, mode, extensions, binding } = input;
-  if (mode === 'append' || extensions.some(ext => relative.endsWith(ext))) {
-    return { relativePath: relative };
-  }
-  if (!binding) {
-    return {
-      error:
-        'cannot tell which driver this test targets — connect a device before saving, or give the file ' +
-        `name one of these extensions: ${extensions.join(', ') || '(no driver plugin installed)'}`,
-    };
-  }
-  return { relativePath: `${relative}${binding.extension}` };
-}
-
-/** Resolve the project-local Playwright CLI (`node_modules/.bin/playwright`) — throws if absent. */
-function resolvePlaywrightBin(projectRoot: string): string {
-  const bin = path.join(
-    projectRoot,
-    'node_modules',
-    '.bin',
-    process.platform === 'win32' ? 'playwright.cmd' : 'playwright',
-  );
-  if (!fsSync.existsSync(bin)) {
-    throw new Error(`Playwright CLI not found at ${bin} — run "npm install" in the project first`);
-  }
-  return bin;
 }
 
 function errorMessage(error: unknown): string {
@@ -930,38 +653,4 @@ function insertStatementIntoTest(source: string, statement: string): string {
   }
   const trimmed = source.trimEnd();
   return `${trimmed}\n${insertion}\n`;
-}
-
-/**
- * Merge a freshly generated/edited test `source` into an existing test file's content for the
- * "append" save mode. Concatenating the whole generated file would duplicate the `@fixtures` import
- * and let its top-level `test.use()` clobber the target file's own device/driver config for every test
- * that follows it in the file, so instead this extracts just the generated file's body (everything
- * after its leading `import` lines) and wraps it in its own `test.describe(testName, () => { ... })`
- * block — that keeps the appended test's `test.use()` scoped to itself, matching Playwright's scoping
- * rules. The `@fixtures` import line is only added if the target file doesn't already have one.
- */
-function mergeIntoExistingTest(existingContent: string, source: string, testName: string): string {
-  const lines = source.split('\n');
-  let splitIndex = 0;
-  while (
-    splitIndex < lines.length &&
-    (lines[splitIndex].startsWith('import ') || lines[splitIndex].trim() === '')
-  ) {
-    splitIndex += 1;
-  }
-  const importLines = lines.slice(0, splitIndex).filter(l => l.trim() !== '');
-  const body = lines.slice(splitIndex).join('\n').trim();
-  const indented = body
-    .split('\n')
-    .map(line => (line.trim() ? `  ${line}` : line))
-    .join('\n');
-  const block = `test.describe(${JSON.stringify(testName)}, () => {\n${indented}\n});\n`;
-
-  const hasFixturesImport =
-    existingContent.includes(`from '@fixtures'`) || existingContent.includes(`from "@fixtures"`);
-  const header =
-    importLines.length > 0 && !hasFixturesImport ? `${importLines.join('\n')}\n\n` : '';
-
-  return `${header}${existingContent.trimEnd()}\n\n${block}`;
 }
