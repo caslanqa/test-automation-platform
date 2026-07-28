@@ -3,7 +3,12 @@
  * the `@fixtures` barrel via mergeTests), an env-gated `maestro` Playwright project (so a bare
  * `npm test` stays UI + API), the `MOBILE_*` env keys the engine reads, example specs + flows, and a
  * host check. The `maestro` project sets no `testDir` — it inherits the project's top-level tests
- * folder (so it respects a renamed tests dir) and matches `*.mobile.ts`.
+ * folder (so it respects a renamed tests dir) and matches `*.maestro.ts`.
+ *
+ * The extension names the driver, for hand-written and inspector-generated tests alike, so that a saved
+ * recording automatically lands on the right project, gate and teardown — see
+ * docs/mobile-inspector/architecture.md §8. This narrowed from `*.mobile.ts`; existing files need one
+ * `git mv` (§13 carries the command).
  *
  * @example
  * // after `npx create-pwtap add maestro`, gated behind MAESTRO=1:
@@ -30,10 +35,17 @@ export const manifest = {
     MOBILE_KEEP_DEVICES: '',
     MAESTRO_BIN: '',
   },
-  fixture: {
-    importFrom: '@pwtap/plugin-maestro',
-    test: { alias: 'maestroTest' },
-  },
+  fixture: [
+    { importFrom: '@pwtap/plugin-maestro', test: { alias: 'maestroTest' } },
+    // The driver-neutral `mobileApp` facade every inspector-generated test uses. Marked `shared` because
+    // @pwtap/plugin-appium contributes the identical entry: it is injected once and, crucially, survives
+    // removing one mobile plugin while the other is still installed.
+    {
+      importFrom: '@pwtap/mobile-inspector',
+      test: { alias: 'mobileAppTest' },
+      shared: true,
+    },
+  ],
   playwrightProject: {
     gateVar: 'maestroEnabled',
     gate: "const maestroEnabled = process.env.MAESTRO === '1';",
@@ -41,7 +53,7 @@ export const manifest = {
     // serialize, DIFFERENT devices/platforms run concurrently (with --workers). `teardown` runs the
     // maestro-teardown project after the run, shutting down framework-booted devices automatically.
     project:
-      "...(maestroEnabled ? [{ name: 'maestro', testMatch: /.*\\.mobile\\.ts$/, fullyParallel: true, teardown: 'maestro-teardown' }, { name: 'maestro-teardown', testMatch: /maestro\\.teardown\\.ts$/ }] : [])",
+      "...(maestroEnabled ? [{ name: 'maestro', testMatch: /.*\\.maestro\\.ts$/, fullyParallel: true, teardown: 'maestro-teardown' }, { name: 'maestro-teardown', testMatch: /maestro\\.teardown\\.ts$/ }] : [])",
   },
   examples: [
     { src: 'templates/tests', dest: 'tests/maestro' },

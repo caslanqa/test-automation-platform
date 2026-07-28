@@ -54,6 +54,7 @@ const CAPABILITIES: DriverCapabilities = {
     pressKey: true,
     back: true, // Android only at runtime; iOS throws a clear error (no universal hardware back)
     waitFor: true,
+    isVisible: true,
     assertVisible: true,
     assertNotVisible: true,
     screenshot: true,
@@ -66,8 +67,22 @@ const CAPABILITIES: DriverCapabilities = {
 /** A selector accepted by WebdriverIO's `$` command. */
 type AppiumSelector = Parameters<WebdriverIO.Browser['$']>[0];
 
+/** Gap between visibility polls — see {@link AppiumDriverSession.isVisible}. */
+const POLL_INTERVAL_MS = 250;
+
+const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
+
+/**
+ * Escape a value for embedding in a quoted string inside a selector expression (an NSPredicate literal or
+ * a Java `UiSelector` argument). Both use backslash escaping, and both break outright on an unescaped
+ * quote — which real UI text supplies routinely (`He said "hi"`, a Windows-style path, an apostrophe).
+ */
+function escapeSelectorString(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
 /** Translate a driver-neutral locator into a WebdriverIO selector for `platform` (see docs/APPIUM_TESTING.md). */
-function toAppiumSelector(locator: MobileLocator, platform: MobilePlatform): AppiumSelector {
+export function toAppiumSelector(locator: MobileLocator, platform: MobilePlatform): AppiumSelector {
   if (locator.native !== undefined) {
     return locator.native as AppiumSelector;
   }
@@ -75,14 +90,19 @@ function toAppiumSelector(locator: MobileLocator, platform: MobilePlatform): App
     return `~${locator.accessibilityId}`; // accessibility id works identically on both platforms
   }
   if (locator.resourceId !== undefined) {
+    const id = escapeSelectorString(locator.resourceId);
     return platform === 'android'
-      ? `android=new UiSelector().resourceId("${locator.resourceId}")`
-      : `-ios predicate string:name == "${locator.resourceId}"`;
+      ? `android=new UiSelector().resourceId("${id}")`
+      : `-ios predicate string:name == "${id}"`;
   }
   if (locator.text !== undefined) {
+    const text = escapeSelectorString(locator.text);
+    // iOS matches `label` OR `value` on purpose: `toMobileNode` fills a node's `text` from whichever of
+    // `label`/`value` the XML supplies, so matching only `label` cannot find an element whose text came
+    // from `value` — the locator would be un-resolvable the moment it was recorded.
     return platform === 'android'
-      ? `android=new UiSelector().text("${locator.text}")`
-      : `-ios predicate string:label == "${locator.text}"`;
+      ? `android=new UiSelector().text("${text}")`
+      : `-ios predicate string:label == "${text}" OR value == "${text}"`;
   }
   throw new Error(
     `[appium-inspector] locator has no accessibilityId/resourceId/text/native strategy: ${JSON.stringify(
@@ -222,13 +242,22 @@ class AppiumDriverSession implements DriverSession {
   private releaseLock: (() => void) | undefined;
   private closed = false;
 
+  private readonly session: WebdriverIO.Browser;
+  private readonly server: AppiumServerHandle;
+  readonly device: InspectorDevice;
+  private readonly outputDir: string;
+
   constructor(
-    private readonly session: WebdriverIO.Browser,
-    private readonly server: AppiumServerHandle,
-    readonly device: InspectorDevice,
-    private readonly outputDir: string,
+    session: WebdriverIO.Browser,
+    server: AppiumServerHandle,
+    device: InspectorDevice,
+    outputDir: string,
     release: () => void,
   ) {
+    this.session = session;
+    this.server = server;
+    this.device = device;
+    this.outputDir = outputDir;
     this.releaseLock = release;
   }
 
@@ -373,6 +402,8 @@ class AppiumDriverSession implements DriverSession {
         ).waitForDisplayed({
           timeout: action.options?.timeoutMs ?? 5000,
         });
+      case 'isVisible':
+        return this.isVisible(action.locator, action.options?.timeoutMs);
       case 'assertVisible': {
         const visible = await (
           await this.session.$(toAppiumSelector(action.locator, this.platform))
@@ -408,6 +439,33 @@ class AppiumDriverSession implements DriverSession {
         const exhaustiveCheck: never = action;
         throw new Error(`[appium-inspector] unhandled action: ${JSON.stringify(exhaustiveCheck)}`);
       }
+    }
+  }
+
+  /**
+   * Boolean visibility query that never throws on absence (architecture.md ADR-004). `waitForDisplayed`
+   * is unusable here: it throws on timeout, which is exactly why the old `assertVisible`-backed
+   * `isVisible()` could never answer `false` and made every generated "assert not visible" fail. This
+   * polls `isExisting() && isDisplayed()` until the deadline instead, and a driver hiccup mid-poll is
+   * treated as "no answer yet" rather than as an answer. A coordinate-only locator has no meaningful
+   * answer at all, so `toAppiumSelector` is left to reject it loudly.
+   */
+  private async isVisible(locator: MobileLocator, timeoutMs = 5000): Promise<boolean> {
+    const selector = toAppiumSelector(locator, this.platform);
+    const deadline = Date.now() + Math.max(0, timeoutMs);
+    for (;;) {
+      try {
+        const element = await this.session.$(selector);
+        if ((await element.isExisting()) && (await element.isDisplayed())) {
+          return true;
+        }
+      } catch {
+        // Transient driver error — keep polling until the deadline rather than reporting "not visible".
+      }
+      if (Date.now() >= deadline) {
+        return false;
+      }
+      await sleep(POLL_INTERVAL_MS);
     }
   }
 
@@ -523,6 +581,12 @@ class AppiumDriverSession implements DriverSession {
 class AppiumInspectorDriver implements MobileInspectorDriver {
   readonly id = 'appium';
   readonly capabilities = CAPABILITIES;
+  /** Must stay in step with this plugin's `manifest.ts` Playwright project block. */
+  readonly testBinding = {
+    extension: '.appium.ts',
+    project: 'appium',
+    gateEnv: 'APPIUM',
+  };
 
   /** Delegates to the shared cross-adapter device discovery helper (see `deviceDiscovery.ts`). */
   async discoverDevices(): Promise<InspectorDevice[]> {

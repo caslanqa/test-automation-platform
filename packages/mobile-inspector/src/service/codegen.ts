@@ -40,38 +40,43 @@ function directionLiteral(direction: MobileDirection): string {
   return quote(direction);
 }
 
-/** One `await app.xxx(...)` statement per recorded action, in the same order as the timeline. */
+/** One `await mobileApp.xxx(...)` statement per recorded action, in the same order as the timeline. */
 function statementFor(action: MobileAction): string {
   switch (action.kind) {
     case 'tap':
-      return `await app.tap(${locatorLiteral(action.locator)});`;
+      return `await mobileApp.tap(${locatorLiteral(action.locator)});`;
     case 'fill':
-      return `await app.fill(${locatorLiteral(action.locator)}, ${quote(action.value)});`;
+      return `await mobileApp.fill(${locatorLiteral(action.locator)}, ${quote(action.value)});`;
     case 'longPress':
-      return `await app.longPress(${locatorLiteral(action.locator)}${optionsArg(action.options)});`;
+      return `await mobileApp.longPress(${locatorLiteral(action.locator)}${optionsArg(action.options)});`;
     case 'swipe':
-      return `await app.swipe(${directionLiteral(action.direction)}${optionsArg(action.options)});`;
+      return `await mobileApp.swipe(${directionLiteral(action.direction)}${optionsArg(action.options)});`;
     case 'scroll':
-      return `await app.scroll(${directionLiteral(action.direction)}${optionsArg(scrollOptionsLiteral(action.options))});`;
+      return `await mobileApp.scroll(${directionLiteral(action.direction)}${optionsArg(scrollOptionsLiteral(action.options))});`;
     case 'drag':
-      return `await app.drag(${targetLiteral(action.from)}, ${targetLiteral(action.to)});`;
+      return `await mobileApp.drag(${targetLiteral(action.from)}, ${targetLiteral(action.to)});`;
     case 'pinch':
-      return `await app.pinch(${action.scale}${optionsArg(action.options)});`;
+      return `await mobileApp.pinch(${action.scale}${optionsArg(action.options)});`;
     case 'pressKey':
-      return `await app.pressKey(${quote(action.key)});`;
+      return `await mobileApp.pressKey(${quote(action.key)});`;
     case 'back':
-      return `await app.back();`;
+      return `await mobileApp.back();`;
     case 'waitFor':
-      return `await app.waitFor(${locatorLiteral(action.locator)}${optionsArg(action.options)});`;
+      return `await mobileApp.waitFor(${locatorLiteral(action.locator)}${optionsArg(action.options)});`;
+    // Visibility is generated as `expect.poll`, not `expect(await …)`: the generated test then carries
+    // its own waiting semantics instead of depending on whatever timeout the driver happens to apply,
+    // and — crucially — `isVisible` is the boolean query action, so asserting `false` is a real
+    // outcome rather than a thrown adapter error (architecture.md ADR-004).
+    case 'isVisible':
     case 'assertVisible':
-      return `expect(await app.isVisible(${locatorLiteral(action.locator)})).toBe(true);`;
+      return `await expect.poll(() => mobileApp.isVisible(${locatorLiteral(action.locator)})).toBe(true);`;
     case 'assertNotVisible':
-      return `expect(await app.isVisible(${locatorLiteral(action.locator)})).toBe(false);`;
+      return `await expect.poll(() => mobileApp.isVisible(${locatorLiteral(action.locator)})).toBe(false);`;
     case 'screenshot':
-      return `await app.screenshot(${action.name ? quote(action.name) : ''});`;
+      return `await mobileApp.screenshot(${action.name ? quote(action.name) : ''});`;
     case 'aiAssert':
       return (
-        `const shot = await app.screenshot(${action.name ? quote(action.name) : ''});\n` +
+        `const shot = await mobileApp.screenshot(${action.name ? quote(action.name) : ''});\n` +
         `  await expect({ image: shot, rubric: ${quote(action.rubric)} }).toPassRubric();`
       );
   }
@@ -109,20 +114,44 @@ export function statementForAction(action: MobileAction): string {
   return statementFor(action);
 }
 
+/** What the generated `test.use({ mobileTarget: … })` header selects. */
+export interface GeneratedTarget {
+  driver: string;
+  /**
+   * MUST be supplied whenever the recorder knows it (it always does — `session.device.platform`).
+   * Omitting it forces the fixture to fall back to env vars and throw "platform not set" on any machine
+   * that has none, which is what made every generated test unrunnable.
+   */
+  platform?: string;
+  /** Stable device name (AVD name / simulator name), never an `adb` serial — see ADR-003. */
+  device?: string;
+  /** App to launch on connect. Effectively required for Maestro; without it a replay drives nothing. */
+  appId?: string;
+  /** Artifact to install before launching `appId`. */
+  appSource?: string;
+}
+
 /**
- * Render a full `*.mobile.ts` test file body for the recorded `actions`, targeting `driver`/`device`.
- * `testName` becomes the `test(...)` title; the caller (save handler) chooses the file path.
+ * Render a full `*.mobile.ts` test file for the recorded `actions`. `testName` becomes the `test(...)`
+ * title; the caller (save handler) chooses the file path.
+ *
+ * The emitted fixture names — the `mobileTarget` option and the `mobileApp` fixture — are fixed by
+ * ADR-003 and must stay in step with `src/fixture.ts`; a drift here produces a test that fails with an
+ * unknown-fixture error, which is why Phase 0's exit criterion is running generated output on a device.
  */
 export function generateTestSource(options: {
-  driver: string;
-  device?: string;
+  target: GeneratedTarget;
   testName: string;
   actions: MobileAction[];
 }): string {
-  const { driver, device, testName, actions } = options;
-  const useLine = device
-    ? `test.use({ mobile: { driver: ${quote(driver)}, device: ${quote(device)} } });`
-    : `test.use({ mobile: { driver: ${quote(driver)} } });`;
+  const { target, testName, actions } = options;
+  const fields: string[] = [`driver: ${quote(target.driver)}`];
+  for (const key of ['platform', 'device', 'appId', 'appSource'] as const) {
+    const value = target[key];
+    if (value !== undefined && value !== '') {
+      fields.push(`${key}: ${quote(value)}`);
+    }
+  }
   const body =
     actions.length > 0
       ? actions.map(a => `  ${statementFor(a)}`).join('\n')
@@ -130,9 +159,9 @@ export function generateTestSource(options: {
   return [
     `import { test, expect } from '@fixtures';`,
     '',
-    useLine,
+    `test.use({ mobileTarget: { ${fields.join(', ')} } });`,
     '',
-    `test(${quote(testName)}, async ({ app }) => {`,
+    `test(${quote(testName)}, async ({ mobileApp }) => {`,
     body,
     '});',
     '',

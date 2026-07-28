@@ -97,6 +97,8 @@ export class MaestroMcpSession {
   private appId: string | undefined;
   /** Counter for unique per-step screenshot names when the mode is `on`. */
   private shotCount = 0;
+  private readonly device: DiscoveredDevice;
+  private readonly hooks: McpSessionHooks;
   private readonly screenshotMode: ScreenshotMode;
   private readonly binary: string;
   private readonly verboseLogs: boolean;
@@ -109,10 +111,12 @@ export class MaestroMcpSession {
    *   Playwright's own `screenshot` option); bespoke callers can omit it for the standalone default.
    */
   constructor(
-    private readonly device: DiscoveredDevice,
-    private readonly hooks: McpSessionHooks,
+    device: DiscoveredDevice,
+    hooks: McpSessionHooks,
     options: MaestroSessionOptions = {},
   ) {
+    this.device = device;
+    this.hooks = hooks;
     this.screenshotMode = options.screenshotMode ?? 'only-on-failure';
     this.binary = options.binary ?? (process.env.MAESTRO_BIN || 'maestro');
     this.verboseLogs = options.verboseLogs ?? resolveVerboseStepLogs();

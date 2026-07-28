@@ -5,8 +5,12 @@
  * unified `MobileApp` Playwright fixture (`test`/`expect`). Maestro/Appium `./inspector` adapters
  * (Phase 2) and the local recording service/UI/codegen (Phase 3/4) build on these.
  */
-export { discoverMobileDevices } from './deviceDiscovery.js';
-export { expect, test, type MobileInspectorOptions } from './fixture.js';
+export {
+  discoverMobileDevices,
+  resolveStableDeviceName,
+  type StableDeviceName,
+} from './deviceDiscovery.js';
+export { expect, test, type MobileInspectorOptions, type MobileTargetOptions } from './fixture.js';
 export { readImageSize } from './imageSize.js';
 export {
   centerOf,

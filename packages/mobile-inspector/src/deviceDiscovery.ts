@@ -13,6 +13,69 @@ import { listAvds, listBootedAndroidDevices, listIosSimulators } from './platfor
 
 import type { InspectorDevice } from './types.js';
 
+/** What to write into a generated test's `mobileTarget.device`, and whether it is actually durable. */
+export interface StableDeviceName {
+  device: string;
+  /** Set when the returned value is NOT durable, so the caller can tell the user instead of hiding it. */
+  warning?: string;
+}
+
+/**
+ * Resolve the device handle a generated test should pin, given the connected device and the devices
+ * discovery knows about.
+ *
+ * The value is replayed days later, so it must survive a reboot — which rules out the handle discovery
+ * mostly reports for a *booted* device. Per platform:
+ *
+ * - **Android:** the AVD name. AVD names are unique by construction (they are directory names), so the
+ *   name is both stable and unambiguous. When discovery could not determine one, all we have is the `adb`
+ *   serial (`emulator-5554`), which is gone after a reboot — returned with a warning rather than silently
+ *   baked into a test that will mysteriously stop matching a device.
+ * - **iOS:** the simulator name when it is unique among known simulators, because it reads far better in a
+ *   test than a UUID. Simulator names are NOT unique (two "iPhone 15" runtimes are perfectly legal), so an
+ *   ambiguous name falls back to the UDID, which is stable across reboots and unambiguous by definition.
+ *
+ * Lives here, beside discovery, so the recorder (which writes the value) and the fixture (which resolves
+ * it back to a device) cannot drift apart on what a `device` string means. See ADR-003.
+ */
+export function resolveStableDeviceName(
+  connected: InspectorDevice,
+  known: readonly InspectorDevice[],
+): StableDeviceName {
+  if (connected.platform === 'android') {
+    if (connected.name && connected.name !== connected.id) {
+      return { device: connected.name };
+    }
+    return {
+      device: connected.id,
+      warning:
+        `no AVD name could be resolved for "${connected.id}", so the generated test pins that ` +
+        'serial — it will not match the device after a reboot. Edit `mobileTarget.device` to the AVD name.',
+    };
+  }
+
+  const sameName = known.filter(d => d.platform === 'ios' && d.name === connected.name);
+  if (sameName.length === 1) {
+    return { device: connected.name };
+  }
+  if (sameName.length > 1) {
+    return {
+      device: connected.id,
+      warning:
+        `more than one iOS simulator is named "${connected.name}", so the generated test pins the ` +
+        'UDID instead to stay unambiguous.',
+    };
+  }
+  // Discovery told us nothing about this simulator, so uniqueness is unverifiable. The UDID is
+  // unambiguous by definition; a name that turns out to be shared would silently target the wrong device.
+  return {
+    device: connected.id,
+    warning:
+      'could not list iOS simulators to check whether the device name is unique, so the generated ' +
+      'test pins the UDID.',
+  };
+}
+
 export async function discoverMobileDevices(): Promise<InspectorDevice[]> {
   const devices: InspectorDevice[] = [];
 

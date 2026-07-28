@@ -36,6 +36,7 @@ export type MobileAction =
   | { kind: 'pressKey'; key: MobileKey }
   | { kind: 'back' }
   | { kind: 'waitFor'; locator: MobileLocator; options?: { timeoutMs?: number } }
+  | { kind: 'isVisible'; locator: MobileLocator; options?: { timeoutMs?: number } }
   | { kind: 'assertVisible'; locator: MobileLocator }
   | { kind: 'assertNotVisible'; locator: MobileLocator }
   | { kind: 'screenshot'; name?: string }
@@ -78,9 +79,17 @@ export interface DriverCapabilities {
   liveFrames: boolean;
 }
 
+/** Where a driver's tests live and how they run — see architecture.md §8. */
+export interface DriverTestBinding {
+  extension: string;
+  project: string;
+  gateEnv: string;
+}
+
 export interface DriverSummary {
   id: string;
   capabilities: DriverCapabilities;
+  testBinding: DriverTestBinding;
 }
 
 /** An installed application discovered on the connected/selected device, for the app picker. */

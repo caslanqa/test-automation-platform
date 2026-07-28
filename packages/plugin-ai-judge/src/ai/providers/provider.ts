@@ -27,11 +27,11 @@ export interface AIProvider {
  * fallback candidate.
  */
 export class JudgeHttpError extends Error {
-  constructor(
-    public readonly status: number,
-    message: string,
-  ) {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
     super(message);
     this.name = 'JudgeHttpError';
+    this.status = status;
   }
 }

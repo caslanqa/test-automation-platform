@@ -33,10 +33,17 @@ export const manifest = {
     APPIUM_KEEP_DEVICES: '',
     APPIUM_BIN: '',
   },
-  fixture: {
-    importFrom: '@pwtap/plugin-appium',
-    test: { alias: 'appiumTest' },
-  },
+  fixture: [
+    { importFrom: '@pwtap/plugin-appium', test: { alias: 'appiumTest' } },
+    // The driver-neutral `mobileApp` facade every inspector-generated test uses. Marked `shared` because
+    // @pwtap/plugin-maestro contributes the identical entry: it is injected once and, crucially, survives
+    // removing one mobile plugin while the other is still installed.
+    {
+      importFrom: '@pwtap/mobile-inspector',
+      test: { alias: 'mobileAppTest' },
+      shared: true,
+    },
+  ],
   playwrightProject: {
     gateVar: 'appiumEnabled',
     gate: "const appiumEnabled = process.env.APPIUM === '1';",

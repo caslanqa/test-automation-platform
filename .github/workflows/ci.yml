@@ -23,5 +23,14 @@ jobs:
         run: npm run build
       - name: Lint
         run: npm run lint
+      # `tsc -b` covers the packages' `src/`, but not the tests (excluded from every package build so no
+      # `*.test.js` reaches a published `dist/`) and not the React UI (vite builds it with esbuild, which
+      # transpiles without type-checking). Both were therefore unverified until these two steps existed.
+      - name: Type-check tests
+        run: npm run typecheck:tests
+      - name: Type-check inspector UI
+        run: npm run typecheck:ui
+      - name: Unit tests
+        run: npm test
       - name: Smoke — scaffold a core-only project and verify it builds
         run: npm run smoke

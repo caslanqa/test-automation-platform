@@ -92,6 +92,11 @@ export default [
   // Playwright test files
   {
     files: ['**/*.spec.ts', '**/*.test.ts', '**/tests/**/*.ts'],
+    // The monorepo's own unit tests are NOT Playwright tests: they run on `node:test` and assert with
+    // `node:assert/strict` (see docs/mobile-inspector/architecture.md ADR-012). Linting them as
+    // Playwright specs flags every single one with `expect-expect` because there is no `expect()` —
+    // a pure false positive. They get their own block below.
+    ignores: ['packages/*/test/**'],
     plugins: {
       playwright: playwright,
     },
@@ -105,6 +110,16 @@ export default [
       'playwright/no-conditional-in-test': 'off',
       'playwright/no-networkidle': 'off',
       'playwright/no-wait-for-navigation': 'off',
+    },
+  },
+
+  // The monorepo's own `node:test` unit tests (`packages/*/test/**`). Deliberately plain: the base
+  // TypeScript rules apply, no Playwright plugin, and long descriptive assertion messages are allowed
+  // to run past the line budget rather than being wrapped into unreadability.
+  {
+    files: ['packages/*/test/**/*.ts'],
+    rules: {
+      'max-len': 'off',
     },
   },
 ];
