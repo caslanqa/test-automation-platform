@@ -12,6 +12,7 @@ import type {
   ActionResult,
   ConnectOptions,
   DriverCapabilities,
+  DriverTestBinding,
   InspectorDevice,
   InstalledApp,
   LocatorCandidate,
@@ -22,10 +23,12 @@ import type {
   TestFileEntry,
 } from '../types.js';
 
-/** One entry in the driver picker — a discovered adapter and what it supports. */
+/** One entry in the driver picker — a discovered adapter, what it supports, and where its tests live. */
 export interface DriverSummary {
   id: MobileDriverId;
   capabilities: DriverCapabilities;
+  /** So the UI can show the real file extension a save will produce instead of guessing one. */
+  testBinding: DriverTestBinding;
 }
 
 // ----- client -> server -----
@@ -206,31 +209,133 @@ export function parseClientMessage(raw: unknown): ClientMessage | null {
   }
 }
 
-const ACTION_KINDS = new Set<MobileAction['kind']>([
-  'tap',
-  'fill',
-  'longPress',
-  'swipe',
-  'scroll',
-  'drag',
-  'pinch',
-  'pressKey',
-  'back',
-  'waitFor',
-  'assertVisible',
-  'assertNotVisible',
-  'screenshot',
-  'aiAssert',
-]);
+// ----- action payload validation -----
+//
+// The trust boundary validates an action FIELD BY FIELD, not just by its `kind`: main/the service treats
+// the renderer as untrusted, and a `fill` with no `value` or a `swipe` with a bogus `direction` used to
+// sail straight through into a driver adapter. This is the table in architecture.md §5, executable.
+
+type ActionFields = Record<string, unknown>;
+
+function isOptionalString(value: unknown): boolean {
+  return value === undefined || typeof value === 'string';
+}
+
+function isPoint(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const point = value as ActionFields;
+  return typeof point.x === 'number' && typeof point.y === 'number';
+}
+
+/** A locator must set at least one strategy, and every strategy it does set must be well typed. */
+function isLocator(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const locator = value as ActionFields;
+  let strategies = 0;
+  for (const key of ['accessibilityId', 'resourceId', 'text'] as const) {
+    if (locator[key] !== undefined) {
+      if (typeof locator[key] !== 'string') {
+        return false;
+      }
+      strategies += 1;
+    }
+  }
+  if (locator.point !== undefined) {
+    if (!isPoint(locator.point)) {
+      return false;
+    }
+    strategies += 1;
+  }
+  if (locator.native !== undefined) {
+    strategies += 1; // deliberately unvalidated — the adapter-specific escape hatch
+  }
+  if (!isOptionalString(locator.label)) {
+    return false;
+  }
+  return strategies > 0;
+}
+
+/** A gesture target is either a locator or an explicit device-pixel point. */
+function isTarget(value: unknown): boolean {
+  return isPoint(value) || isLocator(value);
+}
+
+function isDirection(value: unknown): boolean {
+  return value === 'up' || value === 'down' || value === 'left' || value === 'right';
+}
+
+/** An options bag is absent, or an object whose listed keys are numbers when present. */
+function hasOptionalNumbers(value: unknown, keys: readonly string[]): boolean {
+  if (value === undefined) {
+    return true;
+  }
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const options = value as ActionFields;
+  return keys.every(key => options[key] === undefined || typeof options[key] === 'number');
+}
+
+function isSwipeOptions(value: unknown): boolean {
+  if (!hasOptionalNumbers(value, ['distance', 'durationMs'])) {
+    return false;
+  }
+  const distance = (value as ActionFields | undefined)?.distance;
+  // `distance` is a fraction of the screen; anything outside 0..1 is a bug on the caller's side.
+  return distance === undefined || (typeof distance === 'number' && distance >= 0 && distance <= 1);
+}
+
+function isScrollOptions(value: unknown): boolean {
+  if (value === undefined) {
+    return true;
+  }
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const within = (value as ActionFields).within;
+  return within === undefined || isLocator(within);
+}
+
+/**
+ * One validator per action kind. Typed as a total `Record` over the union on purpose: adding a new
+ * `MobileAction` kind without teaching the trust boundary how to validate it becomes a compile error
+ * instead of a silently unvalidated payload.
+ */
+const ACTION_VALIDATORS: Record<MobileAction['kind'], (action: ActionFields) => boolean> = {
+  tap: a => isLocator(a.locator),
+  fill: a => isLocator(a.locator) && typeof a.value === 'string',
+  longPress: a => isLocator(a.locator) && hasOptionalNumbers(a.options, ['durationMs']),
+  swipe: a => isDirection(a.direction) && isSwipeOptions(a.options),
+  scroll: a => isDirection(a.direction) && isScrollOptions(a.options),
+  drag: a => isTarget(a.from) && isTarget(a.to),
+  pinch: a =>
+    typeof a.scale === 'number' &&
+    a.scale > 0 &&
+    Number.isFinite(a.scale) &&
+    hasOptionalNumbers(a.options, ['durationMs']),
+  pressKey: a => typeof a.key === 'string' && a.key.length > 0,
+  back: () => true,
+  waitFor: a => isLocator(a.locator) && hasOptionalNumbers(a.options, ['timeoutMs']),
+  isVisible: a => isLocator(a.locator) && hasOptionalNumbers(a.options, ['timeoutMs']),
+  assertVisible: a => isLocator(a.locator),
+  assertNotVisible: a => isLocator(a.locator),
+  screenshot: a => isOptionalString(a.name),
+  aiAssert: a => typeof a.rubric === 'string' && a.rubric.length > 0 && isOptionalString(a.name),
+};
 
 function isMobileAction(value: unknown): value is MobileAction {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    'kind' in value &&
-    typeof (value as { kind: unknown }).kind === 'string' &&
-    ACTION_KINDS.has((value as { kind: MobileAction['kind'] }).kind)
-  );
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const action = value as ActionFields;
+  if (typeof action.kind !== 'string' || !(action.kind in ACTION_VALIDATORS)) {
+    return false;
+  }
+  return ACTION_VALIDATORS[action.kind as MobileAction['kind']](action);
 }
 
 /** Re-exported so the UI (which only imports from `protocol.ts`) doesn't need a separate types import. */

@@ -14,6 +14,12 @@ export interface SaveResult {
 interface SaveDialogProps {
   /** Existing recorded test files under the project (refreshed by the parent via `listTestFiles`). */
   testFiles: TestFileEntry[];
+  /**
+   * File extension a "new file" save will produce, taken from the connected driver's own declaration
+   * (`.maestro.ts` / `.appium.ts`) — the extension decides which Playwright project, gate variable and
+   * timeout the saved test gets, so the preview must show the real one rather than a guess.
+   */
+  extension: string;
   pickSaveLocation: () => Promise<PickPathResult | null>;
   pickExistingTestFile: () => Promise<PickPathResult | null>;
   onCancel: () => void;
@@ -30,6 +36,7 @@ interface SaveDialogProps {
  */
 export function SaveDialog({
   testFiles,
+  extension,
   pickSaveLocation,
   pickExistingTestFile,
   onCancel,
@@ -77,7 +84,7 @@ export function SaveDialog({
 
   const preview =
     mode === 'new'
-      ? `${location.replace(/\/+$/, '') || '.'}/${fileName || '…'}.mobile.ts`
+      ? `${location.replace(/\/+$/, '') || '.'}/${fileName || '…'}${extension}`
       : selectedFile;
 
   const canSave =

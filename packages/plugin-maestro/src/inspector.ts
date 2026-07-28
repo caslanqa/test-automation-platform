@@ -53,6 +53,7 @@ const CAPABILITIES: DriverCapabilities = {
     pressKey: true,
     back: true,
     waitFor: true,
+    isVisible: true,
     assertVisible: true,
     assertNotVisible: true,
     screenshot: true,
@@ -170,12 +171,19 @@ class MaestroDriverSession implements DriverSession {
   private frameCounter = 0;
   private releaseLock: (() => void) | undefined;
 
+  private readonly maestro: MaestroMcpSession;
+  readonly device: InspectorDevice;
+  private readonly coordinateSize: { width: number; height: number } | undefined;
+
   constructor(
-    private readonly maestro: MaestroMcpSession,
-    readonly device: InspectorDevice,
-    private readonly coordinateSize: { width: number; height: number } | undefined,
+    maestro: MaestroMcpSession,
+    device: InspectorDevice,
+    coordinateSize: { width: number; height: number } | undefined,
     release: () => void,
   ) {
+    this.maestro = maestro;
+    this.device = device;
+    this.coordinateSize = coordinateSize;
     this.releaseLock = release;
   }
 
@@ -278,6 +286,14 @@ class MaestroDriverSession implements DriverSession {
         }
         return undefined;
       }
+      case 'isVisible':
+        // Maestro's own query already answers with a boolean rather than asserting, so this is the one
+        // driver where the boolean action needs no extra machinery. `toMaestroSelector` (not
+        // `resolveSelector`) on purpose: "is this coordinate visible?" has no meaningful answer, so a
+        // point-only locator must fail loudly instead of silently reporting `true`.
+        return this.maestro.isVisible(toMaestroSelector(action.locator), {
+          timeout: action.options?.timeoutMs,
+        });
       case 'assertVisible':
         await this.maestro.assertVisible(toMaestroSelector(action.locator));
         return true;
@@ -307,6 +323,12 @@ class MaestroDriverSession implements DriverSession {
 class MaestroInspectorDriver implements MobileInspectorDriver {
   readonly id = 'maestro';
   readonly capabilities = CAPABILITIES;
+  /** Must stay in step with this plugin's `manifest.ts` Playwright project block. */
+  readonly testBinding = {
+    extension: '.maestro.ts',
+    project: 'maestro',
+    gateEnv: 'MAESTRO',
+  };
 
   /** Delegates to the shared cross-adapter device discovery helper (see `deviceDiscovery.ts`). */
   async discoverDevices(): Promise<InspectorDevice[]> {

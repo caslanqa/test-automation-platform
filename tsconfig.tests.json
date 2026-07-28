@@ -1,0 +1,16 @@
+{
+  // Aggregate type-check for every package's tests (CI entry point: `npm run typecheck:tests`).
+  // Tests live in `packages/*/test/` and are outside each package's build on purpose, so no `*.test.js`
+  // is ever emitted into a published `dist/`. Without this, nothing would type-check them at all —
+  // `node --test` strips types, it never verifies them. Each package also keeps a local
+  // `test/tsconfig.json` so editors resolve test files to a real project.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "types": ["node"]
+  },
+  "include": ["packages/*/test/**/*.ts"]
+}

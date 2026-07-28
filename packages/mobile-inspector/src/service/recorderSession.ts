@@ -12,6 +12,7 @@ import path from 'node:path';
 import { type MobilePlatform } from '@pwtap/platform';
 import prettier from 'prettier';
 
+import { resolveStableDeviceName } from '../deviceDiscovery.js';
 import { hitTest, locatorCandidates, locatorForNode } from '../locator.js';
 import {
   listBootedAndroidDevices,
@@ -24,22 +25,31 @@ import type {
   ActionResult,
   ConnectOptions,
   DriverSession,
+  DriverTestBinding,
+  InspectorDevice,
   InstalledApp,
   MobileAction,
-  MobileDriverId,
   MobileInspectorDriver,
   MobileNode,
   TestFileEntry,
 } from '../types.js';
-import { generateTestSource, statementForAction } from './codegen.js';
+import { generateTestSource, statementForAction, type GeneratedTarget } from './codegen.js';
 import type { ClientMessage, ServerMessage } from './protocol.js';
 
 const FRAME_POLL_MS = 1500;
 
 export class RecorderSession {
   private drivers: Map<string, MobileInspectorDriver> | undefined;
-  private connectedDriverId: MobileDriverId | undefined;
   private session: DriverSession | undefined;
+  /**
+   * What the last successful `connect` targeted — the driver, platform, stable device name and app that
+   * codegen must bake into `test.use({ mobileTarget: … })`. Deliberately NOT cleared on disconnect: the
+   * draft describes a recording that was made against this target, and `run` disconnects before it
+   * spawns Playwright (see `run`), so clearing it here would erase the header of the very test being run.
+   */
+  private lastTarget: GeneratedTarget | undefined;
+  /** Most recent device list, reused for the device-name uniqueness check (see `knownDevices`). */
+  private lastDevices: InspectorDevice[] = [];
   private timeline: MobileAction[] = [];
   private redoStack: MobileAction[] = [];
   private lastHierarchy: MobileNode[] = [];
@@ -56,14 +66,60 @@ export class RecorderSession {
   /** The in-flight `playwright test` child, if any (see `run`/`stopRun`). */
   private runChild: ChildProcess | undefined;
 
+  private readonly projectRoot: string;
+  private readonly send: (message: ServerMessage) => void;
+
+  /**
+   * `drivers` is a seam for tests: adapters are normally discovered from the project's `node_modules`
+   * (see `registry.ts`), which makes the recording engine untestable without installing a real plugin and
+   * attaching a real device. Injecting a fake driver map exercises this whole class in CI instead.
+   */
   constructor(
-    private readonly projectRoot: string,
-    private readonly send: (message: ServerMessage) => void,
-  ) {}
+    projectRoot: string,
+    send: (message: ServerMessage) => void,
+    drivers?: Map<string, MobileInspectorDriver>,
+  ) {
+    this.projectRoot = projectRoot;
+    this.send = send;
+    this.drivers = drivers;
+  }
 
   private async driverMap(): Promise<Map<string, MobileInspectorDriver>> {
     this.drivers ??= await discoverDriverMap(this.projectRoot);
     return this.drivers;
+  }
+
+  /**
+   * The test binding (file extension, Playwright project, gate env) of the driver the current recording
+   * targets. Everything that touches the filesystem or spawns Playwright needs it, and none of it can be
+   * guessed: saving a Maestro recording as `*.appium.ts` would put it in a project that gates on a
+   * different env var and applies a different timeout.
+   */
+  private async currentBinding(): Promise<DriverTestBinding | undefined> {
+    const driverId = this.lastTarget?.driver;
+    return driverId ? (await this.driverMap()).get(driverId)?.testBinding : undefined;
+  }
+
+  /**
+   * The devices this driver knows about, for the name-uniqueness check in {@link resolveStableDeviceName}.
+   * Reuses whatever the device picker already fetched; falls back to asking the driver, and to an empty
+   * list if that fails — the resolver treats "unknown" as "cannot verify" and pins the unambiguous handle.
+   */
+  private async knownDevices(driver: MobileInspectorDriver): Promise<InspectorDevice[]> {
+    if (this.lastDevices.length > 0) {
+      return this.lastDevices;
+    }
+    try {
+      this.lastDevices = await driver.discoverDevices();
+    } catch {
+      this.lastDevices = [];
+    }
+    return this.lastDevices;
+  }
+
+  /** Every installed driver's test-file extension, for the "append to existing file" picker. */
+  private async knownExtensions(): Promise<string[]> {
+    return [...(await this.driverMap()).values()].map(driver => driver.testBinding.extension);
   }
 
   private log(level: 'info' | 'warn' | 'error', message: string): void {
@@ -135,7 +191,11 @@ export class RecorderSession {
     const drivers = await this.driverMap();
     this.send({
       type: 'drivers',
-      drivers: [...drivers.values()].map(d => ({ id: d.id, capabilities: d.capabilities })),
+      drivers: [...drivers.values()].map(d => ({
+        id: d.id,
+        capabilities: d.capabilities,
+        testBinding: d.testBinding,
+      })),
     });
   }
 
@@ -147,6 +207,7 @@ export class RecorderSession {
     }
     try {
       const devices = await driver.discoverDevices();
+      this.lastDevices = devices;
       this.send({ type: 'devices', driver: driverId, devices });
     } catch (error) {
       this.send({ type: 'error', message: `failed to list devices: ${errorMessage(error)}` });
@@ -163,7 +224,22 @@ export class RecorderSession {
     this.send({ type: 'connecting' });
     try {
       this.session = await driver.connect(options);
-      this.connectedDriverId = driverId;
+      // Which handle is durable depends on the platform and on whether the name is ambiguous, so it is
+      // resolved by the shared helper rather than guessed here (ADR-003). `knownDevices` is consulted for
+      // the uniqueness check; a warning is surfaced rather than swallowed when the pin isn't durable.
+      const stable = resolveStableDeviceName(this.session.device, await this.knownDevices(driver));
+      if (stable.warning) {
+        this.log('warn', stable.warning);
+      }
+      this.lastTarget = {
+        driver: driverId,
+        // The platform and app are known right here; not emitting them is what made generated tests
+        // throw "platform not set" and replay against no app at all (ADR-003).
+        platform: this.session.device.platform,
+        device: stable.device,
+        appId: options.appId,
+        appSource: options.appSource,
+      };
       this.timeline = [];
       this.redoStack = [];
       this.lastHierarchy = [];
@@ -195,7 +271,6 @@ export class RecorderSession {
     }
     const session = this.session;
     this.session = undefined;
-    this.connectedDriverId = undefined;
     this.frameRefresh = undefined;
     this.hierarchyRefresh = undefined;
     if (session) {
@@ -392,13 +467,16 @@ export class RecorderSession {
   private sendTimelineAndCode(appended?: MobileAction): void {
     this.send({ type: 'timeline', actions: this.timeline });
     if (!this.draftDirty) {
-      // Clean draft: regenerate authoritatively from the timeline.
-      this.draftSource = generateTestSource({
-        driver: this.connectedDriverId ?? 'maestro',
-        device: this.session?.device.id,
-        testName: 'recorded flow',
-        actions: this.timeline,
-      });
+      // Clean draft: regenerate authoritatively from the timeline. With no target yet (nothing has been
+      // connected in this session) there is nothing honest to generate — the driver, platform and app are
+      // unknown and guessing one produces a test that silently targets the wrong thing.
+      this.draftSource = this.lastTarget
+        ? generateTestSource({
+            target: this.lastTarget,
+            testName: 'recorded flow',
+            actions: this.timeline,
+          })
+        : '// Connect a device to start recording.\n';
       this.draftRevision += 1;
     } else if (appended) {
       // Hand-edited draft: preserve the user's edits and splice the newly recorded action's statement
@@ -487,6 +565,9 @@ export class RecorderSession {
     ]);
     const MAX_FILES = 500;
     const files: TestFileEntry[] = [];
+    // Every installed driver's extension, not one hard-coded suffix — a project can hold both
+    // `*.maestro.ts` and `*.appium.ts` recordings and the picker must offer both.
+    const extensions = await this.knownExtensions();
 
     const walk = async (dir: string): Promise<void> => {
       if (files.length >= MAX_FILES) {
@@ -511,7 +592,7 @@ export class RecorderSession {
             continue;
           }
           await walk(full);
-        } else if (entry.isFile() && entry.name.endsWith('.mobile.ts')) {
+        } else if (entry.isFile() && extensions.some(ext => entry.name.endsWith(ext))) {
           const relativePath = path.relative(this.projectRoot, full).split(path.sep).join('/');
           files.push({ relativePath, name: entry.name });
         }
@@ -542,8 +623,17 @@ export class RecorderSession {
       this.send({ type: 'error', message: 'no target file specified' });
       return;
     }
-    const finalRelative =
-      mode === 'new' && !relative.endsWith('.mobile.ts') ? `${relative}.mobile.ts` : relative;
+    const resolved = resolveSaveExtension({
+      relative,
+      mode,
+      extensions: await this.knownExtensions(),
+      binding: await this.currentBinding(),
+    });
+    if ('error' in resolved) {
+      this.send({ type: 'error', message: resolved.error });
+      return;
+    }
+    const finalRelative = resolved.relativePath;
     const target = path.resolve(this.projectRoot, finalRelative);
     if (!target.startsWith(this.projectRoot + path.sep)) {
       this.send({ type: 'error', message: 'save location must be inside the project' });
@@ -608,6 +698,14 @@ export class RecorderSession {
       this.log('info', 'disconnecting the live inspector session before running the test');
       await this.disconnect();
     }
+    const binding = await this.currentBinding();
+    if (!binding) {
+      this.send({
+        type: 'error',
+        message: 'cannot tell which driver to run this test with — connect a device first',
+      });
+      return;
+    }
     let pwBin: string;
     try {
       pwBin = resolvePlaywrightBin(this.projectRoot);
@@ -615,14 +713,21 @@ export class RecorderSession {
       this.send({ type: 'error', message: errorMessage(error) });
       return;
     }
-    const testsDir = path.resolve(this.projectRoot, 'tests');
-    await fs.mkdir(testsDir, { recursive: true });
-    const tmpFile = path.join(testsDir, `.inspector-run-${Date.now()}.spec.ts`);
+    // A real, non-hidden path whose extension the target project's `testMatch` actually matches, in a
+    // dedicated directory that gets swept on startup. Playwright filters CLI file arguments against the
+    // files it collected, so a name the project does not match yields "no tests found", and a `.spec.ts`
+    // name would instead be collected by the browser project (architecture.md §8).
+    const runDir = path.resolve(this.projectRoot, 'tests', '__inspector__');
+    await fs.mkdir(runDir, { recursive: true });
+    await sweepStaleRuns(runDir);
+    const tmpFile = path.join(runDir, `run-${Date.now()}${binding.extension}`);
     await fs.writeFile(tmpFile, source, 'utf8');
 
-    const child = spawn(pwBin, ['test', tmpFile], {
+    const child = spawn(pwBin, ['test', tmpFile, `--project=${binding.project}`], {
       cwd: this.projectRoot,
-      env: process.env,
+      // The driver's project is env-gated, so without its gate variable the project does not even exist
+      // in the resolved config and the run finds nothing to do.
+      env: { ...process.env, [binding.gateEnv]: '1' },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     this.runChild = child;
@@ -661,6 +766,53 @@ export class RecorderSession {
     this.stopRun();
     await this.disconnect();
   }
+}
+
+/**
+ * Delete leftover temporary run files. A crash (or a killed process) can leave one behind, and because it
+ * lives under `tests/` with a real driver extension, a later plain `npm test` would happily collect and
+ * run it. Best-effort: a sweep failure must never block the run the user asked for.
+ */
+async function sweepStaleRuns(runDir: string): Promise<void> {
+  try {
+    const entries = await fs.readdir(runDir);
+    await Promise.all(
+      entries
+        .filter(name => name.startsWith('run-'))
+        .map(name => fs.rm(path.join(runDir, name), { force: true })),
+    );
+  } catch {
+    // Nothing to sweep, or the directory is unreadable — either way the run proceeds.
+  }
+}
+
+/**
+ * Decide the final project-relative path a recording is saved to.
+ *
+ * The extension names the driver (architecture.md §8), so it comes from the driver the recording was made
+ * against — never a fixed suffix. Saving a Maestro recording as `*.appium.ts` would file it under a
+ * project that gates on a different env var and applies a different timeout, and it would silently never
+ * run under `npm run test:maestro`. A name the user already suffixed correctly is left alone, and
+ * `append` mode never rewrites the path at all: the target file exists and its name is the user's.
+ */
+export function resolveSaveExtension(input: {
+  relative: string;
+  mode: 'new' | 'append';
+  extensions: string[];
+  binding: DriverTestBinding | undefined;
+}): { relativePath: string } | { error: string } {
+  const { relative, mode, extensions, binding } = input;
+  if (mode === 'append' || extensions.some(ext => relative.endsWith(ext))) {
+    return { relativePath: relative };
+  }
+  if (!binding) {
+    return {
+      error:
+        'cannot tell which driver this test targets — connect a device before saving, or give the file ' +
+        `name one of these extensions: ${extensions.join(', ') || '(no driver plugin installed)'}`,
+    };
+  }
+  return { relativePath: `${relative}${binding.extension}` };
 }
 
 /** Resolve the project-local Playwright CLI (`node_modules/.bin/playwright`) — throws if absent. */

@@ -7,8 +7,8 @@ import { mergePluginEnv, removePluginEnv } from './injectors/envJson.js';
 import { applyFixture, removeFixture } from './injectors/fixturesBarrel.js';
 import { mergePluginPackageJson, removePluginPackageJson } from './injectors/packageJson.js';
 import { applyProject, removeProject } from './injectors/pwConfig.js';
-import { loadPluginManifest, type PluginManifest } from './manifest.js';
-import { findKnownPlugin } from './registry.js';
+import { fixtureList, loadPluginManifest, type PluginManifest } from './manifest.js';
+import { findKnownPlugin, KNOWN_PLUGINS } from './registry.js';
 import { ensureDir, exists, readJson, writeJson, writeText } from './util/fs.js';
 import { log } from './util/log.js';
 import { run } from './util/run.js';
@@ -28,9 +28,12 @@ function injectManifest(clientDir: string, m: PluginManifest, testsDir: string):
   copyDocs(clientDir, m);
 
   if (applyFixture(clientDir, m) === false) {
+    const sources = fixtureList(m)
+      .map(f => `'${f.importFrom}'`)
+      .join(', ');
     log.warn(
       `fixtures/index.ts is missing a pwtap marker — wire ${m.name} into the barrel manually ` +
-        `(import from '${m.fixture?.importFrom}' and add to mergeTests/mergeExpects).`,
+        `(import from ${sources} and add to mergeTests/mergeExpects).`,
     );
   }
   if (applyProject(clientDir, m) === false) {
@@ -307,19 +310,47 @@ export interface RemoveOptions {
   uninstall?: boolean;
 }
 
+/**
+ * The `importFrom` values of shared fixtures that plugins OTHER than `removing` still contribute.
+ *
+ * A shared fixture (today: the driver-neutral `mobileApp` facade, provided by both mobile plugins) lives
+ * in the barrel once. Removing one contributor must not delete it while another is still installed, or
+ * every remaining test that uses it fails with an unknown-fixture error. Probing the registry is how we
+ * find the survivors: `loadPluginManifest` returns null for a package that isn't installed.
+ */
+async function sharedFixturesToKeep(
+  clientDir: string,
+  removing: readonly string[],
+): Promise<Set<string>> {
+  const keep = new Set<string>();
+  for (const known of KNOWN_PLUGINS) {
+    if (removing.includes(known.package)) {
+      continue;
+    }
+    const m = await loadPluginManifest(clientDir, known.package);
+    for (const f of m ? fixtureList(m) : []) {
+      if (f.shared) {
+        keep.add(f.importFrom);
+      }
+    }
+  }
+  return keep;
+}
+
 export async function removePlugins({
   clientDir,
   pluginIds,
   uninstall = true,
 }: RemoveOptions): Promise<void> {
   const packages = toPackages(pluginIds);
+  const keepShared = await sharedFixturesToKeep(clientDir, packages);
   for (const pkg of packages) {
     const m = await loadPluginManifest(clientDir, pkg);
     if (!m) {
       log.warn(`Could not load manifest for ${pkg} — skipping (already removed?).`);
       continue;
     }
-    removeFixture(clientDir, m);
+    removeFixture(clientDir, m, keepShared);
     removeProject(clientDir, m);
     removePluginEnv(clientDir, m);
     removePluginPackageJson(clientDir, m);

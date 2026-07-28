@@ -12,6 +12,11 @@
     "composite": true,
 
     "isolatedModules": true,
+    // Tests run straight from TypeScript via Node's built-in type stripping (`node --test`), which erases
+    // types but cannot transform `enum`, `namespace`, or constructor parameter properties. Rejecting that
+    // syntax at build time keeps the runner from failing at test time instead. See
+    // docs/mobile-inspector/architecture.md ADR-012.
+    "erasableSyntaxOnly": true,
     "resolveJsonModule": true,
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,

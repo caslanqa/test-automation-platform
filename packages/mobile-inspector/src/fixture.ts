@@ -4,20 +4,27 @@
  * whether Maestro or Appium is running underneath:
  *
  * ```ts
- * import { test, expect } from '@pwtap/mobile-inspector';
+ * import { test, expect } from '@fixtures';
  *
- * test.use({ mobile: { driver: 'maestro', device: 'Pixel_7_API_34' } });
+ * test.use({
+ *   mobileTarget: {
+ *     driver: 'maestro',
+ *     platform: 'android',
+ *     device: 'Pixel_7_API_34',
+ *     appId: 'com.example.app',
+ *   },
+ * });
  *
- * test('recorded flow', async ({ app }) => {
- *   await app.tap({ accessibilityId: 'loginButton' });
- *   await app.fill({ accessibilityId: 'username' }, 'John Doe');
- *   await app.waitFor({ text: 'Dashboard' });
+ * test('recorded flow', async ({ mobileApp }) => {
+ *   await mobileApp.tap({ accessibilityId: 'loginButton' });
+ *   await mobileApp.fill({ accessibilityId: 'username' }, 'John Doe');
+ *   await expect.poll(() => mobileApp.isVisible({ text: 'Dashboard' })).toBe(true);
  * });
  * ```
  *
  * This is additive: existing `maestro` (from `@pwtap/plugin-maestro`) and `app` (raw WebdriverIO, from
- * `@pwtap/plugin-appium`) fixtures are untouched and keep working — this fixture is a separate,
- * driver-neutral facade for inspector-generated tests.
+ * `@pwtap/plugin-appium`) fixtures are untouched and keep working — this is a separate, driver-neutral
+ * facade for inspector-generated tests, under names that collide with neither (ADR-003).
  */
 import { test as base, expect } from '@playwright/test';
 
@@ -42,28 +49,49 @@ import type {
 } from './types.js';
 import { DriverNotFoundError, UnsupportedActionError } from './types.js';
 
+/**
+ * Driver/device/app selection for the {@link MobileApp} facade.
+ *
+ * The name is `mobileTarget`, not `mobile`, and the fixture below is `mobileApp`, not `app` — both of
+ * the obvious names are already taken by the plugins this composes alongside (`@pwtap/plugin-maestro`
+ * owns the `mobile` option, `@pwtap/plugin-appium` owns the `app` fixture), and in Playwright an option
+ * *is* a fixture, so reusing either name is a merge conflict rather than an override. See
+ * docs/mobile-inspector/architecture.md ADR-003.
+ *
+ * Not to be confused with `MobileTarget` in `types.ts`, which is an unrelated thing: the point-or-locator
+ * a single *gesture* aims at (`drag(from, to)`). This type selects the device and app a whole test drives.
+ */
+export interface MobileTargetOptions {
+  /** Which installed adapter to drive (`'maestro'` | `'appium'`); falls back to `MOBILE_INSPECTOR_DRIVER`. */
+  driver?: MobileDriverId;
+  /** Falls back to `MOBILE_INSPECTOR_PLATFORM`, then `MOBILE_PLATFORM`/`APPIUM_PLATFORM`. */
+  platform?: MobilePlatform;
+  /**
+   * Stable device name — an Android AVD name or an iOS simulator name/UDID. Never an `adb` serial:
+   * serials change across reboots and this value is replayed days later (ADR-003).
+   */
+  device?: string;
+  headless?: boolean;
+  /**
+   * Android package name / iOS bundle id to launch. Effectively REQUIRED for Maestro, whose MCP session
+   * scopes every command to an app id; without it a replayed test drives nothing.
+   */
+  appId?: string;
+  /** Build artifact (`.apk`/`.app`/`.ipa`/`.zip`) or https URL to install before launching `appId`. */
+  appSource?: string;
+}
+
 /** Options this test object adds. */
 export interface MobileInspectorOptions {
   /**
-   * Driver/device selection for the unified `app` fixture. Set per file/describe with
-   * `test.use({ mobile: { driver: 'maestro', device: 'Pixel_7_API_34' } })`.
-   * - `driver` selects which installed adapter to use (`'maestro'` | `'appium'`); falls back to the
-   *   `MOBILE_INSPECTOR_DRIVER` env var.
-   * - `platform` falls back to `MOBILE_INSPECTOR_PLATFORM`, then `MOBILE_PLATFORM`/`APPIUM_PLATFORM`.
-   * - `device` and `headless` behave like the Maestro/Appium plugins' own options.
+   * Set per file or describe block:
+   * `test.use({ mobileTarget: { driver: 'appium', platform: 'android', appId: 'com.example.app' } })`.
    */
-  mobile:
-    | {
-        driver?: MobileDriverId;
-        platform?: MobilePlatform;
-        device?: string;
-        headless?: boolean;
-      }
-    | undefined;
+  mobileTarget: MobileTargetOptions | undefined;
 }
 
 interface MobileInspectorFixtures {
-  app: MobileApp;
+  mobileApp: MobileApp;
 }
 
 function resolveDriverId(option?: MobileDriverId): string {
@@ -168,9 +196,12 @@ function toMobileApp(
       assertSupported('waitFor');
       await perform({ kind: 'waitFor', locator, options });
     },
-    async isVisible(locator: MobileLocator) {
-      assertSupported('assertVisible');
-      const value = await perform({ kind: 'assertVisible', locator });
+    async isVisible(locator: MobileLocator, options?: WaitOptions) {
+      // The dedicated boolean action, NOT `assertVisible`: the assertions throw when the element is
+      // absent, so routing this through one made `isVisible()` unable to ever return `false` and broke
+      // every generated visibility check (architecture.md ADR-004).
+      assertSupported('isVisible');
+      const value = await perform({ kind: 'isVisible', locator, options });
       return Boolean(value);
     },
     async screenshot(name?: string) {
@@ -186,11 +217,11 @@ function toMobileApp(
  * needed). Composed alongside — not instead of — the existing `maestro`/`app` fixtures.
  */
 export const test = base.extend<MobileInspectorOptions & MobileInspectorFixtures>({
-  mobile: [undefined, { option: true }],
+  mobileTarget: [undefined, { option: true }],
 
-  app: [
-    async ({ mobile }, use) => {
-      const driverId = resolveDriverId(mobile?.driver);
+  mobileApp: [
+    async ({ mobileTarget }, use) => {
+      const driverId = resolveDriverId(mobileTarget?.driver);
       const drivers = await discoverDriverMap();
       const driver = drivers.get(driverId);
       if (!driver) {
@@ -198,9 +229,13 @@ export const test = base.extend<MobileInspectorOptions & MobileInspectorFixtures
       }
 
       const session = await driver.connect({
-        platform: resolvePlatform(mobile?.platform),
-        device: mobile?.device,
-        headless: resolveHeadless(mobile?.headless),
+        platform: resolvePlatform(mobileTarget?.platform),
+        device: mobileTarget?.device,
+        headless: resolveHeadless(mobileTarget?.headless),
+        // Forwarded, not dropped: a recorded flow is meaningless if the replay never launches the app it
+        // was recorded against — and Maestro's session refuses every command until an app id is set.
+        appId: mobileTarget?.appId,
+        appSource: mobileTarget?.appSource,
       });
       try {
         await use(toMobileApp(session, driver.id, driver.capabilities.gestures));

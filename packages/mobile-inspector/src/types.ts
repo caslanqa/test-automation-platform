@@ -163,7 +163,8 @@ export interface MobileApp {
   pressKey(key: MobileKey): Promise<void>;
   back(): Promise<void>;
   waitFor(locator: MobileLocator, options?: WaitOptions): Promise<void>;
-  isVisible(locator: MobileLocator): Promise<boolean>;
+  /** Boolean visibility query — resolves `false` on absence, never throws (see ADR-004). */
+  isVisible(locator: MobileLocator, options?: WaitOptions): Promise<boolean>;
   /** Save a screenshot and return its absolute path. */
   screenshot(name?: string): Promise<string>;
 }
@@ -216,6 +217,13 @@ export type MobileAction =
   | { kind: 'pressKey'; key: MobileKey }
   | { kind: 'back' }
   | { kind: 'waitFor'; locator: MobileLocator; options?: WaitOptions }
+  /**
+   * Boolean visibility QUERY — `ActionResult.value` is a boolean and `ok` is `true` for both outcomes;
+   * only a driver/transport failure yields `ok: false`. This exists because the assertions below throw
+   * when the element is absent, which makes them useless for answering "is it visible?" — see
+   * docs/mobile-inspector/architecture.md ADR-004.
+   */
+  | { kind: 'isVisible'; locator: MobileLocator; options?: WaitOptions }
   | { kind: 'assertVisible'; locator: MobileLocator }
   | { kind: 'assertNotVisible'; locator: MobileLocator }
   | { kind: 'screenshot'; name?: string }
@@ -253,22 +261,41 @@ export interface DriverSession {
   close(): Promise<void>;
 }
 
+/**
+ * How a test for this driver is named and executed, as declared by the driver itself rather than by a
+ * lookup table inside the inspector. A new driver plugin brings its own file extension, Playwright
+ * project and gate variable with it; nothing in `@pwtap/mobile-inspector` needs editing to support it.
+ * See docs/mobile-inspector/architecture.md §8.
+ */
+export interface DriverTestBinding {
+  /** File suffix the driver's Playwright project matches, e.g. `.maestro.ts`. */
+  extension: string;
+  /** Playwright project name, passed as `--project`. */
+  project: string;
+  /** Env var that gates the project; the runner sets it to `'1'`. */
+  gateEnv: string;
+}
+
 /** A driver adapter, discovered from an installed plugin's `./inspector` export. */
 export interface MobileInspectorDriver {
   readonly id: MobileDriverId;
   readonly capabilities: DriverCapabilities;
+  /** Where a recording for this driver gets saved, and how it is run back. */
+  readonly testBinding: DriverTestBinding;
   discoverDevices(): Promise<InspectorDevice[]>;
   connect(options: ConnectOptions): Promise<DriverSession>;
 }
 
 /** Thrown when a `MobileAction` isn't supported by the connected driver's capabilities. */
 export class UnsupportedActionError extends Error {
-  constructor(
-    public readonly driverId: MobileDriverId,
-    public readonly kind: MobileAction['kind'],
-  ) {
+  readonly driverId: MobileDriverId;
+  readonly kind: MobileAction['kind'];
+
+  constructor(driverId: MobileDriverId, kind: MobileAction['kind']) {
     super(`[mobile-inspector] driver "${driverId}" does not support "${kind}" actions`);
     this.name = 'UnsupportedActionError';
+    this.driverId = driverId;
+    this.kind = kind;
   }
 }
 

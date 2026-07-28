@@ -10,9 +10,12 @@
  */
 
 export class MarkerError extends Error {
-  constructor(public readonly key: string) {
+  readonly key: string;
+
+  constructor(key: string) {
     super(`[pwtap] managed region '${key}' markers not found`);
     this.name = 'MarkerError';
+    this.key = key;
   }
 }
 
@@ -29,8 +32,20 @@ function locate(source: string, key: string): { start: number; end: number; line
   return { start, end, lines };
 }
 
+/**
+ * Whole-line marker check, matching {@link locate}'s predicate exactly.
+ *
+ * Substring matching cannot be used here: the end marker `// pwtap:foo:end` *contains* the start marker
+ * `// pwtap:foo`, so a file that lost only its start marker would look intact, `hasRegion` would say yes,
+ * and `locate` would then throw `MarkerError` — turning the documented "report and let the caller print a
+ * paste block" path into an unhandled crash.
+ */
+function hasMarkerLine(source: string, marker: string): boolean {
+  return source.split('\n').some(line => line.trim() === marker);
+}
+
 export function hasRegion(source: string, key: string): boolean {
-  return source.includes(startMarker(key)) && source.includes(endMarker(key));
+  return hasMarkerLine(source, startMarker(key)) && hasMarkerLine(source, endMarker(key));
 }
 
 /** Insert `line` before the end marker of `key`, unless `uniq` already appears in the region. */

@@ -16,19 +16,34 @@ import { readJson } from './util/fs.js';
  *   fixture: { importFrom: '@pwtap/plugin-maestro', test: { alias: 'maestroTest' } },
  * };
  */
+/** One entry spliced into the `@fixtures` barrel: an import plus a mergeTests/mergeExpects argument. */
+export interface ManifestFixture {
+  importFrom: string;
+  /** Composable test object merged via mergeTests. Omit for matcher-only plugins (e.g. ai-judge). */
+  test?: { export?: string; alias: string };
+  /** Custom-matcher `expect` merged via mergeExpects. Omit for fixture-only plugins (e.g. maestro). */
+  expect?: { export?: string; alias: string };
+  /**
+   * True when OTHER plugins may contribute this same fixture. Adding it stays idempotent either way
+   * (the barrel injector dedupes), but removal must not: uninstalling one mobile plugin while the other
+   * is still installed must leave the shared `mobileApp` fixture in place, or every remaining
+   * inspector-generated test breaks with an unknown-fixture error.
+   */
+  shared?: boolean;
+}
+
 export interface PluginManifest {
   id: string;
   name: string;
   devDependencies: Record<string, string>;
   scripts: Record<string, string>;
   envKeys: Record<string, string>;
-  fixture?: {
-    importFrom: string;
-    /** Composable test object merged via mergeTests. Omit for matcher-only plugins (e.g. ai-judge). */
-    test?: { export?: string; alias: string };
-    /** Custom-matcher `expect` merged via mergeExpects. Omit for fixture-only plugins (e.g. maestro). */
-    expect?: { export?: string; alias: string };
-  };
+  /**
+   * One fixture, or several. A plugin usually contributes exactly one, but a mobile plugin also brings
+   * the shared driver-neutral `mobileApp` fixture, which both mobile plugins provide — hence the array
+   * form plus {@link ManifestFixture.shared}.
+   */
+  fixture?: ManifestFixture | ManifestFixture[];
   playwrightProject?: {
     gateVar: string;
     gate: string;
@@ -49,6 +64,14 @@ export interface CoreManifest {
   browsers: string[];
   /** Extra fields merged verbatim into the generated package.json (e.g. lint-staged, commitizen config). */
   packageJson?: Record<string, unknown>;
+}
+
+/** Normalize the one-or-many `fixture` field to a list. */
+export function fixtureList(m: PluginManifest): ManifestFixture[] {
+  if (!m.fixture) {
+    return [];
+  }
+  return Array.isArray(m.fixture) ? m.fixture : [m.fixture];
 }
 
 export function loadCoreManifest(coreManifestPath: string): CoreManifest {

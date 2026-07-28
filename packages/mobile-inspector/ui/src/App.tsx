@@ -344,6 +344,9 @@ export function App() {
       {saveOpen && (
         <SaveDialog
           testFiles={state.testFiles}
+          extension={
+            state.drivers.find(d => d.id === state.connected?.driver)?.testBinding.extension ?? ''
+          }
           pickSaveLocation={pickSaveLocation}
           pickExistingTestFile={pickExistingTestFile}
           onCancel={() => setSaveOpen(false)}
