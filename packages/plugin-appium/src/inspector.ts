@@ -193,6 +193,8 @@ function toMobileNode(node: XmlNode, platform: MobilePlatform): MobileNode | und
     accessibilityId:
       platform === 'android' ? attrs['content-desc'] || undefined : attrs.name || undefined,
     resourceId: platform === 'android' ? attrs['resource-id'] || undefined : undefined,
+    // Android reports the owning package per node; iOS page source is the app under test already.
+    appPackage: platform === 'android' ? attrs.package || undefined : undefined,
     className: attrs.class || attrs.type || tag,
     enabled: toBool(attrs.enabled),
     focused: toBool(attrs.focused),

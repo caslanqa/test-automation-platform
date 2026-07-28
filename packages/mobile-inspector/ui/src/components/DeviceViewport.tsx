@@ -9,8 +9,8 @@ interface DeviceViewportProps {
   send: (message: ClientMessage) => void;
   /** Right-click: report the screen anchor so the parent can position the locator menu. */
   onContextMenu: (anchor: { x: number; y: number }) => void;
-  /** Node currently selected in the tree, to mirror its highlight on the device image. */
-  selectedNode: MobileNode | null;
+  /** Identity of the tree selection, re-resolved here each render so the box tracks the live tree. */
+  selectedKey: string | null;
 }
 
 /**
@@ -35,7 +35,7 @@ export function DeviceViewport({
   connecting,
   send,
   onContextMenu,
-  selectedNode,
+  selectedKey,
 }: DeviceViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
@@ -144,6 +144,7 @@ export function DeviceViewport({
     }
   }
 
+  const selectedNode = selectedKey ? findByKey(hierarchy, selectedKey) : undefined;
   const highlight = selectedNode?.bounds ?? hoverNode?.bounds;
   const coordinateWidth = frame?.coordinateWidth ?? frame?.width ?? 1;
   const coordinateHeight = frame?.coordinateHeight ?? frame?.height ?? 1;
@@ -202,6 +203,21 @@ function intersectBounds(
   const right = Math.min(viewportWidth, bounds.x + bounds.width);
   const bottom = Math.min(viewportHeight, bounds.y + bounds.height);
   return right > x && bottom > y ? { x, y, width: right - x, height: bottom - y } : null;
+}
+
+/** Local, not imported from mobile-core: that package's entry also exports the test fixture, which would
+ *  pull @playwright/test into the browser bundle. */
+function findByKey(nodes: MobileNode[], key: string): MobileNode | undefined {
+  for (const node of nodes) {
+    if (node.key === key) {
+      return node;
+    }
+    const inChildren = findByKey(node.children ?? [], key);
+    if (inChildren) {
+      return inChildren;
+    }
+  }
+  return undefined;
 }
 
 function findSmallestNodeAt(nodes: MobileNode[], x: number, y: number): MobileNode | null {
