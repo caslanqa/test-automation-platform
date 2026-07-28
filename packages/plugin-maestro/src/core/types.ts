@@ -70,6 +70,13 @@ export interface MaestroNode {
   a11y?: string;
   /** resource-id. */
   rid?: string;
+  /** class name, e.g. `android.widget.Button`. */
+  cls?: string;
+  enabled?: boolean;
+  /** Whether the element accepts taps — a hint for choosing the actionable node under a point. */
+  clickable?: boolean;
+  /** Whether the element scrolls. */
+  scroll?: boolean;
   /** children. */
   c?: MaestroNode[];
 }

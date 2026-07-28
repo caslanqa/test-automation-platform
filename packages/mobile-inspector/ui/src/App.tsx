@@ -10,7 +10,6 @@ import { RunOutput } from './components/RunOutput';
 import { SaveDialog, type SaveResult } from './components/SaveDialog';
 import { Timeline } from './components/Timeline';
 import { useInspectorBridge } from './hooks/useInspectorBridge';
-import type { MobileNode } from './protocol';
 
 type BottomTab = 'timeline' | 'output' | 'logs';
 type PaneDivider = 'device-code' | 'code-tree';
@@ -25,7 +24,7 @@ export function App() {
   const [drawerOpen, setDrawerOpen] = useState(true);
   const [saveOpen, setSaveOpen] = useState(false);
   const [bottomTab, setBottomTab] = useState<BottomTab>('timeline');
-  const [selectedNode, setSelectedNode] = useState<MobileNode | null>(null);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [menuAnchor, setMenuAnchor] = useState<{ x: number; y: number } | null>(null);
   const [paneRatios, setPaneRatios] = useState<[number, number, number]>(() => {
     try {
@@ -215,7 +214,7 @@ export function App() {
             connecting={state.connecting}
             send={send}
             onContextMenu={onContextMenu}
-            selectedNode={selectedNode}
+            selectedKey={selectedKey}
           />
           <ConnectionDrawer
             open={drawerOpen}
@@ -272,8 +271,8 @@ export function App() {
         <section className="pane pane-right">
           <HierarchyTree
             nodes={state.hierarchy}
-            selectedNode={selectedNode}
-            onSelect={setSelectedNode}
+            selectedKey={selectedKey}
+            onSelect={setSelectedKey}
           />
         </section>
       </div>

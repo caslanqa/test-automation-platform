@@ -171,12 +171,25 @@ export interface MobileApp {
 
 /** One normalized node in a device's UI hierarchy — Maestro's compact tree and Appium's XML both map here. */
 export interface MobileNode {
+  /** Index chain from the root, e.g. `0/2/1`. Assigned by `assignNodeIdentity`, not by adapters. */
+  path?: string;
+  /**
+   * Identity that survives the next hierarchy read. Every poll builds a new object graph, so anything
+   * remembering a node (selection, expansion, highlight) must key on this and re-resolve it — see ADR-007.
+   */
+  key?: string;
   /** Bounds in the frame's interaction coordinate space. */
   bounds?: { x: number; y: number; width: number; height: number };
   text?: string;
   accessibilityId?: string;
   resourceId?: string;
   className?: string;
+  /**
+   * Which app the node belongs to, when the platform says so. A whole-screen capture includes other apps'
+   * UI (status bar, notification shade), and a driver scoped to one app id cannot act on those — so
+   * recording one produces a test that passes in the inspector and fails on replay (ADR-007/§7).
+   */
+  appPackage?: string;
   enabled?: boolean;
   focused?: boolean;
   selected?: boolean;

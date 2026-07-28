@@ -29,6 +29,7 @@ import type {
   TestFileEntry,
 } from '@pwtap/mobile-core';
 import {
+  assignNodeIdentity,
   discoverDriverMap,
   hitTest,
   listBootedAndroidDevices,
@@ -36,6 +37,7 @@ import {
   listInstalledIosApps,
   locatorCandidates,
   locatorForNode,
+  outOfAppWarning,
   resolveSimUdid,
   resolveStableDeviceName,
 } from '@pwtap/mobile-core';
@@ -358,7 +360,9 @@ export class RecorderSession {
     const session = this.session;
     const refresh = (async (): Promise<boolean> => {
       try {
-        const hierarchy = await session.inspectHierarchy();
+        // Identity is assigned once, here, so every consumer (hit-test, UI selection, highlight) sees the
+        // same keys for one read of the tree (ADR-007).
+        const hierarchy = assignNodeIdentity(await session.inspectHierarchy());
         if (this.session === session) {
           this.lastHierarchy = hierarchy;
           this.send({ type: 'hierarchy', nodes: hierarchy });
@@ -402,6 +406,10 @@ export class RecorderSession {
       );
     }
     const node = fresh ? hitTest(this.lastHierarchy, x, y) : undefined;
+    const outOfApp = node && outOfAppWarning(node, this.lastTarget?.appId);
+    if (outOfApp) {
+      this.log('warn', `recorded an element that ${outOfApp}`);
+    }
     const locator = node ? locatorForNode(node) : { point: { x, y }, label: 'coordinate tap' };
     await this.perform({ kind: 'tap', locator });
   }
@@ -428,7 +436,7 @@ export class RecorderSession {
     }
     const node = fresh ? (hitTest(this.lastHierarchy, x, y) ?? null) : null;
     const candidates = node
-      ? locatorCandidates(node, this.lastHierarchy)
+      ? locatorCandidates(node, this.lastHierarchy, { appId: this.lastTarget?.appId })
       : [
           {
             strategy: 'point' as const,

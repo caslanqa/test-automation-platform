@@ -14,6 +14,7 @@ import {
   hitTest,
   locatorCandidates,
   locatorForNode,
+  outOfAppWarning,
   resolveTargetPoint,
 } from '../src/locator.js';
 import type { MobileNode } from '../src/types.js';
@@ -156,4 +157,40 @@ test('resolveTargetPoint fails loudly rather than guessing a point', () => {
     () => resolveTargetPoint({ accessibilityId: 'ok' }, [{ accessibilityId: 'ok' }]),
     /no bounds/,
   );
+});
+
+test('a node from another app is penalised and says why', () => {
+  const statusBar: MobileNode = {
+    bounds: box(0, 0, 400, 40),
+    accessibilityId: 'Battery 100 percent.',
+    appPackage: 'com.android.systemui',
+  };
+
+  const [best] = locatorCandidates(statusBar, [statusBar], { appId: 'com.example.app' });
+
+  assert.equal(
+    best.score,
+    92 - 60,
+    'it cannot resolve on replay, so it must not read as high confidence',
+  );
+  assert.equal(best.confidence, 'low');
+  assert.match(best.warnings.join(' '), /com\.android\.systemui/);
+  assert.match(best.warnings.join(' '), /not resolve on replay/);
+});
+
+test('a node from the app under test is not penalised', () => {
+  const inApp: MobileNode = {
+    bounds: box(0, 0, 100, 40),
+    accessibilityId: 'login',
+    appPackage: 'com.example.app',
+  };
+
+  assert.equal(locatorCandidates(inApp, [inApp], { appId: 'com.example.app' })[0].score, 92);
+});
+
+test('with no package or no app id there is nothing to compare, so no penalty', () => {
+  const unknown: MobileNode = { bounds: box(0, 0, 100, 40), accessibilityId: 'login' };
+
+  assert.equal(locatorCandidates(unknown, [unknown], { appId: 'com.example.app' })[0].score, 92);
+  assert.equal(outOfAppWarning({ appPackage: 'com.other' }, undefined), undefined);
 });

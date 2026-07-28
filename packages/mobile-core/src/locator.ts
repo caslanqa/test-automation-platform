@@ -143,6 +143,21 @@ export function locatorForNode(node: MobileNode): MobileLocator {
   };
 }
 
+/**
+ * Warn when a node belongs to a different app than the one under test. The hierarchy is a whole-screen
+ * capture, so the status bar and notification shade appear in it, but a driver scoped to one app id cannot
+ * act on them — recording one produces a test that passes in the inspector and fails on replay. Returns
+ * `undefined` when the platform gave us no package to compare, which is not the same as "in the app".
+ *
+ * @example outOfAppWarning({ appPackage: 'com.android.systemui' }, 'com.example.app')
+ */
+export function outOfAppWarning(node: MobileNode, appId?: string): string | undefined {
+  if (!appId || !node.appPackage || node.appPackage === appId) {
+    return undefined;
+  }
+  return `belongs to ${node.appPackage}, not the app under test (${appId}) — the driver is scoped to the app, so this will not resolve on replay`;
+}
+
 /** Count how many nodes in `hierarchy` match `locator` — used to flag non-unique candidates. */
 export function countMatches(hierarchy: MobileNode[], locator: MobileLocator): number {
   let count = 0;
@@ -192,8 +207,13 @@ function confidenceBand(score: number): 'high' | 'medium' | 'low' {
  * the UI can explain why an otherwise-strong locator is risky. Ties break by the fixed strategy
  * order below, so the output is stable across runs.
  */
-export function locatorCandidates(node: MobileNode, hierarchy: MobileNode[]): LocatorCandidate[] {
+export function locatorCandidates(
+  node: MobileNode,
+  hierarchy: MobileNode[],
+  options: { appId?: string } = {},
+): LocatorCandidate[] {
   const candidates: LocatorCandidate[] = [];
+  const outOfApp = outOfAppWarning(node, options.appId);
 
   const add = (
     strategy: LocatorCandidate['strategy'],
@@ -203,6 +223,12 @@ export function locatorCandidates(node: MobileNode, hierarchy: MobileNode[]): Lo
   ): void => {
     const warnings = [...baseWarnings];
     let score = baseScore;
+    if (outOfApp) {
+      // Heavier than the non-unique penalty: a locator outside the app under test does not merely risk
+      // matching the wrong element, it cannot resolve at all when the test replays.
+      score -= 60;
+      warnings.push(outOfApp);
+    }
     // Coordinate candidates aren't "matchable" against the tree; everything else is uniqueness-checked.
     const unique = strategy === 'point' ? false : countMatches(hierarchy, locator) === 1;
     if (strategy !== 'point' && !unique) {

@@ -4,15 +4,16 @@ import type { MobileNode } from '../protocol';
 
 interface HierarchyTreeProps {
   nodes: MobileNode[];
-  selectedNode: MobileNode | null;
-  onSelect: (node: MobileNode) => void;
+  /** Identity of the selected node, never the object: a poll replaces every node (ADR-007). */
+  selectedKey: string | null;
+  onSelect: (key: string) => void;
 }
 
 /**
  * Recursive accessibility-tree viewer with a text filter. Clicking a node selects it, which
  * highlights its bounds on the device image (bidirectional selection sync).
  */
-export function HierarchyTree({ nodes, selectedNode, onSelect }: HierarchyTreeProps) {
+export function HierarchyTree({ nodes, selectedKey, onSelect }: HierarchyTreeProps) {
   const [filter, setFilter] = useState('');
   const q = filter.trim().toLowerCase();
 
@@ -32,7 +33,7 @@ export function HierarchyTree({ nodes, selectedNode, onSelect }: HierarchyTreePr
       />
       <ul>
         {visible.map((n, i) => (
-          <TreeNode key={i} node={n} selectedNode={selectedNode} onSelect={onSelect} />
+          <TreeNode key={n.key ?? i} node={n} selectedKey={selectedKey} onSelect={onSelect} />
         ))}
         {visible.length === 0 && <li className="muted">no elements</li>}
       </ul>
@@ -42,12 +43,12 @@ export function HierarchyTree({ nodes, selectedNode, onSelect }: HierarchyTreePr
 
 function TreeNode({
   node,
-  selectedNode,
+  selectedKey,
   onSelect,
 }: {
   node: MobileNode;
-  selectedNode: MobileNode | null;
-  onSelect: (node: MobileNode) => void;
+  selectedKey: string | null;
+  onSelect: (key: string) => void;
 }) {
   const [expanded, setExpanded] = useState(true);
   const hasChildren = !!node.children?.length;
@@ -61,8 +62,8 @@ function TreeNode({
           </button>
         )}
         <span
-          className={`tree-label${node === selectedNode ? ' selected' : ''}`}
-          onClick={() => onSelect(node)}
+          className={`tree-label${node.key && node.key === selectedKey ? ' selected' : ''}`}
+          onClick={() => node.key && onSelect(node.key)}
           title="click to select"
         >
           {labelFor(node)}
@@ -71,7 +72,7 @@ function TreeNode({
       {hasChildren && expanded && (
         <ul>
           {(node.children ?? []).map((c, i) => (
-            <TreeNode key={i} node={c} selectedNode={selectedNode} onSelect={onSelect} />
+            <TreeNode key={c.key ?? i} node={c} selectedKey={selectedKey} onSelect={onSelect} />
           ))}
         </ul>
       )}

@@ -104,6 +104,14 @@ const DIRECTION_MAP: Record<MobileDirection, MaestroDirection> = {
   right: 'RIGHT',
 };
 
+/** Scrolling down means swiping up: the finger travels opposite to the content. */
+const SCROLL_TO_SWIPE: Record<MobileDirection, MobileDirection> = {
+  down: 'up',
+  up: 'down',
+  right: 'left',
+  left: 'right',
+};
+
 /** Maestro key names differ in casing from the shared `MobileKey` union; pass unknown keys through. */
 function toMaestroKey(key: string): string {
   const known: Record<string, string> = {
@@ -128,13 +136,31 @@ function parseBounds(
   return { x: x1, y: y1, width: x2 - x1, height: y2 - y1 };
 }
 
-/** Normalize one Maestro node (and its children) into the shared `MobileNode` model. */
+/**
+ * Owning package, inferred from an Android resource id like `com.android.settings:id/title`. Maestro's
+ * compact node carries no package field, so this is the only free signal — and it is absent for nodes with
+ * no resource id, which is why §7 still lists app-scope detection as partial.
+ */
+function packageFromResourceId(rid: string | undefined): string | undefined {
+  const separator = rid?.indexOf(':id/') ?? -1;
+  return separator > 0 ? rid?.slice(0, separator) : undefined;
+}
+
+/**
+ * Normalize one Maestro node (and its children) into the shared `MobileNode` model. `cls` and `enabled` were
+ * previously dropped, which left every Maestro node unlabelled in the accessibility tree and weakened the
+ * node identity key; `val` is folded into `text` the way the Appium adapter already folds iOS `value`, so a
+ * row identified only by its right-hand value still gets a text locator.
+ */
 function toMobileNode(node: MaestroNode): MobileNode {
   return {
     bounds: parseBounds(node.b),
-    text: node.txt,
+    text: node.txt ?? node.val,
     accessibilityId: node.a11y,
     resourceId: node.rid,
+    className: node.cls,
+    enabled: node.enabled,
+    appPackage: packageFromResourceId(node.rid),
     children: node.c?.map(toMobileNode),
   };
 }
@@ -260,7 +286,19 @@ class MaestroDriverSession implements DriverSession {
           duration: action.options?.durationMs,
         });
       case 'scroll':
-        return this.maestro.scroll();
+        if (action.options?.within) {
+          // Maestro's swipe has no element target. Refusing beats silently scrolling the whole screen and
+          // generating a test that only appears to scroll the container the user picked.
+          throw new Error(
+            '[maestro-inspector] Maestro cannot scroll inside a specific element — record the scroll ' +
+              'without `within`, or use the Appium driver',
+          );
+        }
+        // Maestro's bare `scroll()` always scrolls down, so the recorded direction used to be discarded.
+        // A swipe carries direction, inverted because the finger moves opposite to the content.
+        return this.maestro.swipe({
+          direction: DIRECTION_MAP[SCROLL_TO_SWIPE[action.direction]],
+        });
       case 'drag': {
         const hierarchy = await this.inspectHierarchy();
         const frame = await this.captureScreen();

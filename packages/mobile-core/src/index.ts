@@ -23,8 +23,10 @@ export {
   hitTest,
   locatorCandidates,
   locatorForNode,
+  outOfAppWarning,
   resolveTargetPoint,
 } from './locator.js';
+export { assignNodeIdentity, findNodeByKey } from './nodeIdentity.js';
 export { discoverDriverMap, discoverDrivers } from './registry.js';
 export * from './types.js';
 
