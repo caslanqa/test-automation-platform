@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { resolveSaveExtension } from '../src/service/recorderSession.js';
+import { resolveSaveExtension } from '../src/service/testWriter.js';
 
 const MAESTRO = { extension: '.maestro.ts', project: 'maestro', gateEnv: 'MAESTRO' };
 const APPIUM = { extension: '.appium.ts', project: 'appium', gateEnv: 'APPIUM' };
