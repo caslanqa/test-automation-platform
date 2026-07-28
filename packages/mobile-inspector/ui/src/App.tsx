@@ -9,7 +9,6 @@ import { LocatorMenu } from './components/LocatorMenu';
 import { RunOutput } from './components/RunOutput';
 import { SaveDialog, type SaveResult } from './components/SaveDialog';
 import { Timeline } from './components/Timeline';
-import type { PickAppFileResult, PickPathResult } from './global';
 import { useInspectorBridge } from './hooks/useInspectorBridge';
 import type { MobileNode } from './protocol';
 
@@ -20,18 +19,6 @@ const DEFAULT_PANE_RATIOS: [number, number, number] = [1, 1.1, 0.8];
 const PANE_RATIOS_KEY = 'pwtap-inspector-pane-ratios';
 const DIVIDER_WIDTH = 6;
 const MIN_PANE_WIDTHS = [220, 280, 220] as const;
-
-async function pickAppFile(): Promise<PickAppFileResult | null> {
-  return (await window.pwtapInspector?.pickAppFile()) ?? null;
-}
-
-async function pickSaveLocation(): Promise<PickPathResult | null> {
-  return (await window.pwtapInspector?.pickSaveLocation()) ?? null;
-}
-
-async function pickExistingTestFile(): Promise<PickPathResult | null> {
-  return (await window.pwtapInspector?.pickExistingTestFile()) ?? null;
-}
 
 export function App() {
   const { state, send } = useInspectorBridge();
@@ -162,22 +149,15 @@ export function App() {
     });
   }
 
-  if (!state.bridgeReady) {
-    return (
-      <div className="boot-screen">
-        <div>
-          <h2>PWTAP Mobile Inspector</h2>
-          <p className="muted">
-            This window must run inside the Electron host. Launch it with
-            <code> npm run start</code> (or <code>mobile-inspect &lt;projectRoot&gt;</code>).
-          </p>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="app">
+      {/* The event stream reconnects on its own, so this reports the gap rather than replacing the UI:
+          the recording lives on the service and is still there when the stream comes back (ADR-011). */}
+      {state.serviceError && (
+        <div className="service-banner" role="status">
+          {state.serviceError}
+        </div>
+      )}
       <header className="topbar">
         <div className="topbar-title">PWTAP Mobile Inspector</div>
         <button className="btn" onClick={() => setDrawerOpen(o => !o)}>
@@ -246,7 +226,6 @@ export function App() {
             connected={state.connected}
             connecting={state.connecting}
             send={send}
-            pickAppFile={pickAppFile}
           />
         </section>
 
@@ -347,8 +326,6 @@ export function App() {
           extension={
             state.drivers.find(d => d.id === state.connected?.driver)?.testBinding.extension ?? ''
           }
-          pickSaveLocation={pickSaveLocation}
-          pickExistingTestFile={pickExistingTestFile}
           onCancel={() => setSaveOpen(false)}
           onConfirm={(result: SaveResult) => {
             send({ type: 'save', ...result, source: state.code });

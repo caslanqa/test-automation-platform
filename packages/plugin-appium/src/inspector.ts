@@ -24,8 +24,8 @@ import type {
   MobileNode,
   MobileTarget,
   ScreenFrame,
-} from '@pwtap/mobile-inspector';
-import { discoverMobileDevices, readImageSize } from '@pwtap/mobile-inspector';
+} from '@pwtap/mobile-core';
+import { discoverMobileDevices, readImageSize } from '@pwtap/mobile-core';
 import type { DiscoveredDevice, MobilePlatform } from '@pwtap/platform';
 import {
   acquireDevice,

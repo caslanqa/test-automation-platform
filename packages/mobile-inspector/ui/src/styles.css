@@ -621,3 +621,13 @@ body {
   font-size: 11px;
   word-break: break-all;
 }
+
+/* Connection-loss banner. The event stream retries by itself, so this states the gap and gets out of the
+   way — replacing the whole UI would imply the recording was lost, which it is not. */
+.service-banner {
+  padding: 6px 12px;
+  background: #7a2e2e;
+  color: #ffd9d9;
+  font-size: 0.85rem;
+  text-align: center;
+}

@@ -1,9 +1,9 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 
-import type { ClientMessage, MobileNode, ScreenFrame } from '../protocol';
+import type { ClientMessage, MobileNode, ScreenFrameMeta } from '../protocol';
 
 interface DeviceViewportProps {
-  frame: ScreenFrame | null;
+  frame: ScreenFrameMeta | null;
   hierarchy: MobileNode[];
   connecting: boolean;
   send: (message: ClientMessage) => void;
@@ -160,7 +160,8 @@ export function DeviceViewport({
         >
           <img
             ref={imgRef}
-            src={`data:image/png;base64,${frame.imageBase64}`}
+            // The bytes come from the service; the browser decodes off-thread and caches by frame id.
+            src={`/frame/${frame.frameId}`}
             alt="device screen"
             onPointerDown={onPointerDown}
             onPointerUp={onPointerUp}

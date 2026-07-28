@@ -1,26 +1,21 @@
 /**
- * Per-connection recording session: owns the connected `DriverSession`, the recorded `MobileAction`
- * timeline (with undo/redo), frame/hierarchy polling, and the save-to-file workflow. One instance per
- * WebSocket connection (see `server.ts`) — closing the socket always tears this down so a crashed or
- * closed browser tab never leaks a device lock or a booted-by-us device.
+ * The recording engine: owns the connected `DriverSession`, the recorded `MobileAction` timeline (with
+ * undo/redo), frame/hierarchy polling, the source draft, and the save/run workflows.
+ *
+ * One instance per service **launch**, not per connection (architecture.md ADR-011). A client attaching or
+ * dropping is a re-sync, never a teardown — a browser reload must not cost the user their recording — so the
+ * only thing that closes this is the launch itself, which is also what guarantees a device lock is never
+ * leaked. See `server.ts` for the transport that owns it.
  */
 import { spawn, type ChildProcess } from 'node:child_process';
 import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { type MobilePlatform } from '@pwtap/platform';
-import prettier from 'prettier';
 
-import { resolveStableDeviceName } from '../deviceDiscovery.js';
-import { hitTest, locatorCandidates, locatorForNode } from '../locator.js';
-import {
-  listBootedAndroidDevices,
-  listInstalledAndroidApps,
-  listInstalledIosApps,
-  resolveSimUdid,
-} from '../platformCompat.js';
-import { discoverDriverMap } from '../registry.js';
 import type {
   ActionResult,
   ConnectOptions,
@@ -32,9 +27,20 @@ import type {
   MobileInspectorDriver,
   MobileNode,
   TestFileEntry,
-} from '../types.js';
+} from '@pwtap/mobile-core';
+import {
+  discoverDriverMap,
+  hitTest,
+  listBootedAndroidDevices,
+  listInstalledAndroidApps,
+  listInstalledIosApps,
+  locatorCandidates,
+  locatorForNode,
+  resolveSimUdid,
+  resolveStableDeviceName,
+} from '@pwtap/mobile-core';
 import { generateTestSource, statementForAction, type GeneratedTarget } from './codegen.js';
-import type { ClientMessage, ServerMessage } from './protocol.js';
+import type { ClientMessage, RecorderEvent } from './protocol.js';
 
 const FRAME_POLL_MS = 1500;
 
@@ -50,6 +56,8 @@ export class RecorderSession {
   private lastTarget: GeneratedTarget | undefined;
   /** Most recent device list, reused for the device-name uniqueness check (see `knownDevices`). */
   private lastDevices: InspectorDevice[] = [];
+  /** The `connected` event for the live session, replayed to a re-attaching client (see `snapshot`). */
+  private connectedSummary: Extract<RecorderEvent, { type: 'connected' }> | undefined;
   private timeline: MobileAction[] = [];
   private redoStack: MobileAction[] = [];
   private lastHierarchy: MobileNode[] = [];
@@ -67,7 +75,7 @@ export class RecorderSession {
   private runChild: ChildProcess | undefined;
 
   private readonly projectRoot: string;
-  private readonly send: (message: ServerMessage) => void;
+  private readonly send: (event: RecorderEvent) => void;
 
   /**
    * `drivers` is a seam for tests: adapters are normally discovered from the project's `node_modules`
@@ -76,7 +84,7 @@ export class RecorderSession {
    */
   constructor(
     projectRoot: string,
-    send: (message: ServerMessage) => void,
+    send: (event: RecorderEvent) => void,
     drivers?: Map<string, MobileInspectorDriver>,
   ) {
     this.projectRoot = projectRoot;
@@ -127,10 +135,34 @@ export class RecorderSession {
   }
 
   /**
-   * Transport-neutral command dispatch. Both the (legacy) WebSocket server and the Electron main
-   * process route every already-validated {@link ClientMessage} through here, so the recording
-   * engine has exactly one entry point regardless of host. Errors are reported as `error` events
-   * rather than thrown, keeping the transport layer a thin, dumb pipe.
+   * Everything a freshly attached — or re-attached — client needs to render the current state, without
+   * touching the device.
+   *
+   * This is what makes a browser reload survivable (ADR-011): the recording session belongs to the service
+   * launch, not to the connection, so pressing F5 must cost nothing. Frames are deliberately absent; the
+   * transport owns those and replays the last one from its own store.
+   */
+  snapshot(): RecorderEvent[] {
+    const events: RecorderEvent[] = [];
+    if (this.connectedSummary) {
+      events.push(this.connectedSummary);
+    }
+    if (this.lastHierarchy.length > 0) {
+      events.push({ type: 'hierarchy', nodes: this.lastHierarchy });
+    }
+    events.push({ type: 'timeline', actions: this.timeline });
+    events.push({ type: 'code', source: this.draftSource, revision: this.draftRevision });
+    if (this.runChild) {
+      events.push({ type: 'runStatus', state: 'started' });
+    }
+    return events;
+  }
+
+  /**
+   * Transport-neutral command dispatch: the single entry point for every already-validated
+   * {@link ClientMessage}, whatever host delivered it. Errors are reported as `error` events rather than
+   * thrown, which keeps the transport a thin, dumb pipe and is what lets a VS Code webview speak the same
+   * protocol later without touching this class.
    */
   async dispatch(message: ClientMessage): Promise<void> {
     try {
@@ -246,12 +278,15 @@ export class RecorderSession {
       this.lastFrameId = -1;
       this.draftDirty = false;
       this.draftSource = '';
-      this.send({
+      // Retained so a re-attaching client can be told what it is looking at without reconnecting the
+      // device (see `snapshot`, ADR-011).
+      this.connectedSummary = {
         type: 'connected',
         driver: driverId,
         device: this.session.device,
         capabilities: driver.capabilities,
-      });
+      };
+      this.send(this.connectedSummary);
       this.sendTimelineAndCode();
       await this.refreshHierarchy();
       await this.refreshFrame();
@@ -271,6 +306,7 @@ export class RecorderSession {
     }
     const session = this.session;
     this.session = undefined;
+    this.connectedSummary = undefined;
     this.frameRefresh = undefined;
     this.hierarchyRefresh = undefined;
     if (session) {
@@ -344,19 +380,26 @@ export class RecorderSession {
     }
   }
 
-  /** Hit-test a tap against a fresh hierarchy, then record and perform it. */
+  /**
+   * Hit-test a tap against a fresh hierarchy, then record and perform it.
+   *
+   * `frameId` is advisory: it is never a reason to refuse (ADR-006). It used to be — an interaction whose
+   * frame id had moved on was dropped with nothing but a `warn` — which meant the frame poll silently
+   * invalidated the user's clicks, and byte-identical frames make the mismatch routine rather than rare.
+   * The hierarchy is re-read here anyway, so acting on the freshest tree is both safer and honest; a
+   * mismatch is worth a note, not a refusal.
+   */
   async tapAt(x: number, y: number, frameId: number): Promise<void> {
     if (!this.session) {
       return;
     }
-    if (frameId !== this.lastFrameId) {
-      this.log('warn', 'ignored tap against a stale frame — refresh and try again');
-      return;
-    }
     const fresh = await this.refreshHierarchy();
     if (frameId !== this.lastFrameId) {
-      this.log('warn', 'ignored tap after the frame changed during hierarchy refresh');
-      return;
+      this.log(
+        'info',
+        `tapped against frame ${frameId} while the device is on ${this.lastFrameId}; ` +
+          'hit-tested the current screen',
+      );
     }
     const node = fresh ? hitTest(this.lastHierarchy, x, y) : undefined;
     const locator = node ? locatorForNode(node) : { point: { x, y }, label: 'coordinate tap' };
@@ -373,16 +416,15 @@ export class RecorderSession {
     if (!this.session) {
       return;
     }
-    if (frameId !== this.lastFrameId) {
-      this.log('warn', 'ignored inspect against a stale frame — refresh and try again');
-      this.send({ type: 'inspected', node: null, candidates: [] });
-      return;
-    }
+    // Advisory, exactly as in `tapAt`: right-clicking must always answer with the current screen's
+    // candidates rather than an empty menu because a frame id moved on (ADR-006).
     const fresh = await this.refreshHierarchy();
     if (frameId !== this.lastFrameId) {
-      this.log('warn', 'ignored inspect after the frame changed during hierarchy refresh');
-      this.send({ type: 'inspected', node: null, candidates: [] });
-      return;
+      this.log(
+        'info',
+        `inspected frame ${frameId} while the device is on ${this.lastFrameId}; ` +
+          'hit-tested the current screen',
+      );
     }
     const node = fresh ? (hitTest(this.lastHierarchy, x, y) ?? null) : null;
     const candidates = node
@@ -666,11 +708,16 @@ export class RecorderSession {
         : source;
 
     let formatted = body;
-    try {
-      const config = (await prettier.resolveConfig(target)) ?? undefined;
-      formatted = await prettier.format(body, { ...config, filepath: target });
-    } catch (error) {
-      this.log('warn', `prettier formatting skipped: ${errorMessage(error)}`);
+    const prettier = await loadProjectPrettier(this.projectRoot);
+    if (!prettier) {
+      this.log('info', 'prettier is not installed in this project — writing the file unformatted');
+    } else {
+      try {
+        const config = (await prettier.resolveConfig(target)) ?? undefined;
+        formatted = await prettier.format(body, { ...config, filepath: target });
+      } catch (error) {
+        this.log('warn', `prettier formatting skipped: ${errorMessage(error)}`);
+      }
     }
     // Atomic write: write to a temp file in the same dir, then rename over the target.
     const dir = path.dirname(target);
@@ -765,6 +812,35 @@ export class RecorderSession {
     this.closed = true;
     this.stopRun();
     await this.disconnect();
+  }
+}
+
+/** The slice of Prettier's API the save step uses. */
+interface ProjectPrettier {
+  resolveConfig(filePath: string): Promise<Record<string, unknown> | null>;
+  format(source: string, options: Record<string, unknown>): Promise<string>;
+}
+
+/**
+ * Resolve **the project's own** Prettier rather than bundling a copy (architecture.md ADR-014).
+ *
+ * Every scaffolded project already declares Prettier, and using its copy is both lighter and more correct:
+ * the user's version and their `.prettierrc` are the ones that should shape a file written into their repo.
+ * Shipping a second Prettier inside a dev tool added ~10 MB to every install to do the same job slightly
+ * differently. Returns `undefined` when the project has none, so the caller can degrade audibly instead of
+ * crashing a save.
+ */
+async function loadProjectPrettier(projectRoot: string): Promise<ProjectPrettier | undefined> {
+  try {
+    const require = createRequire(`${projectRoot}/`);
+    const resolved = require.resolve('prettier', { paths: [projectRoot] });
+    const mod = (await import(pathToFileURL(resolved).href)) as {
+      default?: ProjectPrettier;
+    } & ProjectPrettier;
+    const api = mod.default ?? mod;
+    return typeof api.format === 'function' ? api : undefined;
+  } catch {
+    return undefined;
   }
 }
 

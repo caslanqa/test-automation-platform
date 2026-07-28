@@ -6,5 +6,5 @@
     "types": ["node", "@playwright/test"]
   },
   "include": ["src/**/*.ts"],
-  "references": [{ "path": "../platform" }, { "path": "../mobile-inspector" }]
+  "references": [{ "path": "../platform" }, { "path": "../mobile-core" }]
 }

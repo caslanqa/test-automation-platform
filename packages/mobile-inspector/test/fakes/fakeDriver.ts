@@ -19,7 +19,7 @@ import type {
   MobileInspectorDriver,
   MobileNode,
   ScreenFrame,
-} from '../../src/types.js';
+} from '@pwtap/mobile-core';
 
 /** A minimal but valid PNG header — `readImageSize` only reads `IHDR`, and nothing decodes the pixels. */
 export function pngOfSize(width: number, height: number): Buffer {

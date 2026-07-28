@@ -10,7 +10,7 @@ import type {
   LocatorCandidate,
   MobileAction,
   MobileNode,
-  ScreenFrame,
+  ScreenFrameMeta,
   ServerMessage,
   TestFileEntry,
 } from '../protocol';
@@ -31,15 +31,22 @@ export interface InspectedResult {
   candidates: LocatorCandidate[];
 }
 
+/** Bounded so a long session — or a failing device logging every poll — cannot grow without limit. */
+const MAX_LOGS = 2000;
+const MAX_RUN_LINES = 5000;
+
 export interface InspectorState {
-  /** Whether the privileged Electron bridge (`window.pwtapInspector`) is present. */
-  bridgeReady: boolean;
+  /** Whether the event stream is currently attached to the service. */
+  connectedToService: boolean;
+  /** Set when the service refuses or drops us, so the UI can say why instead of just going quiet. */
+  serviceError: string | null;
   drivers: DriverSummary[];
   devices: InspectorDevice[];
   apps: InstalledApp[];
   connected: { driver: string; device: InspectorDevice; capabilities: DriverCapabilities } | null;
   connecting: boolean;
-  frame: ScreenFrame | null;
+  /** Frame metadata only; the image itself is fetched from `/frame/<frameId>`. */
+  frame: ScreenFrameMeta | null;
   hierarchy: MobileNode[];
   timeline: MobileAction[];
   /** Authoritative editor source and its server-side revision. */
@@ -57,7 +64,8 @@ export interface InspectorState {
 }
 
 const INITIAL_STATE: InspectorState = {
-  bridgeReady: false,
+  connectedToService: false,
+  serviceError: null,
   drivers: [],
   devices: [],
   apps: [],
@@ -77,38 +85,87 @@ const INITIAL_STATE: InspectorState = {
   testFiles: [],
 };
 
+/** Append to a bounded list, dropping the oldest entries. */
+function bounded<T>(list: T[], item: T, max: number): T[] {
+  const next = [...list, item];
+  return next.length > max ? next.slice(next.length - max) : next;
+}
+
 /**
- * Owns the Electron IPC bridge connection to the privileged main process. Replaces the old WebSocket
- * transport: the sandboxed preload exposes `window.pwtapInspector` (send/onEvent), and this hook maps
- * inbound {@link ServerMessage}s to renderer state and exposes a typed `send` for commands.
+ * Owns the connection to the local inspector service.
+ *
+ * Events arrive over one SSE stream (`EventSource`, which reconnects on its own and resumes from
+ * `Last-Event-ID`); commands go out as `POST /command` with a monotonic sequence number, because independent
+ * POSTs can race in a way WebSocket framing used to hide (architecture.md ADR-013). Both are same-origin, so
+ * the launch token travels in the service's cookie and never needs handling here.
+ *
+ * Commands are sent one at a time, in order: a queued send waits for the previous POST to be accepted, so
+ * the server's sequence check can never fire for a client that is behaving.
  */
 export function useInspectorBridge(): {
   state: InspectorState;
   send: (msg: ClientMessage) => void;
 } {
   const [state, setState] = useState<InspectorState>(INITIAL_STATE);
-  const bridgeRef = useRef<Window['pwtapInspector'] | null>(null);
-
-  useEffect(() => {
-    const bridge = window.pwtapInspector ?? null;
-    bridgeRef.current = bridge;
-    if (!bridge) {
-      setState(s => ({ ...s, bridgeReady: false }));
-      return;
-    }
-    setState(s => ({ ...s, bridgeReady: true }));
-    const unsubscribe = bridge.onEvent(message => applyServerMessage(setState, message));
-    bridge.send({ type: 'listDrivers' });
-    return unsubscribe;
-  }, []);
+  const seqRef = useRef(0);
+  /** Tail of the send chain — each command awaits the previous one, preserving order. */
+  const pendingRef = useRef<Promise<unknown>>(Promise.resolve());
 
   const send = useCallback((message: ClientMessage) => {
     if (message.type === 'inspectAt') {
-      // Never expose the previous element's locator candidates while a new hit-test is in flight.
+      // Never show the previous element's candidates while a new hit-test is in flight.
       setState(s => ({ ...s, inspected: null }));
     }
-    bridgeRef.current?.send(message);
+    const seq = ++seqRef.current;
+    pendingRef.current = pendingRef.current
+      .then(() =>
+        fetch('/command', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ seq, message }),
+        }),
+      )
+      .then(async response => {
+        if (!response.ok) {
+          const detail = await response.text().catch(() => response.statusText);
+          setState(s => ({
+            ...s,
+            logs: bounded(
+              s.logs,
+              { level: 'error', message: `command rejected: ${detail}`, at: Date.now() },
+              MAX_LOGS,
+            ),
+          }));
+        }
+      })
+      .catch((error: unknown) => {
+        setState(s => ({
+          ...s,
+          serviceError: `could not reach the inspector service: ${String(error)}`,
+        }));
+      });
   }, []);
+
+  useEffect(() => {
+    const source = new EventSource('/events');
+    source.onopen = () => {
+      setState(s => ({ ...s, connectedToService: true, serviceError: null }));
+      // The re-sync snapshot covers device/timeline/draft, but the installed driver list is discovered on
+      // demand, so ask for it every time the stream opens — including after an automatic reconnect.
+      // Without this the driver picker stays empty and nothing can be connected at all.
+      send({ type: 'listDrivers' });
+    };
+    source.onmessage = event =>
+      applyServerMessage(setState, JSON.parse(event.data as string) as ServerMessage);
+    source.onerror = () =>
+      // EventSource retries by itself; report the gap rather than looking frozen.
+      setState(s => ({
+        ...s,
+        connectedToService: false,
+        serviceError: 'lost the connection to the inspector service — retrying…',
+      }));
+    return () => source.close();
+  }, [send]);
 
   return { state, send };
 }
@@ -138,19 +195,16 @@ function applyServerMessage(
           },
         };
       case 'disconnected':
-        return {
-          ...s,
-          connecting: false,
-          connected: null,
-          frame: null,
-          hierarchy: [],
-          timeline: [],
-          inspected: null,
-          code: '',
-          codeRevision: 0,
-        };
+        // The device is gone; the RECORDING is not. The draft and timeline survive on the server (they
+        // describe work the user did), and `run` disconnects before it spawns Playwright — clearing them
+        // here is what used to make pressing Run empty the editor.
+        return { ...s, connecting: false, connected: null, frame: null, hierarchy: [] };
       case 'frame':
         return { ...s, frame: message.frame };
+      case 'frameUnchanged':
+        // The device produced a byte-identical screen: the image on display is still current, and its id is
+        // unchanged, so there is deliberately nothing to do.
+        return s;
       case 'hierarchy':
         return { ...s, hierarchy: message.nodes };
       case 'inspected':
@@ -160,7 +214,7 @@ function applyServerMessage(
       case 'timeline':
         return { ...s, timeline: message.actions };
       case 'code':
-        // Only accept server code if it is newer than what we hold (guards against stale echoes).
+        // Only accept source newer than what we hold (guards against a stale echo).
         return message.revision >= s.codeRevision
           ? { ...s, code: message.source, codeRevision: message.revision }
           : s;
@@ -169,13 +223,19 @@ function applyServerMessage(
       case 'saved':
         return {
           ...s,
-          logs: [...s.logs, { level: 'info', message: `saved to ${message.path}`, at: Date.now() }],
+          logs: bounded(
+            s.logs,
+            { level: 'info', message: `saved to ${message.path}`, at: Date.now() },
+            MAX_LOGS,
+          ),
         };
-      case 'runOutput':
+      case 'runOutput': {
+        const next = [...s.runOutput, { stream: message.stream, chunk: message.chunk }];
         return {
           ...s,
-          runOutput: [...s.runOutput, { stream: message.stream, chunk: message.chunk }],
+          runOutput: next.length > MAX_RUN_LINES ? next.slice(next.length - MAX_RUN_LINES) : next,
         };
+      }
       case 'runStatus':
         return message.state === 'started'
           ? { ...s, runState: 'running', runExitCode: undefined, runOutput: [] }
@@ -183,12 +243,20 @@ function applyServerMessage(
       case 'log':
         return {
           ...s,
-          logs: [...s.logs, { level: message.level, message: message.message, at: Date.now() }],
+          logs: bounded(
+            s.logs,
+            { level: message.level, message: message.message, at: Date.now() },
+            MAX_LOGS,
+          ),
         };
       case 'error':
         return {
           ...s,
-          logs: [...s.logs, { level: 'error', message: message.message, at: Date.now() }],
+          logs: bounded(
+            s.logs,
+            { level: 'error', message: message.message, at: Date.now() },
+            MAX_LOGS,
+          ),
         };
       default:
         return s;

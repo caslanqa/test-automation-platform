@@ -1,7 +1,7 @@
 {
   "name": "@pwtap/mobile-inspector",
   "version": "1.0.0",
-  "description": "Embedded mobile test inspector/recorder shared by the Maestro and Appium plugins — a unified MobileApp facade, driver adapter registry, and local recording UI/codegen",
+  "description": "Mobile test recorder for the Playwright Test Automation Platform \u2014 local service, browser UI and code generator. A dev tool: the runtime contracts live in @pwtap/mobile-core",
   "type": "module",
   "license": "MIT",
   "repository": {
@@ -23,9 +23,7 @@
   "files": [
     "dist",
     "ui-dist",
-    "bin",
-    "templates",
-    "docs"
+    "bin"
   ],
   "publishConfig": {
     "access": "public"
@@ -37,19 +35,14 @@
     "@playwright/test": ">=1.61.0"
   },
   "dependencies": {
-    "@pwtap/platform": "^1.0.0",
-    "electron": "^43.2.0",
-    "prettier": "^3.9.6",
-    "ws": "^8.21.1"
+    "@pwtap/mobile-core": "^1.0.0",
+    "@pwtap/platform": "^1.0.0"
   },
   "scripts": {
     "build": "tsc -b",
     "build:ui": "vite build",
     "typecheck:ui": "tsc -p ui/tsconfig.json --noEmit",
-    "build:electron": "esbuild src/electron/preload.ts --bundle --platform=node --format=cjs --external:electron --outfile=dist/electron/preload.cjs",
-    "start": "electron dist/electron/main.js",
-    "inspect:electron": "node bin/inspect-electron.mjs",
-    "prepack": "npm run build && npm run build:electron && npm run build:ui"
+    "prepack": "npm run build && npm run build:ui"
   },
   "devDependencies": {
     "@codemirror/lang-javascript": "^6.2.5",
@@ -58,11 +51,11 @@
     "@codemirror/view": "^6.43.6",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
-    "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^4.7.0",
     "codemirror": "^6.0.2",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "vite": "^6.4.3"
+    "vite": "^6.4.3",
+    "prettier": "^3.9.6"
   }
 }
