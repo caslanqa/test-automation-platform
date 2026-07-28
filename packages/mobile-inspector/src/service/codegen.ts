@@ -6,7 +6,12 @@
  * TypeScript AST (Phase 4 scope: locator ranking, formatting, atomic writes); the save step below
  * pipes the result through the project's own Prettier config so output style still matches the repo.
  */
-import type { MobileAction, MobileDirection, MobileLocator, MobileTarget } from '../types.js';
+import type {
+  MobileAction,
+  MobileDirection,
+  MobileLocator,
+  MobileTarget,
+} from '@pwtap/mobile-core';
 
 function quote(value: string): string {
   return JSON.stringify(value);

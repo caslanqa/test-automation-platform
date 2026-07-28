@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
 
-import type { PickPathResult } from '../global';
 import type { TestFileEntry } from '../protocol';
 
 type SaveMode = 'new' | 'append';
@@ -20,8 +19,6 @@ interface SaveDialogProps {
    * timeout the saved test gets, so the preview must show the real one rather than a guess.
    */
   extension: string;
-  pickSaveLocation: () => Promise<PickPathResult | null>;
-  pickExistingTestFile: () => Promise<PickPathResult | null>;
   onCancel: () => void;
   onConfirm: (result: SaveResult) => void;
 }
@@ -34,14 +31,7 @@ interface SaveDialogProps {
  *   in-app list or a native file browser) — the recorded test is merged into it, never overwriting
  *   the file's existing content.
  */
-export function SaveDialog({
-  testFiles,
-  extension,
-  pickSaveLocation,
-  pickExistingTestFile,
-  onCancel,
-  onConfirm,
-}: SaveDialogProps) {
+export function SaveDialog({ testFiles, extension, onCancel, onConfirm }: SaveDialogProps) {
   const [mode, setMode] = useState<SaveMode>('new');
   const [testName, setTestName] = useState('recorded flow');
 
@@ -67,20 +57,6 @@ export function SaveDialog({
         )
       : testFiles;
   }, [testFiles, filter]);
-
-  async function onChooseLocation(): Promise<void> {
-    const result = await pickSaveLocation();
-    if (result) {
-      setLocation(result.relativePath || '.');
-    }
-  }
-
-  async function onBrowseExisting(): Promise<void> {
-    const result = await pickExistingTestFile();
-    if (result) {
-      setSelectedFile(result.relativePath);
-    }
-  }
 
   const preview =
     mode === 'new'
@@ -131,12 +107,7 @@ export function SaveDialog({
           <>
             <label className="field">
               Location
-              <div className="field-row">
-                <input value={location} onChange={e => setLocation(e.target.value)} />
-                <button className="btn btn-small" onClick={onChooseLocation}>
-                  Choose…
-                </button>
-              </div>
+              <input value={location} onChange={e => setLocation(e.target.value)} />
             </label>
             <label className="field">
               File name
@@ -154,9 +125,6 @@ export function SaveDialog({
                   onChange={e => setFilter(e.target.value)}
                   placeholder="filter test files…"
                 />
-                <button className="btn btn-small" onClick={onBrowseExisting}>
-                  Browse…
-                </button>
               </div>
             </label>
             <div className="app-list save-file-list">

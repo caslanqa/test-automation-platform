@@ -25,10 +25,10 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { discoverDriverMap } from '../src/registry.js';
+import type { MobileNode } from '@pwtap/mobile-core';
+import { discoverDriverMap } from '@pwtap/mobile-core';
 import type { ServerMessage } from '../src/service/protocol.js';
 import { RecorderSession } from '../src/service/recorderSession.js';
-import type { MobileNode } from '../src/types.js';
 
 /** Repo root — where the workspace links `@pwtap/plugin-*`, i.e. what discovery resolves against. */
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');

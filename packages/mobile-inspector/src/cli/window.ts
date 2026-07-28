@@ -1,0 +1,67 @@
+/**
+ * Opens the inspector in an app-mode Chromium window, using the browser Playwright already installed.
+ *
+ * This is what replaced Electron (architecture.md ADR-001). Playwright's own Inspector, UI mode and Trace
+ * Viewer are all browser-hosted local web apps opened exactly this way — a persistent context launched with
+ * `--app=`, which gives a frameless window with no tabs or address bar — so the inspector gets the same feel
+ * for none of the 296 MB Electron cost. `@playwright/test` is a peer dependency, so this resolves to the
+ * browser the host project already downloaded.
+ *
+ * Note the two-step navigation: the window opens on a blank `data:` URL and *then* goes to the service. The
+ * URL carries the launch token, and passing it as `--app=<url>` would put it in the process command line,
+ * where any other user on the machine could read it out of `ps`.
+ */
+import type { BrowserContext } from '@playwright/test';
+
+const WINDOW_WIDTH = 1440;
+const WINDOW_HEIGHT = 900;
+
+export interface InspectorWindow {
+  /** Resolves when the user closes the window. */
+  closed: Promise<void>;
+  close(): Promise<void>;
+}
+
+/**
+ * Launch the window, or return `undefined` when no browser is available — the caller then falls back to
+ * printing the URL, which is a perfectly usable inspector, rather than failing the launch outright.
+ */
+export async function openInspectorWindow(
+  url: string,
+  onUnavailable: (reason: string) => void,
+): Promise<InspectorWindow | undefined> {
+  let context: BrowserContext;
+  try {
+    const { chromium } = await import('@playwright/test');
+    context = await chromium.launchPersistentContext('', {
+      // An empty user-data dir means a throwaway profile, so the window never inherits or leaves state.
+      headless: false,
+      // Without this the window wears Chromium's "controlled by automated software" infobar.
+      ignoreDefaultArgs: ['--enable-automation'],
+      // The window IS the viewport; a fixed one would letterbox the UI.
+      viewport: null,
+      args: [
+        '--app=data:text/html,',
+        `--window-size=${WINDOW_WIDTH},${WINDOW_HEIGHT}`,
+        '--test-type=', // suppresses the remaining automation warnings
+      ],
+    });
+  } catch (error) {
+    onUnavailable(
+      `${error instanceof Error ? error.message : String(error)}\n` +
+        'Install the browser with `npx playwright install chromium`, or open the URL below yourself.',
+    );
+    return undefined;
+  }
+
+  const page = context.pages()[0] ?? (await context.newPage());
+  await page.goto(url);
+
+  const closed = new Promise<void>(resolve => context.once('close', () => resolve()));
+  return {
+    closed,
+    close: async () => {
+      await context.close().catch(() => undefined);
+    },
+  };
+}

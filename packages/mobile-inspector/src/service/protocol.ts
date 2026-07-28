@@ -1,10 +1,16 @@
 /**
- * The WebSocket protocol between the local inspector service (`server.ts`) and the bundled React UI
- * (`ui/`). Kept host-neutral on purpose (see `plan.md`'s "do not patch Playwright Inspector internals"
- * constraint) — a future VS Code webview or other host could speak the same protocol.
+ * The message contract between the local inspector service (`server.ts`) and the browser UI (`ui/`).
  *
- * Every message is a small JSON object with a `type` tag; the server validates every inbound message
- * against {@link ClientMessage} shapes and drops/`error`s anything else rather than trusting the payload.
+ * The *shapes* are transport-neutral so another host (a VS Code webview) could speak them unchanged; the
+ * wire is SSE + POST + an image endpoint, see `server.ts` and architecture.md ADR-013. Every message is a
+ * small JSON object with a `type` tag, and the service validates every inbound one against
+ * {@link ClientMessage} rather than trusting the payload — the renderer is untrusted even though it is
+ * local.
+ *
+ * One deliberate asymmetry: a frame's *bytes* never travel through here. The recorder emits them
+ * internally as a {@link RecorderEvent}, and the transport strips them into a store the UI fetches from
+ * `GET /frame/<frameId>`. Base64 inside a JSON envelope inflates every frame by a third and forces a
+ * multi-megabyte JSON parse on the UI thread; an `<img src>` decodes off-thread and caches for free.
  */
 import type { MobilePlatform } from '@pwtap/platform';
 
@@ -21,7 +27,10 @@ import type {
   MobileNode,
   ScreenFrame,
   TestFileEntry,
-} from '../types.js';
+} from '@pwtap/mobile-core';
+
+/** A frame as it reaches the UI: everything except the image bytes, which come from `/frame/<frameId>`. */
+export type ScreenFrameMeta = Omit<ScreenFrame, 'imageBase64'>;
 
 /** One entry in the driver picker — a discovered adapter, what it supports, and where its tests live. */
 export interface DriverSummary {
@@ -82,7 +91,13 @@ export type ServerMessage =
       capabilities: DriverCapabilities;
     }
   | { type: 'disconnected' }
-  | { type: 'frame'; frame: ScreenFrame }
+  /** A new frame is available; fetch the image from `GET /frame/<frameId>`. */
+  | { type: 'frame'; frame: ScreenFrameMeta }
+  /**
+   * The device produced a byte-identical frame, so there is nothing to fetch: `frameId` is the id the UI
+   * is already showing. Without this, an idle screen would re-download the same megabytes every poll.
+   */
+  | { type: 'frameUnchanged'; frameId: number }
   | { type: 'hierarchy'; nodes: MobileNode[] }
   /** Response to `inspectAt`: the matched node (if any) and its ranked locator candidates. */
   | { type: 'inspected'; node: MobileNode | null; candidates: LocatorCandidate[] }
@@ -99,6 +114,16 @@ export type ServerMessage =
   | { type: 'runStatus'; state: 'started' | 'finished'; exitCode?: number | null }
   | { type: 'log'; level: 'info' | 'warn' | 'error'; message: string }
   | { type: 'error'; message: string };
+
+/**
+ * What the recording engine emits. Identical to {@link ServerMessage} except that a `frame` still carries
+ * its image bytes: the engine captures them, and the transport is what decides how they reach a client
+ * (see `frameStore.ts`). Keeping the two types distinct means a host cannot accidentally serialise
+ * megabytes of base64 into an event stream.
+ */
+export type RecorderEvent =
+  | Exclude<ServerMessage, { type: 'frame' } | { type: 'frameUnchanged' }>
+  | { type: 'frame'; frame: ScreenFrame };
 
 /** Narrow an arbitrary parsed JSON payload down to a well-formed {@link ClientMessage} or `null`. */
 export function parseClientMessage(raw: unknown): ClientMessage | null {

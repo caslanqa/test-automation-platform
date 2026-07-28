@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
 
-import type { PickAppFileResult } from '../global';
 import type {
   ClientMessage,
   ConnectOptions,
@@ -19,7 +18,6 @@ interface ConnectionDrawerProps {
   connected: { driver: string; device: InspectorDevice } | null;
   connecting: boolean;
   send: (message: ClientMessage) => void;
-  pickAppFile: () => Promise<PickAppFileResult | null>;
 }
 
 /**
@@ -36,7 +34,6 @@ export function ConnectionDrawer({
   connected,
   connecting,
   send,
-  pickAppFile,
 }: ConnectionDrawerProps) {
   const [driverId, setDriverId] = useState('');
   const [platform, setPlatform] = useState<MobilePlatform>('android');
@@ -70,16 +67,6 @@ export function ConnectionDrawer({
     setDeviceId('');
     if (id) {
       send({ type: 'listDevices', driver: id });
-    }
-  }
-
-  async function onPickFile(): Promise<void> {
-    const result = await pickAppFile();
-    if (result) {
-      setAppSource(result.path);
-      if (result.inferredAppId) {
-        setAppId(result.inferredAppId);
-      }
     }
   }
 
@@ -189,11 +176,8 @@ export function ConnectionDrawer({
             <input
               value={appSource}
               onChange={e => setAppSource(e.target.value)}
-              placeholder="./build/app.apk"
+              placeholder="./build/app.apk or https://…"
             />
-            <button className="btn btn-small" onClick={onPickFile}>
-              Browse…
-            </button>
           </div>
         </div>
 

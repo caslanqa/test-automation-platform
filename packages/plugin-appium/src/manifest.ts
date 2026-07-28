@@ -12,7 +12,10 @@
 export const manifest = {
   id: 'appium',
   name: '@pwtap/plugin-appium',
-  devDependencies: {},
+  // The recorder is a development tool, not part of a test's runtime path: the client gets it as a
+  // devDependency so `npm run mobile:inspect` works, while the plugin itself depends only on
+  // @pwtap/mobile-core (ADR-008). Keep this range in step with the inspector's major.
+  devDependencies: { '@pwtap/mobile-inspector': '^2.0.0' },
   scripts: {
     'test:appium':
       'APPIUM=1 playwright test --project=appium; code=$?; node scripts/mobile/appium-report.mjs; exit $code',
@@ -39,7 +42,7 @@ export const manifest = {
     // @pwtap/plugin-maestro contributes the identical entry: it is injected once and, crucially, survives
     // removing one mobile plugin while the other is still installed.
     {
-      importFrom: '@pwtap/mobile-inspector',
+      importFrom: '@pwtap/mobile-core',
       test: { alias: 'mobileAppTest' },
       shared: true,
     },

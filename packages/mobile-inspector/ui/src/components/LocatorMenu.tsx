@@ -55,7 +55,7 @@ export function LocatorMenu({ anchor, candidates, loading, onClose, send }: Loca
 
   async function copyLocator(): Promise<void> {
     if (candidate) {
-      await window.pwtapInspector?.copyText(candidate.display);
+      await navigator.clipboard.writeText(candidate.display);
     }
     onClose();
   }
