@@ -831,10 +831,37 @@ key, so installing either plugin — or both — merges it into `@fixtures` a si
 
 ## 14. Open questions
 
-1. **The `native` locator strategy:** emit real platform-native candidates, or remove it from the
-   candidate union and keep it hand-authored only (§7). Decide in Phase 2.
+1. ~~**The `native` locator strategy.**~~ **Decided: hand-authored only, never ranked.** A native selector is
+   specific to one driver on one platform by definition, so emitting one from the recorder would produce a
+   recording that replays only under the driver that made it — the opposite of the premise in §3. The ranking's
+   job is to order _portable_ identifiers by how well they survive a redesign, and a native selector has no
+   comparable durability to score. `MobileLocator.native` stays as the escape hatch for what the IR cannot
+   express, and both adapters pass it through untouched; `LocatorCandidate.strategy` no longer lists it, since
+   the engine never produced it and a type promising a case that cannot happen forces dead branches on every
+   consumer.
 2. **Frame re-encoding:** the server serves the raw capture bytes by default; whether it should
    down-scale or re-encode oversized Retina PNGs, and at what threshold, is a Phase 2 measurement against
-   the §11 frame-payload and latency rows.
-3. **VS Code webview host:** the protocol is designed for it (§10); whether it becomes a product
+   the §11 frame-payload and latency rows. **Decided: no re-encoding.** Measured at ~150 KB per capture
+   against a 2 MB budget, so it buys nothing; revisit only if a higher-density device changes the number.
+3. **A recorded journey cannot start cold.** `connect` launches the app, and the fixture does the same on
+   replay, so a recording that begins on the home screen replays as launch → Home → tap the icon → the app
+   opens again. Correct and deterministic, but redundant, and it is not the flow a user recording a cold
+   start means. A `mobileTarget.launch: false` would express it. Deferred because it changes the fixture's
+   contract and three things need deciding first: Maestro still needs an app id for every flow header, so
+   only the launch is suppressed and `appId` stays required; what a replay should do when the app is not
+   running (fail loudly, or launch anyway and lose the point); and whether Appium — which already attaches
+   to whatever is foregrounded when given no app id — is made to agree, since two drivers disagreeing about
+   what `launch: false` means is worse than not having it.
+4. **VS Code webview host:** the protocol is designed for it (§10); whether it becomes a product
    commitment is undecided.
+5. **Capturing frames through `adb` instead of the driver.** Measured on Android: the Maestro adapter's
+   `captureScreen()` costs 181 ms against 130 ms for `adb exec-out screencap` — the whole difference is the MCP
+   round trip, since writing and re-reading the PNG is free. That is ~50 ms twice per interaction.
+   **Recommendation: do not**, for now: it adds a second capture path, Android-only, to the layer that has
+   already produced two field defects, for about 8 % of click→screen. Revisit if the frame budget tightens.
+6. **Maestro Studio's local interface.** Maestro through MCP costs ~420 ms per tap over the device floor,
+   because MCP's only interaction tool is `run` — a flow executor, so every tap is a one-line test run — and
+   its parameters expose no wait to trim (§11). Studio avoids this by driving Maestro's own daemon instead,
+   which is why it feels instant. Reaching that would mean integrating with a local interface Maestro does not
+   document and does not expose a port flag for, so we would own every break. **Recommendation: do not**,
+   while Appium is one option away at 194 ms click→screen; revisit if Maestro publishes the surface.

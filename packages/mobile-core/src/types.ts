@@ -55,7 +55,14 @@ export interface TestFileEntry {
  */
 export interface LocatorCandidate {
   /** Which strategy this candidate uses — drives its icon/label and generated code. */
-  strategy: 'accessibilityId' | 'resourceId' | 'text' | 'native' | 'point';
+  /**
+   * How this candidate identifies the element. `native` is deliberately absent: the ranking only ever offers
+   * PORTABLE identifiers, ordered by how well they survive a redesign, and a native selector is specific to
+   * one driver on one platform — emitting one would produce a recording that replays only under the driver
+   * that made it. `MobileLocator.native` remains as a hand-authored escape hatch for what the IR cannot
+   * express; nothing generates it (§14).
+   */
+  strategy: 'accessibilityId' | 'resourceId' | 'text' | 'point';
   /** The concrete locator this candidate would generate. */
   locator: MobileLocator;
   /** 0..100 deterministic stability score (higher is better). */

@@ -528,9 +528,14 @@ test('running spawns Playwright with the driver’s project and gate variable', 
   assert.match(output, /run-\d+\.fake\.ts/, 'the temp file must match the project’s testMatch');
   assert.equal(h.last('runStatus')?.exitCode, 0);
 
-  // The temp file is removed, and it never lingers where a plain `npm test` would collect it.
+  // Removed by the time `finished` is announced, not merely eventually. The removal used to be fired off
+  // unawaited, so this assertion failed only under load — a real ordering bug wearing a flaky test's clothes.
   const runDir = path.join(h.dir, 'tests', '__inspector__');
-  assert.deepEqual(fs.existsSync(runDir) ? fs.readdirSync(runDir) : [], []);
+  assert.deepEqual(
+    fs.existsSync(runDir) ? fs.readdirSync(runDir) : [],
+    [],
+    'a client told the run finished must be able to trust the cleanup happened',
+  );
 
   await h.session.close();
 });
