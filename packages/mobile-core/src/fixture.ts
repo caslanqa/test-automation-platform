@@ -222,10 +222,11 @@ export const test = base.extend<MobileInspectorOptions & MobileInspectorFixtures
   mobileApp: [
     async ({ mobileTarget }, use) => {
       const driverId = resolveDriverId(mobileTarget?.driver);
-      const drivers = await discoverDriverMap();
+      const problems: string[] = [];
+      const drivers = await discoverDriverMap(undefined, message => problems.push(message));
       const driver = drivers.get(driverId);
       if (!driver) {
-        throw new DriverNotFoundError(driverId);
+        throw new DriverNotFoundError(driverId, problems);
       }
 
       const session = await driver.connect({

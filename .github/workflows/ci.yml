@@ -30,7 +30,15 @@ jobs:
         run: npm run typecheck:tests
       - name: Type-check inspector UI
         run: npm run typecheck:ui
+      # Also produces `ui-dist`, which the NFR size check and `npm pack` both need. Nothing else built
+      # the UI bundle in CI, so a vite failure would only have surfaced at publish time.
+      - name: Build inspector UI
+        run: npm run build:ui -w @pwtap/mobile-inspector
       - name: Unit tests
         run: npm test
       - name: Smoke — scaffold a core-only project and verify it builds
         run: npm run smoke
+      # The deterministic rows of the §11 budget: dependency footprint and published size. The latency
+      # and idle-CPU rows need a device and live in device.yml.
+      - name: NFR budgets
+        run: npm run nfr

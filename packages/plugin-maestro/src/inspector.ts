@@ -11,6 +11,7 @@ import path from 'node:path';
 
 import type {
   ActionResult,
+  AdapterContract,
   ConnectOptions,
   DriverCapabilities,
   DriverSession,
@@ -434,3 +435,9 @@ class MaestroInspectorDriver implements MobileInspectorDriver {
 }
 
 export const driver: MobileInspectorDriver = new MaestroInspectorDriver();
+/**
+ * The core↔adapter contract this adapter implements (ADR-009). A literal on purpose: importing
+ * `MOBILE_CORE_CONTRACT` would make it agree with whatever core is installed, which is the mismatch the
+ * check exists to catch. Bumping the core's contract breaks this line's type until it is reviewed.
+ */
+export const contract: AdapterContract = 1;

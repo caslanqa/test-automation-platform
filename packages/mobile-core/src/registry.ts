@@ -7,10 +7,15 @@
  * is a hard dependency, so a project with only one installed still works, and a project with neither
  * installed simply reports an empty driver list (the UI/fixture surface a clear error instead of a
  * module-resolution crash).
+ *
+ * An adapter whose declared contract this core does not accept is skipped and reported through
+ * `onProblem` instead of loaded (ADR-009): a version mismatch must name the package to upgrade rather
+ * than resurface later as a missing method on a driver.
  */
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 
+import { adapterContractProblem } from './contract.js';
 import type { MobileInspectorDriver } from './types.js';
 
 /** A package known to expose a mobile inspector driver adapter via its `"./inspector"` export. */
@@ -18,22 +23,42 @@ const KNOWN_ADAPTER_PACKAGES = ['@pwtap/plugin-maestro', '@pwtap/plugin-appium']
 
 interface InspectorModule {
   driver?: MobileInspectorDriver;
+  /** The contract the adapter was built against — a literal in the adapter's own source. */
+  contract?: number;
 }
+
+/** Reports an adapter that is installed but unusable, so no such failure is silent. */
+export type AdapterProblemReporter = (message: string) => void;
 
 /**
  * Resolve one package's `./inspector` export from `baseDir`'s `node_modules`. Returns `null` when the
- * package isn't installed or doesn't (yet) expose an inspector adapter — never throws, so callers can
- * probe every known package unconditionally.
+ * package isn't installed, doesn't expose an inspector adapter, or declares an unsupported contract —
+ * never throws, so callers can probe every known package unconditionally.
  */
-async function loadDriverFrom(baseDir: string, pkg: string): Promise<MobileInspectorDriver | null> {
+async function loadDriverFrom(
+  baseDir: string,
+  pkg: string,
+  onProblem?: AdapterProblemReporter,
+): Promise<MobileInspectorDriver | null> {
+  let mod: InspectorModule;
   try {
     const require = createRequire(`${baseDir}/`);
     const resolved = require.resolve(`${pkg}/inspector`, { paths: [baseDir] });
-    const mod = (await import(pathToFileURL(resolved).href)) as InspectorModule;
-    return mod.driver ?? null;
+    mod = (await import(pathToFileURL(resolved).href)) as InspectorModule;
   } catch {
+    // Not installed, or its `./inspector` entry does not resolve. Probing every known package is how
+    // discovery works, so neither is worth reporting.
     return null;
   }
+  if (!mod.driver) {
+    return null;
+  }
+  const problem = adapterContractProblem(pkg, mod.contract);
+  if (problem) {
+    onProblem?.(problem);
+    return null;
+  }
+  return mod.driver;
 }
 
 /**
@@ -43,9 +68,10 @@ async function loadDriverFrom(baseDir: string, pkg: string): Promise<MobileInspe
  */
 export async function discoverDrivers(
   baseDir: string = process.cwd(),
+  onProblem?: AdapterProblemReporter,
 ): Promise<MobileInspectorDriver[]> {
   const results = await Promise.all(
-    KNOWN_ADAPTER_PACKAGES.map(pkg => loadDriverFrom(baseDir, pkg)),
+    KNOWN_ADAPTER_PACKAGES.map(pkg => loadDriverFrom(baseDir, pkg, onProblem)),
   );
   return results.filter((driver): driver is MobileInspectorDriver => driver !== null);
 }
@@ -53,7 +79,8 @@ export async function discoverDrivers(
 /** Discover drivers and index them by id for `O(1)` lookup (e.g. from `test.use({ mobile: { driver } })`). */
 export async function discoverDriverMap(
   baseDir: string = process.cwd(),
+  onProblem?: AdapterProblemReporter,
 ): Promise<Map<string, MobileInspectorDriver>> {
-  const drivers = await discoverDrivers(baseDir);
+  const drivers = await discoverDrivers(baseDir, onProblem);
   return new Map(drivers.map(driver => [driver.id, driver]));
 }

@@ -9,7 +9,7 @@
  * a framework run booted itself — irrelevant for a device PICKER that must also show devices booted
  * outside the framework, e.g. manually via Android Studio/Xcode).
  */
-import { listAvds, listBootedAndroidDevices, listIosSimulators } from './platformCompat.js';
+import { listAvds, listBootedAndroidDevices, listIosSimulators } from '@pwtap/platform';
 
 import type { InspectorDevice } from './types.js';
 

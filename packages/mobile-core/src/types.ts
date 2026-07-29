@@ -314,10 +314,16 @@ export class UnsupportedActionError extends Error {
 
 /** Thrown when no inspector driver adapter could be resolved (neither plugin installed, or bad id). */
 export class DriverNotFoundError extends Error {
-  constructor(driverId: string) {
+  /**
+   * @param problems Adapters that were installed but refused (e.g. a contract mismatch). Included in the
+   *   message because "no driver found" is misleading when the package is right there but unloadable.
+   */
+  constructor(driverId: string, problems: string[] = []) {
     super(
       `[mobile-inspector] no driver adapter found for "${driverId}" — install ` +
-        '@pwtap/plugin-maestro or @pwtap/plugin-appium (whichever exposes this driver id)',
+        `@pwtap/plugin-maestro or @pwtap/plugin-appium (whichever exposes this driver id)${
+          problems.length > 0 ? `\n${problems.join('\n')}` : ''
+        }`,
     );
     this.name = 'DriverNotFoundError';
   }

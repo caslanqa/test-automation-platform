@@ -10,6 +10,12 @@
  * duplicate Prettier into every client install. See docs/mobile-inspector/architecture.md ADR-008.
  */
 export {
+  MIN_ADAPTER_CONTRACT,
+  MOBILE_CORE_CONTRACT,
+  adapterContractProblem,
+  type AdapterContract,
+} from './contract.js';
+export {
   discoverMobileDevices,
   resolveStableDeviceName,
   type StableDeviceName,
@@ -27,15 +33,14 @@ export {
   resolveTargetPoint,
 } from './locator.js';
 export { assignNodeIdentity, findNodeByKey } from './nodeIdentity.js';
-export { discoverDriverMap, discoverDrivers } from './registry.js';
+export { discoverDriverMap, discoverDrivers, type AdapterProblemReporter } from './registry.js';
 export * from './types.js';
 
 /**
- * `@pwtap/platform` device/app helpers, re-exported through the compatibility bridge in
- * `platformCompat.ts` so an outdated platform install fails with a clear upgrade message instead of
- * crashing module load on a missing named export. The inspector's app picker needs them; they live here
- * rather than being imported from `@pwtap/platform` directly so the whole mobile stack has exactly one
- * compatibility point. ADR-009 replaces this with a declared contract version and deletes the bridge.
+ * `@pwtap/platform` device/app helpers, re-exported so the inspector's device and app pickers have one
+ * import site for them. Plain re-exports: `@pwtap/platform` is a direct dependency of this package with a
+ * caret range, so npm resolves a version that has them — the runtime "is this export a function?" bridge
+ * that used to sit here treated a versioning problem as a runtime problem (ADR-009).
  */
 export {
   listAvds,
@@ -44,4 +49,4 @@ export {
   listInstalledIosApps,
   listIosSimulators,
   resolveSimUdid,
-} from './platformCompat.js';
+} from '@pwtap/platform';
