@@ -298,7 +298,8 @@ export class RecorderSession {
         type: 'connected',
         driver: driverId,
         device,
-        capabilities: driver.capabilities,
+        // What the session can do on THIS platform, so the UI does not offer a button that always fails.
+        capabilities: this.device.sessionCapabilities ?? driver.capabilities,
       };
       this.send(this.connectedSummary);
       this.sendTimelineAndCode();

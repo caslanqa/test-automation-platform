@@ -15,6 +15,7 @@ export {
   adapterContractProblem,
   type AdapterContract,
 } from './contract.js';
+export { ACTION_DEFAULTS } from './defaults.js';
 export {
   discoverMobileDevices,
   resolveStableDeviceName,

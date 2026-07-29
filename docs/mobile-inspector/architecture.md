@@ -458,6 +458,24 @@ separate Appium/Maestro review.
 
 ## 5. Action IR and driver capability matrix (normative)
 
+**Two rules the adapters broke, found by auditing them (§12 Phase 4):**
+
+- **Defaults belong to the contract, not the adapter.** Every option here is optional, and each adapter used
+  to invent its own value for the ones a test omitted: `isVisible` waited 2 s on Maestro and 5 s on Appium,
+  `longPress` held 1 s on Appium and whatever Maestro chose. So the same test body — the entire promise of a
+  driver-neutral IR — behaved differently by driver, silently and only under timing. An adapter MUST resolve an
+  omitted option from `ACTION_DEFAULTS` in `@pwtap/mobile-core`.
+- **An option a driver cannot express MUST be refused, never ignored.** `SwipeOptions.distance` was read by
+  neither adapter, so `swipe('up', { distance: 0.3 })` was a public API that did nothing; Maestro discarded
+  `longPress`'s `durationMs`, which its own `longPressOn` cannot vary. Silently substituting the driver's
+  behaviour generates a test that reads as one thing and is another. Refusal is the pattern `scroll` already
+  used for `within`.
+- **Capabilities vary by platform, so the SESSION is the authority.** `MobileInspectorDriver.capabilities` is
+  one static answer given before a platform is known, so a driver whose support differs had to overstate it:
+  Appium declared `back: true` and threw `"back" has no iOS equivalent` on iOS, leaving the UI offering a
+  button that always failed and the fixture's support check passing. A session MAY narrow it
+  (`DriverSession.capabilities`), and every consumer MUST prefer the session's answer when present.
+
 Required fields per action — the validation table the trust boundary implements:
 
 | Action                                                                          | Required                           | Optional                                                                    |

@@ -114,11 +114,18 @@ export interface FakeDriverOptions {
    * adopting the foreground app, since it cannot perform anything without one.
    */
   adoptedAppId?: string;
+  /**
+   * Capabilities the SESSION reports, narrower than the driver's declaration — what the Appium adapter does
+   * for `back`, which exists on Android and not on iOS.
+   */
+  sessionCapabilities?: DriverCapabilities;
 }
 
 export class FakeDriverSession implements DriverSession {
   /** Set when the driver resolved an app the caller did not name, mirroring the Maestro adapter. */
   readonly appId: string | undefined;
+  /** Set when the session's real support is narrower than the driver's declaration. */
+  readonly capabilities: DriverCapabilities | undefined;
 
   readonly driverId = 'fake';
   readonly device: InspectorDevice;
@@ -134,8 +141,14 @@ export class FakeDriverSession implements DriverSession {
   private screenIndex = 0;
   private readonly screens: MobileNode[][];
 
-  constructor(device: InspectorDevice, screens: MobileNode[][], appId?: string) {
+  constructor(
+    device: InspectorDevice,
+    screens: MobileNode[][],
+    appId?: string,
+    capabilities?: DriverCapabilities,
+  ) {
     this.appId = appId;
+    this.capabilities = capabilities;
     this.device = device;
     this.screens = screens;
   }
@@ -223,6 +236,7 @@ export class FakeDriver implements MobileInspectorDriver {
       device,
       this.options.screens ?? [LOGIN_SCREEN, DASHBOARD_SCREEN],
       options.appId ?? this.options.adoptedAppId,
+      this.options.sessionCapabilities,
     );
     return this.session;
   }

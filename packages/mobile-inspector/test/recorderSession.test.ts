@@ -191,6 +191,30 @@ test('an app artifact that does not exist is refused instead of reaching the dri
   await h.session.close();
 });
 
+test('the UI is told what the SESSION can do, not what the driver declared', async () => {
+  // Found by auditing the adapters: the Appium driver declares `back: true` because its declaration is made
+  // before a platform is known, then throws `"back" has no iOS equivalent` on iOS — so the UI offered a button
+  // that always failed and the fixture's support check passed. A session knows its platform and may narrow it.
+  const h = harness({
+    sessionCapabilities: {
+      hierarchy: true,
+      liveFrames: true,
+      gestures: { tap: true, back: false },
+    },
+  });
+
+  await connect(h);
+
+  assert.equal(h.driver.capabilities.gestures.back, true, 'the driver still declares it broadly');
+  assert.equal(
+    h.last('connected')?.capabilities.gestures.back,
+    false,
+    'but the UI must gate on what this session can actually do',
+  );
+
+  await h.session.close();
+});
+
 test('tapping the login button records its accessibility id, not a coordinate', async () => {
   const h = harness();
   await connect(h);

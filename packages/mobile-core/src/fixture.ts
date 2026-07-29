@@ -239,7 +239,11 @@ export const test = base.extend<MobileInspectorOptions & MobileInspectorFixtures
         appSource: mobileTarget?.appSource,
       });
       try {
-        await use(toMobileApp(session, driver.id, driver.capabilities.gestures));
+        // The session's own answer when it has one: a driver's static declaration is made before the
+        // platform is known, so it can only overstate what varies by platform (see DriverSession.capabilities).
+        await use(
+          toMobileApp(session, driver.id, (session.capabilities ?? driver.capabilities).gestures),
+        );
       } finally {
         await session.close();
       }

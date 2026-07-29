@@ -12,6 +12,7 @@ import {
   assignNodeIdentity,
   type ActionResult,
   type ConnectOptions,
+  type DriverCapabilities,
   type DriverSession,
   type InspectorDevice,
   type MobileAction,
@@ -74,6 +75,11 @@ export class DeviceSession {
     return this.session?.appId;
   }
 
+  /** What the connected session can really do — narrowed to its platform when the driver narrows it. */
+  get sessionCapabilities(): DriverCapabilities | undefined {
+    return this.capabilities;
+  }
+
   get device(): InspectorDevice | undefined {
     return this.session?.device;
   }
@@ -90,7 +96,7 @@ export class DeviceSession {
   async connect(driver: MobileInspectorDriver, options: ConnectOptions): Promise<InspectorDevice> {
     await this.disconnect();
     this.session = await driver.connect(options);
-    this.capabilities = driver.capabilities;
+    this.capabilities = this.session.capabilities ?? driver.capabilities;
     this.lastHierarchy = [];
     this.lastFrameId = -1;
     this.lastFrameBytes = undefined;

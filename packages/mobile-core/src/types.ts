@@ -275,6 +275,16 @@ export interface DriverSession {
    * explicit app id simply omits it.
    */
   readonly appId?: string;
+  /**
+   * What this session can really do, when it differs from the driver's declaration.
+   *
+   * `MobileInspectorDriver.capabilities` is one static answer given before a platform is known, so a driver
+   * whose support varies by platform had to overstate it: the Appium driver declared `back: true` and threw
+   * `"back" has no iOS equivalent` on iOS, which left the UI offering the button and the fixture's support
+   * check passing. A session knows its platform, so it may narrow the answer here. Consumers MUST prefer this
+   * over the driver's when it is present. Optional: a driver whose support does not vary omits it.
+   */
+  readonly capabilities?: DriverCapabilities;
   captureScreen(): Promise<ScreenFrame>;
   inspectHierarchy(): Promise<MobileNode[]>;
   perform(action: MobileAction): Promise<ActionResult>;
