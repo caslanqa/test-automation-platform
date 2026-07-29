@@ -1,5 +1,51 @@
 # @pwtap/create
 
+## 0.6.0
+
+### Minor Changes
+
+- 79a5cae: Put each plugin's usage notes into the project's README, and derive the plugin list instead of typing it out.
+
+  Every plugin manifest already declared a `readmeSection` — `ai-judge` wrote a substantial one — and nothing read
+  the field. A scaffolded project had no README at all, so the first place a teammate looks to learn what the suite
+  can do was empty while four plugins carried the answer. Found by auditing which parts of `plugin-db` were
+  declared but never watched run: `ensure` fired correctly, the docs copied, and this did nothing.
+
+  `create-pwtap add` now creates a README when a project has none and gives each plugin its own marked section, so
+  adding twice refreshes rather than duplicates and `remove` takes out exactly its own. Markers are HTML comments,
+  since a `//` line is body text in Markdown.
+
+  The "Add a plugin later" hint after scaffolding is derived from the registry too. It read
+  `<maestro|appium|ai-judge>` — hardcoded, so it silently omitted `db` the day it shipped, and would have omitted
+  the next plugin as well.
+
+  `remove` also names the files the plugin installed, not only the ones importing it. Removing `db` broke six
+  files and the report named one: the rest imported `knex`/`mongodb`, which left with the plugin, or used a
+  fixture that vanished from the barrel while importing only `@fixtures`. The manifest already declares which
+  directories a plugin created, so there was nothing to guess.
+
+### Patch Changes
+
+- 6c75130: New plugin: `@pwtap/plugin-db` — database testing across PostgreSQL, MySQL, MariaDB and SQLite (through Knex)
+  plus MongoDB, covering query assertions, seed/reset and migration verification.
+
+  Two independent fixture families rather than one universal API, because relational and document models differ
+  at the root and a layer over both would leak where you need precision: `db` → `sql` hands over a raw Knex
+  instance, `mongoDb` → `mongo` a raw MongoDB `Db`. Four distinct names, so the barrel merges them alongside
+  every other plugin.
+
+  Connections are worker-scoped, so one pool serves a worker and Playwright closes it — no teardown project,
+  unlike the mobile plugins. A database that is unreachable or unconfigured **skips** the test with the reason
+  rather than failing it. SQL migrations are Knex's own system wired up; MongoDB has no equivalent, so the plugin
+  ships a small runner (files with `up(db)`/`down(db)`, applied in filename order, tracked in
+  `_pwtap_migrations`) instead of taking a third dependency.
+
+  `@pwtap/create` gains the registry entry, which is the part that actually makes `create-pwtap add db` offer it.
+
+  Every SQL dialect is verified against a real engine, not just Postgres: `resetSqlDatabase` emits different SQL
+  for each and `discoverTables` reads a different catalog, so "Knex uses one code path" was true of the query
+  builder and false of the part this plugin wrote. All four pass, and each skips when its engine is absent.
+
 ## 0.5.0
 
 ### Minor Changes

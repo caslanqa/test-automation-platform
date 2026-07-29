@@ -1,5 +1,74 @@
 # @pwtap/plugin-appium
 
+## 1.1.1
+
+### Patch Changes
+
+- 766def0: Audit the two driver adapters: four defects where the driver-neutral contract was neutral in name only.
+
+  **The same test behaved differently on each driver.** Every action option is optional, and each adapter
+  invented its own default for the ones a test omitted — `isVisible` waited 2 s on Maestro and 5 s on Appium,
+  `longPress` held 1 s on Appium and whatever Maestro chose. A test written once and run on both, which is the
+  entire promise, could pass on one and fail on the other purely on timing. The defaults now live in the
+  contract (`ACTION_DEFAULTS` in `@pwtap/mobile-core`) and both adapters resolve from there. `isVisible` stays
+  short and `waitFor` gets Playwright's own 5 s, because they are asked different questions.
+
+  **`SwipeOptions.distance` did nothing at all.** Declared in the IR, exposed by the fixture, and read by
+  neither adapter — so `swipe('up', { distance: 0.3 })` silently swiped the full screen on both drivers. It is
+  now honoured: as `percent` on Appium/Android and as start/end percentage points on Maestro, whose
+  direction-only swipe has no distance of its own. XCUITest swipes by direction only, so Appium/iOS refuses a
+  requested distance instead of swiping a different amount and calling it done.
+
+  **Maestro discarded `longPress`'s `durationMs`.** Its own `longPressOn` takes the same properties as `tapOn`
+  and no duration (confirmed against Maestro's cheat sheet), so a recorded 3-second press was never one. It now
+  refuses, the way `scroll` already refused `within`.
+
+  **The capability matrix lied on iOS.** `MobileInspectorDriver.capabilities` is one static answer given before
+  a platform is known, so the Appium driver declared `back: true` and then threw `"back" has no iOS equivalent`
+  — which left the inspector offering a Back button that always failed and the fixture's support check passing.
+  A session may now narrow the declaration for the platform it connected to (`DriverSession.capabilities`,
+  optional, so no contract bump), and the fixture and the UI both prefer it.
+
+  Verified on real devices: Appium/iOS reports `back: false` where the driver still declares `true`, a distance
+  swipe is honoured on Maestro and Appium/Android and refused on Appium/iOS, and a `longPress` with a duration
+  is refused on Maestro rather than quietly held for the wrong time.
+
+- 452ced5: Say which device was missing and which ones exist, and let a pinned device be redirected without editing the
+  test.
+
+  A recording pins a device by name so it is reproducible (ADR-003), which means the first thing that happens on
+  a colleague's laptop or in CI is that the name does not resolve. Both adapters answered
+  `no android device available to connect the inspector to`: it named neither the device asked for nor the ones
+  present, said nothing about how to proceed, and mentioned the inspector during a plain test run. It now reads
+
+  > [maestro] android device "pixel42" was not found on this machine. Available: pixel9 (booted), galaxy21,
+  > pixel10, pixel11, pixel8, pixel9b. Point `mobileTarget.device` at one of those, override it with
+  > MOBILE_INSPECTOR_DEVICE=<name>, or create it in Android Studio > Device Manager, or `avdmanager create avd`.
+
+  with the list deduplicated by name and capped, since a machine can carry forty simulators and six of them can
+  be called "iPhone 17 Pro". Naming no device at all is reported as the different problem it is, rather than
+  quoting `"undefined"` back.
+
+  `MOBILE_INSPECTOR_DEVICE` is new, and closes an asymmetry: `driver`, `platform` and `headless` could all be
+  redirected from the environment and `device` — the one value that is machine-specific by nature — could not.
+  It is the one option where the environment WINS over the test, deliberately: which driver and platform are
+  under test is the test's own meaning and an environment must not quietly change it, whereas a device name is a
+  fact about one machine, and the alternative to an override is editing every recorded test per machine.
+
+  **Also:** the inspector's app-id field now says what it is for. It reads as "the only app I may touch", which
+  left a journey that starts on the home screen looking impossible; it is neither a restriction nor optional. It
+  is what the recorded test launches, and Maestro requires one for every command — the app's own scope does not
+  limit which elements a command may act on, verified on a device by recording home → app drawer → tap the icon →
+  tap inside the app, all in one session.
+
+- Updated dependencies [766def0]
+- Updated dependencies [f132819]
+- Updated dependencies [15d477d]
+- Updated dependencies [452ced5]
+- Updated dependencies [bb09e7d]
+  - @pwtap/mobile-core@1.2.0
+  - @pwtap/platform@1.1.0
+
 ## 1.1.0
 
 ### Minor Changes

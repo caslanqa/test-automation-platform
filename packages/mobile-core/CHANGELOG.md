@@ -1,5 +1,151 @@
 # @pwtap/mobile-core
 
+## 1.2.0
+
+### Minor Changes
+
+- 766def0: Audit the two driver adapters: four defects where the driver-neutral contract was neutral in name only.
+
+  **The same test behaved differently on each driver.** Every action option is optional, and each adapter
+  invented its own default for the ones a test omitted — `isVisible` waited 2 s on Maestro and 5 s on Appium,
+  `longPress` held 1 s on Appium and whatever Maestro chose. A test written once and run on both, which is the
+  entire promise, could pass on one and fail on the other purely on timing. The defaults now live in the
+  contract (`ACTION_DEFAULTS` in `@pwtap/mobile-core`) and both adapters resolve from there. `isVisible` stays
+  short and `waitFor` gets Playwright's own 5 s, because they are asked different questions.
+
+  **`SwipeOptions.distance` did nothing at all.** Declared in the IR, exposed by the fixture, and read by
+  neither adapter — so `swipe('up', { distance: 0.3 })` silently swiped the full screen on both drivers. It is
+  now honoured: as `percent` on Appium/Android and as start/end percentage points on Maestro, whose
+  direction-only swipe has no distance of its own. XCUITest swipes by direction only, so Appium/iOS refuses a
+  requested distance instead of swiping a different amount and calling it done.
+
+  **Maestro discarded `longPress`'s `durationMs`.** Its own `longPressOn` takes the same properties as `tapOn`
+  and no duration (confirmed against Maestro's cheat sheet), so a recorded 3-second press was never one. It now
+  refuses, the way `scroll` already refused `within`.
+
+  **The capability matrix lied on iOS.** `MobileInspectorDriver.capabilities` is one static answer given before
+  a platform is known, so the Appium driver declared `back: true` and then threw `"back" has no iOS equivalent`
+  — which left the inspector offering a Back button that always failed and the fixture's support check passing.
+  A session may now narrow the declaration for the platform it connected to (`DriverSession.capabilities`,
+  optional, so no contract bump), and the fixture and the UI both prefer it.
+
+  Verified on real devices: Appium/iOS reports `back: false` where the driver still declares `true`, a distance
+  swipe is honoured on Maestro and Appium/Android and refused on Appium/iOS, and a `longPress` with a duration
+  is refused on Maestro rather than quietly held for the wrong time.
+
+- f132819: Never hand back a Maestro session that cannot perform anything.
+
+  Maestro scopes every command — including `tap` and `back` — to one app, and refuses until one is set. The
+  adapter only set it when the caller named an app, so connecting with an empty app id produced a session that
+  showed the screen, listed the hierarchy, and failed every single interaction with
+  `[maestro] call maestro.launchApp(appId) before other commands`: an internal API instruction, surfaced on
+  every click, with nothing recorded.
+
+  The driver now resolves an app itself. The foreground app is what the user is looking at, so it is the one
+  they mean: `@pwtap/platform` gains `foregroundAndroidApp()`, and the adapter adopts it. When no app can be
+  determined it refuses the connection outright, naming what to supply, instead of connecting into a state where
+  nothing works.
+
+  Whatever it resolves is reported back on the session (`DriverSession.appId`, optional so adapters that always
+  require an explicit id are unaffected) and is what codegen pins — a recording that pinned nothing would launch
+  nothing on replay and re-record against whatever happened to be open.
+
+- 15d477d: Settle the deferred decisions, and stop settling the screen after actions that cannot change it.
+
+  **`native` locators: hand-authored only, never ranked.** A native selector is specific to one driver on one
+  platform by definition, so emitting one from the recorder would produce a recording that replays only under the
+  driver that made it — the opposite of the premise the whole IR rests on. `MobileLocator.native` stays as the
+  escape hatch for what the IR cannot express, and both adapters pass it through untouched.
+  `LocatorCandidate.strategy` no longer lists `native`: the engine never produced it, and a type promising a case
+  that cannot happen forces dead branches on every consumer.
+
+  **Frame re-encoding: not needed.** Measured at ~150 KB per capture against a 2 MB budget.
+
+  **A read-only action no longer settles the screen.** Every successful action paid a settle — a sleep, a
+  hierarchy re-read and up to two captures — including `assertVisible`, `assertNotVisible`, `isVisible` and
+  `screenshot`, none of which can change what is on screen. Since commands run one at a time, that was also delay
+  in front of whatever the user did next.
+
+  **A run announced as finished had not necessarily cleaned up.** The temp file's removal was fired off unawaited
+  and `runStatus: finished` was emitted immediately, so a client told the run had ended could still see the file —
+  the opposite of what §11 promises. It is awaited now. This had been showing up as a test that failed only under
+  load, three times across one session; it was a real ordering bug wearing a flaky test's clothes.
+
+  Two options were measured and declined rather than left vague, both recorded in §14 with their numbers:
+  capturing frames through `adb` instead of the driver (181 → 130 ms, but a second Android-only capture path in
+  the layer that has already produced two field defects, for ~8 % of click→screen), and driving Maestro's own
+  daemon the way Studio does (~420 ms per tap, but an interface Maestro neither documents nor exposes a port
+  flag for, so we would own every break — while Appium is one option away at 194 ms).
+
+- 452ced5: Say which device was missing and which ones exist, and let a pinned device be redirected without editing the
+  test.
+
+  A recording pins a device by name so it is reproducible (ADR-003), which means the first thing that happens on
+  a colleague's laptop or in CI is that the name does not resolve. Both adapters answered
+  `no android device available to connect the inspector to`: it named neither the device asked for nor the ones
+  present, said nothing about how to proceed, and mentioned the inspector during a plain test run. It now reads
+
+  > [maestro] android device "pixel42" was not found on this machine. Available: pixel9 (booted), galaxy21,
+  > pixel10, pixel11, pixel8, pixel9b. Point `mobileTarget.device` at one of those, override it with
+  > MOBILE_INSPECTOR_DEVICE=<name>, or create it in Android Studio > Device Manager, or `avdmanager create avd`.
+
+  with the list deduplicated by name and capped, since a machine can carry forty simulators and six of them can
+  be called "iPhone 17 Pro". Naming no device at all is reported as the different problem it is, rather than
+  quoting `"undefined"` back.
+
+  `MOBILE_INSPECTOR_DEVICE` is new, and closes an asymmetry: `driver`, `platform` and `headless` could all be
+  redirected from the environment and `device` — the one value that is machine-specific by nature — could not.
+  It is the one option where the environment WINS over the test, deliberately: which driver and platform are
+  under test is the test's own meaning and an environment must not quietly change it, whereas a device name is a
+  fact about one machine, and the alternative to an override is editing every recorded test per machine.
+
+  **Also:** the inspector's app-id field now says what it is for. It reads as "the only app I may touch", which
+  left a journey that starts on the home screen looking impossible; it is neither a restriction nor optional. It
+  is what the recorded test launches, and Maestro requires one for every command — the app's own scope does not
+  limit which elements a command may act on, verified on a device by recording home → app drawer → tap the icon →
+  tap inside the app, all in one session.
+
+### Patch Changes
+
+- bb09e7d: Fix the two defects reported from a real installation: taps that never became code, and a generated test
+  that could not find its device.
+
+  **A reloaded page recorded nothing.** The command envelope's sequence guard was scoped to the launch while a
+  browser counts from 1 on every page load, so after a reload every command came back `409 command 1 arrived
+after 5`. Frames need no command, so the device screen kept updating and the UI looked perfectly alive while
+  each click was silently refused — on both drivers and both platforms, because the defect is in the transport.
+  `seq` is now reset on attach: ordering only ever needed to hold within one client's own stream of POSTs.
+
+  **The generated test pinned the adb serial.** The device picker sends the serial, which is the only handle
+  that addresses a live emulator, and two things then failed to turn it back into the durable AVD name:
+  `findBootedAndroid` wrote the caller's own input (or the serial) into `DiscoveredDevice.name`, a field
+  documented as the AVD name, and `resolveStableDeviceName` never consulted the device list it is handed —
+  where the serial→AVD mapping was sitting all along. A recording therefore produced
+  `device: "emulator-5554"`, which fails with `no android device available to connect the inspector to` once
+  that emulator instance is gone. Both are fixed, and the same recording now pins `pixel9` and replays.
+
+  **A second view is no longer refused.** `mobile-inspect` opens a window _and_ prints the URL, so opening
+  that URL — which the README invites — got a 409, and an `EventSource` that receives a non-200 never retries:
+  the page rendered and stayed deaf. The newest view now takes over, the displaced one is told and closes its
+  own stream (a server-side close would read as a retryable drop and the two would displace each other
+  forever), and either can take it back.
+
+  **A refused action is now stated on screen.** An action the driver rejects is deliberately not recorded, but
+  the reason lived only in a log tab the user had to know to open, so a click that produced nothing looked like
+  a bug in the recorder. It now says which action was refused and why.
+
+  **And a test layer that would have caught all of it.** The suite had no UI row: the service tests speak the
+  protocol correctly by construction and the engine tests never load a page, so the seam where both defects
+  lived was untested. Four tests now drive the real page in a real browser against the fake driver — reload
+  keeps recording, the picker's serial still becomes an AVD name in codegen, a refused action is stated on
+  screen, and a second view takes over instead of going deaf. Each was checked against the unfixed code first;
+  the AVD-name one fails with exactly the `device: "emulator-5554"` seen in the field. CI installs Chromium so
+  they cannot silently skip.
+
+- Updated dependencies [f132819]
+- Updated dependencies [bb09e7d]
+  - @pwtap/platform@1.1.0
+
 ## 1.1.0
 
 ### Minor Changes
