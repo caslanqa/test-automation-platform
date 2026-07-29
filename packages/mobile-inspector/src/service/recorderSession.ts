@@ -11,18 +11,14 @@
 import { type MobilePlatform } from '@pwtap/platform';
 
 import type {
-  ActionResult,
   ConnectOptions,
-  DriverSession,
   DriverTestBinding,
   InspectorDevice,
   InstalledApp,
   MobileAction,
   MobileInspectorDriver,
-  MobileNode,
 } from '@pwtap/mobile-core';
 import {
-  assignNodeIdentity,
   discoverDriverMap,
   hitTest,
   listBootedAndroidDevices,
@@ -35,17 +31,15 @@ import {
   resolveStableDeviceName,
 } from '@pwtap/mobile-core';
 import { generateTestSource, statementForAction, type GeneratedTarget } from './codegen.js';
+import { DeviceSession } from './deviceSession.js';
 import { Draft } from './draft.js';
 import type { ClientMessage, RecorderEvent } from './protocol.js';
 import { Recorder } from './recorder.js';
 import { TestRunner } from './testRunner.js';
 import { TestWriter } from './testWriter.js';
 
-const FRAME_POLL_MS = 1500;
-
 export class RecorderSession {
   private drivers: Map<string, MobileInspectorDriver> | undefined;
-  private session: DriverSession | undefined;
   /**
    * What the last successful `connect` targeted — the driver, platform, stable device name and app that
    * codegen must bake into `test.use({ mobileTarget: … })`. Deliberately NOT cleared on disconnect: the
@@ -57,12 +51,8 @@ export class RecorderSession {
   private lastDevices: InspectorDevice[] = [];
   /** The `connected` event for the live session, replayed to a re-attaching client (see `snapshot`). */
   private connectedSummary: Extract<RecorderEvent, { type: 'connected' }> | undefined;
-  private lastHierarchy: MobileNode[] = [];
-  private lastFrameId = -1;
-  private pollTimer: NodeJS.Timeout | undefined;
-  private frameRefresh: Promise<void> | undefined;
-  private hierarchyRefresh: Promise<boolean> | undefined;
   private closed = false;
+  private readonly device: DeviceSession;
   private readonly recorder = new Recorder();
   private readonly draft = new Draft();
   private readonly runner: TestRunner;
@@ -84,6 +74,7 @@ export class RecorderSession {
     this.projectRoot = projectRoot;
     this.send = send;
     this.drivers = drivers;
+    this.device = new DeviceSession(send);
     this.runner = new TestRunner(projectRoot, send);
     this.writer = new TestWriter(projectRoot, send);
   }
@@ -143,8 +134,8 @@ export class RecorderSession {
     if (this.connectedSummary) {
       events.push(this.connectedSummary);
     }
-    if (this.lastHierarchy.length > 0) {
-      events.push({ type: 'hierarchy', nodes: this.lastHierarchy });
+    if (this.device.hierarchy.length > 0) {
+      events.push({ type: 'hierarchy', nodes: this.device.hierarchy });
     }
     const { source, revision } = this.draft.state;
     events.push({ type: 'timeline', actions: this.recorder.actions });
@@ -249,132 +240,52 @@ export class RecorderSession {
       this.send({ type: 'error', message: `driver "${driverId}" is not installed` });
       return;
     }
-    await this.disconnect(); // one live session per socket — replace, don't stack
+    await this.disconnect(); // one live device per launch — replace, don't stack
     this.send({ type: 'connecting' });
     try {
-      this.session = await driver.connect(options);
-      // Which handle is durable depends on the platform and on whether the name is ambiguous, so it is
-      // resolved by the shared helper rather than guessed here (ADR-003). `knownDevices` is consulted for
-      // the uniqueness check; a warning is surfaced rather than swallowed when the pin isn't durable.
-      const stable = resolveStableDeviceName(this.session.device, await this.knownDevices(driver));
+      const device = await this.device.connect(driver, options);
+      // Which handle is durable depends on the platform and on whether the name is ambiguous, so the shared
+      // resolver decides (ADR-003) and a warning is surfaced when the pin is not durable.
+      const stable = resolveStableDeviceName(device, await this.knownDevices(driver));
       if (stable.warning) {
         this.log('warn', stable.warning);
       }
       this.lastTarget = {
         driver: driverId,
-        // The platform and app are known right here; not emitting them is what made generated tests
-        // throw "platform not set" and replay against no app at all (ADR-003).
-        platform: this.session.device.platform,
+        platform: device.platform,
         device: stable.device,
         appId: options.appId,
         appSource: options.appSource,
       };
       this.recorder.clear();
       this.draft.reset();
-      this.lastHierarchy = [];
-      this.lastFrameId = -1;
-      // Retained so a re-attaching client can be told what it is looking at without reconnecting the
-      // device (see `snapshot`, ADR-011).
+      // Retained so a re-attaching client learns what it is looking at without reconnecting (ADR-011).
       this.connectedSummary = {
         type: 'connected',
         driver: driverId,
-        device: this.session.device,
+        device,
         capabilities: driver.capabilities,
       };
       this.send(this.connectedSummary);
       this.sendTimelineAndCode();
-      await this.refreshHierarchy();
-      await this.refreshFrame();
-      this.pollTimer = setInterval(() => {
-        void this.refreshFrame();
-        void this.refreshHierarchy();
-      }, FRAME_POLL_MS);
     } catch (error) {
       this.send({ type: 'error', message: `connect failed: ${errorMessage(error)}` });
     }
   }
 
   async disconnect(): Promise<void> {
-    if (this.pollTimer) {
-      clearInterval(this.pollTimer);
-      this.pollTimer = undefined;
-    }
-    const session = this.session;
-    this.session = undefined;
     this.connectedSummary = undefined;
-    this.frameRefresh = undefined;
-    this.hierarchyRefresh = undefined;
-    if (session) {
-      try {
-        await session.close();
-      } catch (error) {
-        this.log('warn', `error while closing driver session: ${errorMessage(error)}`);
-      }
+    if (await this.device.disconnect()) {
       this.send({ type: 'disconnected' });
     }
   }
 
   async refreshFrame(): Promise<void> {
-    if (!this.session) {
-      return;
-    }
-    if (this.frameRefresh) {
-      return this.frameRefresh;
-    }
-    const session = this.session;
-    const refresh = (async (): Promise<void> => {
-      try {
-        const frame = await session.captureScreen();
-        if (this.session === session) {
-          this.lastFrameId = frame.frameId;
-          this.send({ type: 'frame', frame });
-        }
-      } catch (error) {
-        this.log('warn', `frame capture failed: ${errorMessage(error)}`);
-      }
-    })();
-    this.frameRefresh = refresh;
-    try {
-      await refresh;
-    } finally {
-      if (this.frameRefresh === refresh) {
-        this.frameRefresh = undefined;
-      }
-    }
+    await this.device.refreshFrame();
   }
 
   async refreshHierarchy(): Promise<boolean> {
-    if (!this.session) {
-      return false;
-    }
-    if (this.hierarchyRefresh) {
-      return this.hierarchyRefresh;
-    }
-    const session = this.session;
-    const refresh = (async (): Promise<boolean> => {
-      try {
-        // Identity is assigned once, here, so every consumer (hit-test, UI selection, highlight) sees the
-        // same keys for one read of the tree (ADR-007).
-        const hierarchy = assignNodeIdentity(await session.inspectHierarchy());
-        if (this.session === session) {
-          this.lastHierarchy = hierarchy;
-          this.send({ type: 'hierarchy', nodes: hierarchy });
-          return true;
-        }
-        return false;
-      } catch (error) {
-        this.log('warn', `hierarchy read failed: ${errorMessage(error)}`);
-        return false;
-      }
-    })();
-    this.hierarchyRefresh = refresh;
-    try {
-      return await refresh;
-    } finally {
-      if (this.hierarchyRefresh === refresh) {
-        this.hierarchyRefresh = undefined;
-      }
-    }
+    return this.device.refreshHierarchy();
   }
 
   /**
@@ -387,18 +298,18 @@ export class RecorderSession {
    * mismatch is worth a note, not a refusal.
    */
   async tapAt(x: number, y: number, frameId: number): Promise<void> {
-    if (!this.session) {
+    if (!this.device.connected) {
       return;
     }
     const fresh = await this.refreshHierarchy();
-    if (frameId !== this.lastFrameId) {
+    if (frameId !== this.device.frameId) {
       this.log(
         'info',
-        `tapped against frame ${frameId} while the device is on ${this.lastFrameId}; ` +
+        `tapped against frame ${frameId} while the device is on ${this.device.frameId}; ` +
           'hit-tested the current screen',
       );
     }
-    const node = fresh ? hitTest(this.lastHierarchy, x, y) : undefined;
+    const node = fresh ? hitTest(this.device.hierarchy, x, y) : undefined;
     const outOfApp = node && outOfAppWarning(node, this.lastTarget?.appId);
     if (outOfApp) {
       this.log('warn', `recorded an element that ${outOfApp}`);
@@ -414,22 +325,22 @@ export class RecorderSession {
    * user still has a (fragile) way to act on empty screen space.
    */
   async inspectAt(x: number, y: number, frameId: number): Promise<void> {
-    if (!this.session) {
+    if (!this.device.connected) {
       return;
     }
     // Advisory, exactly as in `tapAt`: right-clicking must always answer with the current screen's
     // candidates rather than an empty menu because a frame id moved on (ADR-006).
     const fresh = await this.refreshHierarchy();
-    if (frameId !== this.lastFrameId) {
+    if (frameId !== this.device.frameId) {
       this.log(
         'info',
-        `inspected frame ${frameId} while the device is on ${this.lastFrameId}; ` +
+        `inspected frame ${frameId} while the device is on ${this.device.frameId}; ` +
           'hit-tested the current screen',
       );
     }
-    const node = fresh ? (hitTest(this.lastHierarchy, x, y) ?? null) : null;
+    const node = fresh ? (hitTest(this.device.hierarchy, x, y) ?? null) : null;
     const candidates = node
-      ? locatorCandidates(node, this.lastHierarchy, { appId: this.lastTarget?.appId })
+      ? locatorCandidates(node, this.device.hierarchy, { appId: this.lastTarget?.appId })
       : [
           {
             strategy: 'point' as const,
@@ -445,22 +356,17 @@ export class RecorderSession {
   }
 
   async perform(action: MobileAction): Promise<void> {
-    if (!this.session) {
+    if (!this.device.connected) {
       this.send({ type: 'error', message: 'not connected to a device' });
       return;
     }
-    let result: ActionResult;
-    try {
-      result = await this.session.perform(action);
-    } catch (error) {
-      result = { ok: false, error: errorMessage(error), durationMs: 0 };
-    }
+    const result = await this.device.perform(action);
     this.send({ type: 'actionResult', action, result });
     if (result.ok) {
       this.recorder.append(action);
       this.sendTimelineAndCode(action);
-      await this.refreshHierarchy();
-      await this.refreshFrame();
+      // Look again once the screen has had a moment, and once more if it is still moving (ADR-006).
+      await this.device.settle();
     } else {
       this.log('error', `${action.kind} failed: ${result.error ?? 'unknown driver error'}`);
     }
@@ -468,7 +374,7 @@ export class RecorderSession {
 
   /** Record a declarative step that cannot be true in the current UI state without executing it. */
   record(action: MobileAction): void {
-    if (!this.session) {
+    if (!this.device.connected) {
       this.send({ type: 'error', message: 'not connected to a device' });
       return;
     }
@@ -606,7 +512,7 @@ export class RecorderSession {
       this.send({ type: 'error', message: 'a run is already in progress' });
       return;
     }
-    if (this.session) {
+    if (this.device.connected) {
       this.log('info', 'disconnecting the live inspector session before running the test');
       await this.disconnect();
     }
