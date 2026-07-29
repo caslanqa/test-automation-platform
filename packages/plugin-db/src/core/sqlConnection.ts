@@ -46,7 +46,7 @@ const isSqlite = (client: SqlClient): boolean =>
  * missing`, which we then relayed inside `could not create a \u2007 connection` — a sentence with a hole where the
  * client should be, and no mention of the thing to set.
  */
-function unconfigured(value: string | Knex.StaticConnectionConfig | undefined): boolean {
+export function isUnconfigured(value: string | Knex.StaticConnectionConfig | undefined): boolean {
   if (typeof value === 'string') {
     return value.trim() === '';
   }
@@ -60,7 +60,7 @@ export async function createSqlConnection(
 ): Promise<SqlConnectionResult> {
   // Checked here rather than left to Knex, because these are the states a scaffolded project starts in and the
   // driver's own words for them name nothing a reader can act on.
-  if (unconfigured(options.client)) {
+  if (isUnconfigured(options.client)) {
     return {
       reason: `no SQL client configured \u2014 set \`db.client\` to one of ${ACCEPTED} (DB_CLIENT in a scaffolded project)`,
     };
@@ -69,7 +69,7 @@ export async function createSqlConnection(
     // `postgres` and `postgresql` are the likely spellings, and both went to Knex as undefined.
     return { reason: `unknown SQL client \`${options.client}\` \u2014 use one of ${ACCEPTED}` };
   }
-  if (unconfigured(options.connection)) {
+  if (isUnconfigured(options.connection)) {
     return {
       reason: `no ${options.client} connection configured \u2014 set \`db.connection\` (DB_CONNECTION_STRING in a scaffolded project)`,
     };

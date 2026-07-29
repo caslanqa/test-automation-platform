@@ -134,3 +134,9 @@ tests, and proving migrations apply and roll back.
   MongoDB come up and the whole loop runs against them: connect, query, migrate, roll back, reset. MySQL,
   MariaDB and SQLite are deliberately out of scope for live runs — Knex uses one code path for every SQL
   dialect, so Postgres proves it; MongoDB is a separate code path and is verified separately.
+- **The env keys had to be read by the fixtures, not by the example.** Decision 1 showed configuration as
+  `test.use({ db: … })` and left the env plumbing to the template, which read `process.env` in its module scope.
+  Module scope is evaluated at a moment that depends on how the run was launched, so a user got
+  `no pg connection configured` with the value filled in — and `openSqlConnection`'s own skip message had been
+  promising "or the DB_* env keys" all along with nothing behind it. The fixtures resolve the keys now; the option
+  is an override that wins over them.

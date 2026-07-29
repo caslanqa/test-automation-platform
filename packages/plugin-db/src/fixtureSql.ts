@@ -18,13 +18,18 @@ import type { Knex } from 'knex';
 import {
   closeSqlConnection,
   createSqlConnection,
+  isUnconfigured,
+  type SqlClient,
   type SqlConnectionOptions,
 } from './core/sqlConnection.js';
 import { skipWithReason } from './skip.js';
 
 export interface SqlOptions {
-  /** Which engine and where. Omit and every test using `sql` skips. */
-  db?: SqlConnectionOptions;
+  /**
+   * Which engine and where. Omit either field and the matching DB_* env key fills it, so a project configured
+   * through `env/environments.json` needs no `test.use({ db })` at all.
+   */
+  db?: Partial<SqlConnectionOptions>;
 }
 
 /** The worker's connection, or the reason there is none. Internal — tests use `sql`. */
@@ -42,18 +47,38 @@ export interface SqlFixtures {
   sql: Knex;
 }
 
+/**
+ * Fill whatever the option left empty from the DB_* env keys.
+ *
+ * Read here, inside the worker fixture, rather than in the test file's module scope. The scaffolded example used
+ * to do the reading itself — `process.env.DB_CLIENT || 'pg'` in `test.use({ … })` — and module scope is evaluated
+ * at a moment that depends on the harness, so a run whose config-side `loadEnv()` had not reached the test module
+ * saw both keys empty and skipped with `no pg connection configured` while the values sat in
+ * `env/environments.json`. A fixture body runs after the config, always.
+ *
+ * The option WINS over the env, the opposite of the mobile plugins' device: there the env exists to retarget a
+ * whole run without editing tests, whereas here the env IS the project's configuration and a test that names a
+ * connection outright means it.
+ */
+function resolveSqlOptions(db: Partial<SqlConnectionOptions> = {}): SqlConnectionOptions {
+  // Cast on the env value only: an unknown spelling is rejected by name downstream, which is where the reader
+  // gets told what the accepted ones are.
+  const envClient = (process.env.DB_CLIENT ?? '').trim() as SqlClient;
+  const envConnection = (process.env.DB_CONNECTION_STRING ?? '').trim();
+  return {
+    ...db,
+    client: db.client !== undefined && !isUnconfigured(db.client) ? db.client : envClient,
+    connection:
+      db.connection !== undefined && !isUnconfigured(db.connection) ? db.connection : envConnection,
+  };
+}
+
 /** Worker-scoped: one connection for every test this worker runs. */
 export async function openSqlConnection(
   { db }: SqlOptions,
   use: (value: SqlConnection) => Promise<void>,
 ): Promise<void> {
-  if (!db) {
-    await use({
-      reason: 'no database configured — set `db` in test.use({ … }) or the DB_* env keys',
-    });
-    return;
-  }
-  const opened = await createSqlConnection(db);
+  const opened = await createSqlConnection(resolveSqlOptions(db));
   if ('reason' in opened) {
     await use({ reason: opened.reason });
     return;

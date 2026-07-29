@@ -20,19 +20,15 @@
 // the package: the barrel merges test objects and matchers, not arbitrary exports.
 import { expect, test } from '@fixtures';
 
-// `||`, not `??`: these keys are written into env/environments.json as EMPTY STRINGS for you to fill in, and
-// `??` falls back only on null/undefined — so `?? 'pg'` never fired in the one case it existed for, and an empty
-// client reached Knex as a missing one. An unfilled key means "not configured", which skips with a reason.
-test.use({
-  db: {
-    client: (process.env.DB_CLIENT || 'pg') as 'pg',
-    connection: process.env.DB_CONNECTION_STRING || '',
-  },
-  mongoDb: {
-    connection: process.env.MONGO_CONNECTION_STRING || '',
-    database: process.env.MONGO_DATABASE || '',
-  },
-});
+// No `test.use({ db })` here on purpose: the fixtures read DB_CLIENT, DB_CONNECTION_STRING,
+// MONGO_CONNECTION_STRING and MONGO_DATABASE themselves, so `env/environments.json` is the only place to
+// configure this. Reading `process.env` up here instead used to be the example's job, and it was the wrong place
+// for it — module scope is evaluated at a moment that depends on how the run was launched, so the values could
+// still be empty when this line ran. Override for one file when a test needs a specific database:
+//
+//   test.use({ db: { client: 'better-sqlite3', connection: { filename: ':memory:' } } });
+//
+// An option set here wins; anything it leaves out falls back to the env.
 
 test.beforeAll(async ({ sql }) => {
   // A real suite migrates instead (`npm run db:migrate:latest`, which applies db/migrations). Created here so

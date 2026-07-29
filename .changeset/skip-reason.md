@@ -30,3 +30,10 @@ fill in:
   MongoParseError and was constructed outside the try, bypassing the return-a-reason contract entirely. Measured
   as `1 failed` on a scaffolded project. Both keys are now checked, and the constructor moved inside the try so a
   malformed URI is a reason like any other.
+
+Finally, the fixtures read the DB_* and MONGO_* env keys themselves, which is what `openSqlConnection` had been
+claiming in its own skip message all along without any code behind it. The scaffolded example did the reading, in
+its module scope, and a user hit the consequence: `no pg connection configured` while the connection string sat
+filled in inside `env/environments.json`. A module's top level is evaluated at a moment that depends on how the
+run was launched, so the read could happen before the config's `loadEnv()` reached it; a fixture body cannot. The
+example sets no option now, and an option that is set wins, with anything it omits falling back to the env.

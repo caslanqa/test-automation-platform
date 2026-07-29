@@ -56,6 +56,24 @@ The reason is printed next to the skip, so a run does not just show an unexplain
 That is the first one a fresh project sees, since the drivers are optional peers. Once the driver is in, an
 absent server reads `could not reach the pg database: connect ECONNREFUSED 127.0.0.1:5432`.
 
+**Configure it in `env/environments.json`, not in the test file.** The fixtures read `DB_CLIENT`,
+`DB_CONNECTION_STRING`, `MONGO_CONNECTION_STRING` and `MONGO_DATABASE` themselves, so a project needs no
+`test.use({ db })` at all. Set the option only to override one file:
+
+```ts
+test.use({ db: { client: 'better-sqlite3', connection: { filename: ':memory:' } } });
+```
+
+An option wins over the env, and anything it leaves out falls back to the env. That is the opposite of the mobile
+plugins, where `MOBILE_INSPECTOR_DEVICE` beats the test's own device: there the env exists to retarget a whole run
+without editing tests, whereas here the env _is_ the project's configuration and a test that names a connection
+outright means it.
+
+Do not read `process.env` in the test file to fill the option in — the example used to, and that was the bug
+behind a reported `no pg connection configured` while the value sat filled in inside `env/environments.json`. A
+module's top level is evaluated at a moment that depends on how the run was launched, so the read can happen
+before the config's `loadEnv()` has reached it. A fixture body cannot run before the config.
+
 **Unconfigured counts as unreachable.** `create` writes the four env keys in empty for you to fill, so an empty
 client, connection or database is a skip with the key named — never a failure, and never the driver's own words
 for it. If you copy the option out of the example, keep the `||`: `??` falls back only on null and undefined, so

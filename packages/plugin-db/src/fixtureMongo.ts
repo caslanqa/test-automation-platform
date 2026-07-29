@@ -12,8 +12,11 @@ import {
 import { skipWithReason } from './skip.js';
 
 export interface MongoOptions {
-  /** Where and which database. Omit and every test using `mongo` skips. */
-  mongoDb?: MongoConnectionOptions;
+  /**
+   * Where and which database. Omit either field and the matching MONGO_* env key fills it, so a project
+   * configured through `env/environments.json` needs no `test.use({ mongoDb })` at all.
+   */
+  mongoDb?: Partial<MongoConnectionOptions>;
 }
 
 /** The worker's connection, or the reason there is none. Internal — tests use `mongo`. */
@@ -32,17 +35,23 @@ export interface MongoFixtures {
   mongo: Db;
 }
 
+/**
+ * Fill whatever the option left empty from the MONGO_* env keys — see the note in `fixtureSql.ts` for why the
+ * reading happens in a fixture body rather than in the test file's module scope. The option wins over the env.
+ */
+function resolveMongoOptions(mongoDb?: Partial<MongoConnectionOptions>): MongoConnectionOptions {
+  return {
+    ...mongoDb,
+    connection: mongoDb?.connection?.trim() || (process.env.MONGO_CONNECTION_STRING?.trim() ?? ''),
+    database: mongoDb?.database?.trim() || (process.env.MONGO_DATABASE?.trim() ?? ''),
+  };
+}
+
 export async function openMongoConnection(
   { mongoDb }: MongoOptions,
   use: (value: MongoConnection) => Promise<void>,
 ): Promise<void> {
-  if (!mongoDb) {
-    await use({
-      reason: 'no MongoDB configured — set `mongoDb` in test.use({ … }) or the MONGO_* env keys',
-    });
-    return;
-  }
-  const opened = await createMongoConnection(mongoDb);
+  const opened = await createMongoConnection(resolveMongoOptions(mongoDb));
   if ('reason' in opened) {
     await use({ reason: opened.reason });
     return;
