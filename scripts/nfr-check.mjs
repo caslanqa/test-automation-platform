@@ -83,6 +83,46 @@ for (const pkg of ALL_PACKAGES) {
   );
 }
 
+console.log('\nNFR — no stale build output\n');
+
+/** Every emitted `.js` under a package's `dist`, relative and without the extension. */
+function emittedModules(dir) {
+  const found = [];
+  const walk = (current, prefix) => {
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      const next = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        walk(next, `${prefix}${entry.name}/`);
+      } else if (entry.name.endsWith('.js')) {
+        found.push(`${prefix}${entry.name.slice(0, -'.js'.length)}`);
+      }
+    }
+  };
+  if (fs.existsSync(dir)) {
+    walk(dir, '');
+  }
+  return found;
+}
+
+// `tsc -b` emits but never prunes, so a moved or deleted source leaves its output in `dist` and it ships.
+// That is how `dist/electron/*` stayed in the inspector's tarball after ADR-001 removed Electron: dead
+// modules importing a package that is not even a dependency. `npm run clean` (wired into every prepack)
+// prevents it; this fails the build if it comes back.
+for (const pkg of ALL_PACKAGES) {
+  const packageDir = path.join(ROOT, 'packages', pkg);
+  const orphans = emittedModules(path.join(packageDir, 'dist')).filter(
+    module =>
+      !fs.existsSync(path.join(packageDir, 'src', `${module}.ts`)) &&
+      !fs.existsSync(path.join(packageDir, 'src', `${module}.tsx`)),
+  );
+  if (orphans.length > 0) {
+    failures.push(
+      `@pwtap/${pkg} has ${orphans.length} stale dist file(s) with no source: ${orphans.join(', ')} — run npm run clean`,
+    );
+  }
+  note(`@pwtap/${pkg}: ${orphans.length === 0 ? 'no orphans ✓' : `${orphans.length} orphans ✗`}`);
+}
+
 console.log('\nNFR — published size (§11)\n');
 
 // `--ignore-scripts` so `prepack` does not rebuild (and print into) the JSON we are parsing; the built

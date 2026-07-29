@@ -24,6 +24,7 @@
     "pack:platform": "npm pack packages/core-template",
     "prepare": "husky",
     "release": "changeset publish",
+    "clean": "node scripts/clean.mjs",
     "nfr": "node scripts/nfr-check.mjs",
     "test:device": "node --import ./scripts/test-hooks.mjs --test-timeout=600000 --test \"packages/mobile-inspector/test/inspector.device.test.ts\"",
     "smoke": "node scripts/smoke-scaffold.mjs",

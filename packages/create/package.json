@@ -1,7 +1,7 @@
 {
   "name": "@pwtap/create",
   "version": "0.4.2",
-  "description": "Scaffold a Playwright Test Automation Platform project — UI + API core with opt-in plugins (npm init @pwtap)",
+  "description": "Scaffold a Playwright Test Automation Platform project \u2014 UI + API core with opt-in plugins (npm init @pwtap)",
   "type": "module",
   "license": "MIT",
   "repository": {
@@ -26,6 +26,6 @@
   "scripts": {
     "build": "tsc -b",
     "bundle:template": "rm -rf template core-manifest.json && cp -R ../core-template/files template && cp ../core-template/manifest.json core-manifest.json",
-    "prepack": "npm run build && npm run bundle:template"
+    "prepack": "node ../../scripts/clean.mjs . && npm run build && npm run bundle:template"
   }
 }

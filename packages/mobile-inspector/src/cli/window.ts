@@ -29,6 +29,12 @@ export interface InspectorWindow {
 export async function openInspectorWindow(
   url: string,
   onUnavailable: (reason: string) => void,
+  /**
+   * Called with a closable handle the moment the browser exists, before it is navigated. Launching takes
+   * a second or two, and a Ctrl-C inside that window used to leave an orphaned Chromium behind because the
+   * caller had nothing to close yet.
+   */
+  onLaunched?: (window: InspectorWindow) => void,
 ): Promise<InspectorWindow | undefined> {
   let context: BrowserContext;
   try {
@@ -54,14 +60,27 @@ export async function openInspectorWindow(
     return undefined;
   }
 
-  const page = context.pages()[0] ?? (await context.newPage());
-  await page.goto(url);
-
   const closed = new Promise<void>(resolve => context.once('close', () => resolve()));
-  return {
+  const window: InspectorWindow = {
     closed,
     close: async () => {
       await context.close().catch(() => undefined);
     },
   };
+  onLaunched?.(window);
+
+  try {
+    const page = context.pages()[0] ?? (await context.newPage());
+    await page.goto(url);
+  } catch (error) {
+    // The browser went away mid-setup: a signal during launch, or the user closing the window at once.
+    // Reported, not thrown — an unhandled rejection here used to crash the CLI before it could release the
+    // device lock or delete its temp files, which is exactly the teardown ADR-011 requires.
+    await window.close();
+    onUnavailable(
+      `${error instanceof Error ? error.message : String(error)}\nOpen the URL below yourself.`,
+    );
+    return undefined;
+  }
+  return window;
 }
