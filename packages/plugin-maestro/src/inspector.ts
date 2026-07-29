@@ -23,7 +23,13 @@ import type {
   MobileNode,
   ScreenFrame,
 } from '@pwtap/mobile-core';
-import { discoverMobileDevices, readImageSize, resolveTargetPoint } from '@pwtap/mobile-core';
+import {
+  ACTION_DEFAULTS,
+  deviceUnavailableMessage,
+  discoverMobileDevices,
+  readImageSize,
+  resolveTargetPoint,
+} from '@pwtap/mobile-core';
 import type { DiscoveredDevice } from '@pwtap/platform';
 import {
   acquireDevice,
@@ -124,6 +130,26 @@ function toMaestroKey(key: string): string {
     volumeDown: 'VolumeDown',
   };
   return known[key] ?? key;
+}
+
+/**
+ * Start and end points for a swipe of `distance` (a fraction of the swept axis), centred on the screen and
+ * expressed in Maestro's `x%,y%` form. The finger travels in the direction asked for.
+ */
+function swipeSpan(direction: MobileDirection, distance: number): { start: string; end: string } {
+  const half = Math.min(Math.max(distance, 0), 1) / 2;
+  const from = 50 - half * 100;
+  const to = 50 + half * 100;
+  switch (direction) {
+    case 'up':
+      return { start: `50%,${to}%`, end: `50%,${from}%` };
+    case 'down':
+      return { start: `50%,${from}%`, end: `50%,${to}%` };
+    case 'left':
+      return { start: `${to}%,50%`, end: `${from}%,50%` };
+    default:
+      return { start: `${from}%,50%`, end: `${to}%,50%` };
+  }
 }
 
 /** Parse Maestro's `[x1,y1][x2,y2]` bounds string into the shared box shape. */
@@ -293,12 +319,30 @@ class MaestroDriverSession implements DriverSession {
         await this.maestro.tapOn(await this.resolveSelector(action.locator));
         return this.maestro.inputText(action.value);
       case 'longPress':
+        if (action.options?.durationMs !== undefined) {
+          // Maestro's `longPressOn` takes the same properties as `tapOn` and no duration (its own cheat
+          // sheet). Silently holding for Maestro's own time would generate a test that reads as a 3-second
+          // press and is not one — the same reason `scroll` refuses `within` below.
+          throw new Error(
+            '[maestro-inspector] Maestro cannot vary how long a long-press holds — record it without ' +
+              '`durationMs`, or use the Appium driver',
+          );
+        }
         return this.maestro.longPressOn(await this.resolveSelector(action.locator));
-      case 'swipe':
+      case 'swipe': {
+        // A direction-only swipe has no distance in Maestro, so a requested one is expressed as start/end
+        // percentage points — the same form `drag` uses. Without this, `distance` was accepted by the IR and
+        // read by nobody.
+        const distance = action.options?.distance;
+        if (distance !== undefined) {
+          const { start, end } = swipeSpan(action.direction, distance);
+          return this.maestro.swipe({ start, end, duration: action.options?.durationMs });
+        }
         return this.maestro.swipe({
           direction: DIRECTION_MAP[action.direction],
           duration: action.options?.durationMs,
         });
+      }
       case 'scroll':
         if (action.options?.within) {
           // Maestro's swipe has no element target. Refusing beats silently scrolling the whole screen and
@@ -331,7 +375,7 @@ class MaestroDriverSession implements DriverSession {
         return this.maestro.back();
       case 'waitFor': {
         const visible = await this.maestro.isVisible(toMaestroSelector(action.locator), {
-          timeout: action.options?.timeoutMs,
+          timeout: action.options?.timeoutMs ?? ACTION_DEFAULTS.waitForMs,
         });
         if (!visible) {
           throw new Error('[maestro-inspector] waitFor timed out — element never became visible');
@@ -344,7 +388,7 @@ class MaestroDriverSession implements DriverSession {
         // `resolveSelector`) on purpose: "is this coordinate visible?" has no meaningful answer, so a
         // point-only locator must fail loudly instead of silently reporting `true`.
         return this.maestro.isVisible(toMaestroSelector(action.locator), {
-          timeout: action.options?.timeoutMs,
+          timeout: action.options?.timeoutMs ?? ACTION_DEFAULTS.isVisibleMs,
         });
       case 'assertVisible':
         await this.maestro.assertVisible(toMaestroSelector(action.locator));
@@ -397,7 +441,7 @@ class MaestroInspectorDriver implements MobileInspectorDriver {
       });
       if (!acquired) {
         throw new Error(
-          `[maestro-inspector] no ${options.platform} device available to connect the inspector to`,
+          await deviceUnavailableMessage('maestro', options.platform, options.device),
         );
       }
       const outputDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pwtap-mobile-inspector-'));

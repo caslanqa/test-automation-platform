@@ -26,7 +26,12 @@ import type {
   MobileTarget,
   ScreenFrame,
 } from '@pwtap/mobile-core';
-import { discoverMobileDevices, readImageSize } from '@pwtap/mobile-core';
+import {
+  ACTION_DEFAULTS,
+  deviceUnavailableMessage,
+  discoverMobileDevices,
+  readImageSize,
+} from '@pwtap/mobile-core';
 import type { DiscoveredDevice, MobilePlatform } from '@pwtap/platform';
 import {
   acquireDevice,
@@ -40,6 +45,18 @@ import type { AppiumServerHandle } from './core/appiumServer.js';
 import { assertPlatformSupported, ensureAppiumServer } from './core/appiumServer.js';
 import { buildCapabilities } from './core/caps.js';
 import { closeSession, createSession } from './core/session.js';
+
+/**
+ * What this driver can do on the platform it is connected to. `back` is the case that forced this: Android has
+ * a hardware back key and iOS has none, and one static declaration made before the platform is known can only
+ * overstate it — which left the UI offering a button that always failed.
+ */
+function capabilitiesFor(platform: MobilePlatform): DriverCapabilities {
+  return {
+    ...CAPABILITIES,
+    gestures: { ...CAPABILITIES.gestures, back: platform === 'android' },
+  };
+}
 
 const CAPABILITIES: DriverCapabilities = {
   hierarchy: true,
@@ -268,6 +285,11 @@ class AppiumDriverSession implements DriverSession {
     return this.device.platform;
   }
 
+  /** Narrows the driver's static declaration to this platform — see `capabilitiesFor`. */
+  get capabilities(): DriverCapabilities {
+    return capabilitiesFor(this.platform);
+  }
+
   async captureScreen(): Promise<ScreenFrame> {
     const filePath = path.join(this.outputDir, `inspector-frame-${this.frameCounter}.png`);
     await this.session.saveScreenshot(filePath);
@@ -349,7 +371,7 @@ class AppiumDriverSession implements DriverSession {
           action.value,
         );
       case 'longPress': {
-        const durationMs = action.options?.durationMs ?? 1000;
+        const durationMs = action.options?.durationMs ?? ACTION_DEFAULTS.longPressMs;
         if (action.locator.point) {
           const { x, y } = action.locator.point;
           return this.platform === 'android'
@@ -369,7 +391,11 @@ class AppiumDriverSession implements DriverSession {
             });
       }
       case 'swipe':
-        return this.swipeWholeScreen(action.direction, action.options?.durationMs);
+        return this.swipeWholeScreen(
+          action.direction,
+          action.options?.durationMs,
+          action.options?.distance,
+        );
       case 'scroll':
         return this.scrollScreen(action.direction, action.options?.within);
       case 'drag': {
@@ -403,7 +429,7 @@ class AppiumDriverSession implements DriverSession {
         return (
           await this.session.$(toAppiumSelector(action.locator, this.platform))
         ).waitForDisplayed({
-          timeout: action.options?.timeoutMs ?? 5000,
+          timeout: action.options?.timeoutMs ?? ACTION_DEFAULTS.waitForMs,
         });
       case 'isVisible':
         return this.isVisible(action.locator, action.options?.timeoutMs);
@@ -453,7 +479,10 @@ class AppiumDriverSession implements DriverSession {
    * treated as "no answer yet" rather than as an answer. A coordinate-only locator has no meaningful
    * answer at all, so `toAppiumSelector` is left to reject it loudly.
    */
-  private async isVisible(locator: MobileLocator, timeoutMs = 5000): Promise<boolean> {
+  private async isVisible(
+    locator: MobileLocator,
+    timeoutMs = ACTION_DEFAULTS.isVisibleMs,
+  ): Promise<boolean> {
     const selector = toAppiumSelector(locator, this.platform);
     const deadline = Date.now() + Math.max(0, timeoutMs);
     for (;;) {
@@ -475,6 +504,7 @@ class AppiumDriverSession implements DriverSession {
   private async swipeWholeScreen(
     direction: MobileDirection,
     durationMs?: number,
+    distance?: number,
   ): Promise<unknown> {
     const { width, height } = await this.session.getWindowSize();
     if (this.platform === 'android') {
@@ -484,16 +514,27 @@ class AppiumDriverSession implements DriverSession {
         width,
         height,
         direction: direction as 'up' | 'down' | 'left' | 'right',
-        percent: 0.75,
+        percent: distance ?? ACTION_DEFAULTS.swipeDistance,
         speed: durationMs ? Math.round((height * 1000) / durationMs) : undefined,
       });
+    }
+    // XCUITest's `mobile: swipe` is direction-only, so a requested distance cannot be honoured. Refusing
+    // beats swiping a different amount than the test asks for and calling it done.
+    if (distance !== undefined) {
+      throw new Error(
+        '[appium-inspector] XCUITest swipes by direction only and cannot honour `distance` — record the ' +
+          'swipe without it, or use a drag between two points',
+      );
     }
     return this.session.execute('mobile: swipe', { direction });
   }
 
   private async scrollScreen(direction: MobileDirection, within?: MobileLocator): Promise<unknown> {
     if (this.platform === 'android') {
-      const params: Record<string, unknown> = { direction, percent: 0.75 };
+      const params: Record<string, unknown> = {
+        direction,
+        percent: ACTION_DEFAULTS.swipeDistance,
+      };
       if (within) {
         params.elementId = await elementIdOf(
           await this.session.$(toAppiumSelector(within, 'android')),
@@ -607,9 +648,7 @@ class AppiumInspectorDriver implements MobileInspectorDriver {
         onBooted: recordBootedDevice,
       });
       if (!acquired) {
-        throw new Error(
-          `[appium-inspector] no ${options.platform} device available to connect the inspector to`,
-        );
+        throw new Error(await deviceUnavailableMessage('appium', options.platform, options.device));
       }
       server = await ensureAppiumServer(0);
       // A local artifact installs (and launches) via the `app` capability — Appium handles install

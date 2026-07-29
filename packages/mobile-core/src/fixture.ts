@@ -120,6 +120,22 @@ function resolvePlatform(option?: MobilePlatform): MobilePlatform {
   return platform;
 }
 
+/**
+ * The device to target, where the environment WINS over the test.
+ *
+ * The other options read the reverse way, and deliberately: which driver and platform are under test is the
+ * test's own meaning, and an environment must not quietly change it. A device name is not meaning — it is a
+ * fact about one machine. A recording pins one so it is reproducible (ADR-003), so the same file runs on a
+ * colleague's laptop and in CI where that exact AVD does not exist, and the only alternative to an override
+ * is editing every recorded test per machine.
+ */
+function resolveDevice(option?: string): string | undefined {
+  return process.env.MOBILE_INSPECTOR_DEVICE?.trim() || option;
+}
+
+/** Exported for the test that pins this precedence, which is the opposite of every other option's. */
+export const resolveDeviceForTest = resolveDevice;
+
 function resolveHeadless(option?: boolean): boolean {
   if (typeof option === 'boolean') {
     return option;
@@ -231,7 +247,7 @@ export const test = base.extend<MobileInspectorOptions & MobileInspectorFixtures
 
       const session = await driver.connect({
         platform: resolvePlatform(mobileTarget?.platform),
-        device: mobileTarget?.device,
+        device: resolveDevice(mobileTarget?.device),
         headless: resolveHeadless(mobileTarget?.headless),
         // Forwarded, not dropped: a recorded flow is meaningless if the replay never launches the app it
         // was recorded against — and Maestro's session refuses every command until an app id is set.
@@ -239,7 +255,11 @@ export const test = base.extend<MobileInspectorOptions & MobileInspectorFixtures
         appSource: mobileTarget?.appSource,
       });
       try {
-        await use(toMobileApp(session, driver.id, driver.capabilities.gestures));
+        // The session's own answer when it has one: a driver's static declaration is made before the
+        // platform is known, so it can only overstate what varies by platform (see DriverSession.capabilities).
+        await use(
+          toMobileApp(session, driver.id, (session.capabilities ?? driver.capabilities).gestures),
+        );
       } finally {
         await session.close();
       }

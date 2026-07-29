@@ -458,6 +458,24 @@ separate Appium/Maestro review.
 
 ## 5. Action IR and driver capability matrix (normative)
 
+**Two rules the adapters broke, found by auditing them (§12 Phase 4):**
+
+- **Defaults belong to the contract, not the adapter.** Every option here is optional, and each adapter used
+  to invent its own value for the ones a test omitted: `isVisible` waited 2 s on Maestro and 5 s on Appium,
+  `longPress` held 1 s on Appium and whatever Maestro chose. So the same test body — the entire promise of a
+  driver-neutral IR — behaved differently by driver, silently and only under timing. An adapter MUST resolve an
+  omitted option from `ACTION_DEFAULTS` in `@pwtap/mobile-core`.
+- **An option a driver cannot express MUST be refused, never ignored.** `SwipeOptions.distance` was read by
+  neither adapter, so `swipe('up', { distance: 0.3 })` was a public API that did nothing; Maestro discarded
+  `longPress`'s `durationMs`, which its own `longPressOn` cannot vary. Silently substituting the driver's
+  behaviour generates a test that reads as one thing and is another. Refusal is the pattern `scroll` already
+  used for `within`.
+- **Capabilities vary by platform, so the SESSION is the authority.** `MobileInspectorDriver.capabilities` is
+  one static answer given before a platform is known, so a driver whose support differs had to overstate it:
+  Appium declared `back: true` and threw `"back" has no iOS equivalent` on iOS, leaving the UI offering a
+  button that always failed and the fixture's support check passing. A session MAY narrow it
+  (`DriverSession.capabilities`), and every consumer MUST prefer the session's answer when present.
+
 Required fields per action — the validation table the trust boundary implements:
 
 | Action                                                                          | Required                           | Optional                                                                    |
@@ -726,13 +744,20 @@ dedup, event-sourced timeline with cursor undo/redo, durable draft ownership, AS
 capability gates and the §9 accessibility items landed here too, since both are UI work on the same
 components: the save dialog browses real directories, refused actions are disabled with the driver's own
 reason, and the ADR-010 path confinement is shared by save and browse.
-→ **Exit:** a scripted 200-interaction run against the fake driver (below) drops zero actions; the §11
-latency and idle-CPU budgets are met on a real device; `run` never clears the draft.
+→ **Exit: MET.** A scripted 200-interaction run against the fake driver drops zero actions — asserted for
+identical taps, for a mixed script of every recordable kind, and for undo/redo across a hundred steps, with
+the frame schedule running underneath so most interactions arrive against a frame that has already moved. The
+§11 latency and idle-CPU budgets are measured above (idle CPU 0.17 % Maestro / 1.56 % Appium against a 5 %
+budget). `run` never clears the draft.
 
 **Phase 3 — Quality, security, docs.** ADR-009, the remaining ADR-010 items, the test strategy below, and
 READMEs for `@pwtap/mobile-core` and `@pwtap/mobile-inspector` (neither had one).
-→ **Exit:** CI green on `tsc -b`, `eslint`, and the test suite; the NFR checks run in CI; a device-gated
-job exists and can be dispatched.
+→ **Exit: MET, with the device matrix verified by hand.** CI is green on `tsc -b`, `eslint`, the suite and the
+NFR checks. All four combinations — Android × {Maestro, Appium} and iOS × {Maestro, Appium} — were driven
+end-to-end on real devices: connect, record, reload mid-session, record again, save, run. `device.yml` runs the
+same matrix nightly; two defects in it were found and fixed rather than left to a green-looking run — the
+Android job was on a Linux runner `@pwtap/platform` cannot support at all, and the iOS job never booted a
+simulator, so the test skipped and the gate was vacuous.
 
 ### Test strategy
 
@@ -806,10 +831,37 @@ key, so installing either plugin — or both — merges it into `@fixtures` a si
 
 ## 14. Open questions
 
-1. **The `native` locator strategy:** emit real platform-native candidates, or remove it from the
-   candidate union and keep it hand-authored only (§7). Decide in Phase 2.
+1. ~~**The `native` locator strategy.**~~ **Decided: hand-authored only, never ranked.** A native selector is
+   specific to one driver on one platform by definition, so emitting one from the recorder would produce a
+   recording that replays only under the driver that made it — the opposite of the premise in §3. The ranking's
+   job is to order _portable_ identifiers by how well they survive a redesign, and a native selector has no
+   comparable durability to score. `MobileLocator.native` stays as the escape hatch for what the IR cannot
+   express, and both adapters pass it through untouched; `LocatorCandidate.strategy` no longer lists it, since
+   the engine never produced it and a type promising a case that cannot happen forces dead branches on every
+   consumer.
 2. **Frame re-encoding:** the server serves the raw capture bytes by default; whether it should
    down-scale or re-encode oversized Retina PNGs, and at what threshold, is a Phase 2 measurement against
-   the §11 frame-payload and latency rows.
-3. **VS Code webview host:** the protocol is designed for it (§10); whether it becomes a product
+   the §11 frame-payload and latency rows. **Decided: no re-encoding.** Measured at ~150 KB per capture
+   against a 2 MB budget, so it buys nothing; revisit only if a higher-density device changes the number.
+3. **A recorded journey cannot start cold.** `connect` launches the app, and the fixture does the same on
+   replay, so a recording that begins on the home screen replays as launch → Home → tap the icon → the app
+   opens again. Correct and deterministic, but redundant, and it is not the flow a user recording a cold
+   start means. A `mobileTarget.launch: false` would express it. Deferred because it changes the fixture's
+   contract and three things need deciding first: Maestro still needs an app id for every flow header, so
+   only the launch is suppressed and `appId` stays required; what a replay should do when the app is not
+   running (fail loudly, or launch anyway and lose the point); and whether Appium — which already attaches
+   to whatever is foregrounded when given no app id — is made to agree, since two drivers disagreeing about
+   what `launch: false` means is worse than not having it.
+4. **VS Code webview host:** the protocol is designed for it (§10); whether it becomes a product
    commitment is undecided.
+5. **Capturing frames through `adb` instead of the driver.** Measured on Android: the Maestro adapter's
+   `captureScreen()` costs 181 ms against 130 ms for `adb exec-out screencap` — the whole difference is the MCP
+   round trip, since writing and re-reading the PNG is free. That is ~50 ms twice per interaction.
+   **Recommendation: do not**, for now: it adds a second capture path, Android-only, to the layer that has
+   already produced two field defects, for about 8 % of click→screen. Revisit if the frame budget tightens.
+6. **Maestro Studio's local interface.** Maestro through MCP costs ~420 ms per tap over the device floor,
+   because MCP's only interaction tool is `run` — a flow executor, so every tap is a one-line test run — and
+   its parameters expose no wait to trim (§11). Studio avoids this by driving Maestro's own daemon instead,
+   which is why it feels instant. Reaching that would mean integrating with a local interface Maestro does not
+   document and does not expose a port flag for, so we would own every break. **Recommendation: do not**,
+   while Appium is one option away at 194 ms click→screen; revisit if Maestro publishes the surface.

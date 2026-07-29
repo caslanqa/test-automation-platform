@@ -15,11 +15,13 @@ export {
   adapterContractProblem,
   type AdapterContract,
 } from './contract.js';
+export { ACTION_DEFAULTS } from './defaults.js';
 export {
   discoverMobileDevices,
   resolveStableDeviceName,
   type StableDeviceName,
 } from './deviceDiscovery.js';
+export { deviceUnavailableMessage } from './deviceMessage.js';
 export { expect, test, type MobileInspectorOptions, type MobileTargetOptions } from './fixture.js';
 export { readImageSize } from './imageSize.js';
 export {

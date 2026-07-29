@@ -74,8 +74,13 @@ export class TestRunner {
     });
     child.on('close', code => {
       this.child = undefined;
-      void fs.rm(file, { force: true });
-      this.emit({ type: 'runStatus', state: 'finished', exitCode: code });
+      // Removed BEFORE `finished` is announced, and awaited. Firing the removal off and announcing
+      // immediately meant a client told the run had finished could still see the temp file — which is the
+      // opposite of what §11 promises, and showed up as a test that failed only under load.
+      void (async () => {
+        await fs.rm(file, { force: true }).catch(() => undefined);
+        this.emit({ type: 'runStatus', state: 'finished', exitCode: code });
+      })();
     });
   }
 

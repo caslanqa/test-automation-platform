@@ -191,6 +191,30 @@ test('an app artifact that does not exist is refused instead of reaching the dri
   await h.session.close();
 });
 
+test('the UI is told what the SESSION can do, not what the driver declared', async () => {
+  // Found by auditing the adapters: the Appium driver declares `back: true` because its declaration is made
+  // before a platform is known, then throws `"back" has no iOS equivalent` on iOS — so the UI offered a button
+  // that always failed and the fixture's support check passed. A session knows its platform and may narrow it.
+  const h = harness({
+    sessionCapabilities: {
+      hierarchy: true,
+      liveFrames: true,
+      gestures: { tap: true, back: false },
+    },
+  });
+
+  await connect(h);
+
+  assert.equal(h.driver.capabilities.gestures.back, true, 'the driver still declares it broadly');
+  assert.equal(
+    h.last('connected')?.capabilities.gestures.back,
+    false,
+    'but the UI must gate on what this session can actually do',
+  );
+
+  await h.session.close();
+});
+
 test('tapping the login button records its accessibility id, not a coordinate', async () => {
   const h = harness();
   await connect(h);
@@ -504,9 +528,14 @@ test('running spawns Playwright with the driver’s project and gate variable', 
   assert.match(output, /run-\d+\.fake\.ts/, 'the temp file must match the project’s testMatch');
   assert.equal(h.last('runStatus')?.exitCode, 0);
 
-  // The temp file is removed, and it never lingers where a plain `npm test` would collect it.
+  // Removed by the time `finished` is announced, not merely eventually. The removal used to be fired off
+  // unawaited, so this assertion failed only under load — a real ordering bug wearing a flaky test's clothes.
   const runDir = path.join(h.dir, 'tests', '__inspector__');
-  assert.deepEqual(fs.existsSync(runDir) ? fs.readdirSync(runDir) : [], []);
+  assert.deepEqual(
+    fs.existsSync(runDir) ? fs.readdirSync(runDir) : [],
+    [],
+    'a client told the run finished must be able to trust the cleanup happened',
+  );
 
   await h.session.close();
 });

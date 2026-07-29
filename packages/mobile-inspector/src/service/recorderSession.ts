@@ -34,7 +34,7 @@ import {
 import { resolveAppSource } from './appSource.js';
 import { insertStatementIntoTest, loadProjectTypeScript } from './ast.js';
 import { generateTestSource, statementForAction, type GeneratedTarget } from './codegen.js';
-import { DeviceSession } from './deviceSession.js';
+import { DeviceSession, type CaptureTiming } from './deviceSession.js';
 import { Draft } from './draft.js';
 import type { ClientMessage, RecorderEvent } from './protocol.js';
 import { Recorder } from './recorder.js';
@@ -75,15 +75,20 @@ export class RecorderSession {
    * (see `registry.ts`), which makes the recording engine untestable without installing a real plugin and
    * attaching a real device. Injecting a fake driver map exercises this whole class in CI instead.
    */
+  /**
+   * @param timing Capture/settle delays, overridable so a load test can drive hundreds of interactions
+   *   without spending the real settle delay on each one. Production always uses the defaults.
+   */
   constructor(
     projectRoot: string,
     send: (event: RecorderEvent) => void,
     drivers?: Map<string, MobileInspectorDriver>,
+    timing?: Partial<CaptureTiming>,
   ) {
     this.projectRoot = projectRoot;
     this.send = send;
     this.drivers = drivers;
-    this.device = new DeviceSession(send);
+    this.device = new DeviceSession(send, timing);
     this.runner = new TestRunner(projectRoot, send);
     this.writer = new TestWriter(projectRoot, send);
   }
@@ -293,7 +298,8 @@ export class RecorderSession {
         type: 'connected',
         driver: driverId,
         device,
-        capabilities: driver.capabilities,
+        // What the session can do on THIS platform, so the UI does not offer a button that always fails.
+        capabilities: this.device.sessionCapabilities ?? driver.capabilities,
       };
       this.send(this.connectedSummary);
       this.sendTimelineAndCode();
@@ -411,8 +417,13 @@ export class RecorderSession {
     const result = await this.device.perform(executed);
     this.send({ type: 'actionResult', action: recorded, result });
     if (result.ok) {
-      // Look again once the screen has had a moment, and once more if it is still moving (ADR-006).
-      await this.device.settle();
+      // Only an action that can move the screen is worth settling for. An assertion or a visibility query
+      // changes nothing, so the sleep, the hierarchy re-read and up to two captures were pure delay — and
+      // they held up whatever the user did next, since commands run one at a time.
+      if (CHANGES_THE_SCREEN.has(executed.kind)) {
+        // Look again once the screen has had a moment, and once more if it is still moving (ADR-006).
+        await this.device.settle();
+      }
       await this.verifyStrategies();
       return;
     }
@@ -667,6 +678,23 @@ export class RecorderSession {
     await this.disconnect();
   }
 }
+
+/**
+ * Action kinds that can change what is on screen, and therefore deserve a settle afterwards. Everything
+ * else — the assertions, `isVisible`, `screenshot` — only reads, so re-reading the screen for it is delay
+ * with nothing to show for it.
+ */
+const CHANGES_THE_SCREEN = new Set<MobileAction['kind']>([
+  'tap',
+  'fill',
+  'longPress',
+  'swipe',
+  'scroll',
+  'drag',
+  'pinch',
+  'pressKey',
+  'back',
+]);
 
 /** The first node anywhere in the tree matching `predicate`, depth-first. */
 function firstNodeWith(

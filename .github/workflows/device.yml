@@ -14,8 +14,12 @@ permissions:
 
 jobs:
   android:
-    # The emulator needs KVM, which only the Linux runners have.
-    runs-on: ubuntu-latest
+    # macOS, not Linux. The first nightly run failed with `no Platform implementation for 'linux'`:
+    # `@pwtap/platform` branches on the host and only implements macOS, so the Linux runner could never have
+    # worked. Running Android here too keeps CI on the one host the product actually supports — iOS requires
+    # macOS anyway — at the cost of macOS runner minutes. The alternative is writing a `linux.ts`, which would
+    # widen the supported-host claim and is a product decision, not a CI fix.
+    runs-on: macos-latest
     strategy:
       fail-fast: false
       matrix:
@@ -39,20 +43,15 @@ jobs:
           curl -fsSL https://get.maestro.mobile.dev | bash
           echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
 
-      - name: Enable KVM
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
-            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-
       # Boots an AVD and runs the command inside it. The device test targets the Settings app, so nothing
       # has to be built or installed first.
       - name: Record against an Android emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 34
-          arch: x86_64
+          # The macOS runners are Apple silicon, so the emulator image has to match the host architecture;
+          # an x86_64 image has no hardware acceleration here and boots far too slowly to be useful.
+          arch: arm64-v8a
           target: google_apis
           profile: pixel_6
           avd-name: Pixel_6_API_34
@@ -84,10 +83,15 @@ jobs:
           curl -fsSL https://get.maestro.mobile.dev | bash
           echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
 
-      # `xcrun simctl` is preinstalled on the macOS runners; the adapters boot the simulator themselves,
-      # so this only reports what is available when a run needs diagnosing.
-      - name: List available simulators
-        run: xcrun simctl list devices available
+      # The device test asserts against a device someone else booted — it never boots or shuts one down, so
+      # that a device you were using is left as you left it. Without this step it simply SKIPPED, which reads
+      # as a green run and made the whole iOS gate vacuous.
+      - name: Boot a simulator
+        run: |
+          xcrun simctl list devices available
+          xcrun simctl boot 'iPhone 16 Pro'
+          xcrun simctl bootstatus 'iPhone 16 Pro' -b
+          xcrun simctl list devices booted
 
       - name: Record against an iOS simulator
         env:
