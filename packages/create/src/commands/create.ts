@@ -279,7 +279,9 @@ function printNextSteps(targetDir: string, name: string, testsDir: string): void
       '  cp testData/users.example.json testData/users.json       # add login sessions (optional)',
       `  npm test                                                 # chromium + api (in ${testsDir}/)`,
       '',
-      'Add a plugin later:  npx create-pwtap add <maestro|appium|ai-judge>',
+      // Derived, not typed out: the hardcoded list silently omitted `db` the day it shipped, and would omit
+      // the next plugin too.
+      `Add a plugin later:  npx create-pwtap add <${KNOWN_PLUGINS.map(plugin => plugin.id).join('|')}>`,
     ].join('\n'),
   );
 }

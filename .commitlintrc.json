@@ -26,6 +26,7 @@
       "always",
       [
         "core",
+        "create",
         "utils",
         "config",
         "fixtures",

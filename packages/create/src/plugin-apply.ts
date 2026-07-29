@@ -8,6 +8,7 @@ import { applyFixture, removeFixture } from './injectors/fixturesBarrel.js';
 import { orphanedExamples } from './injectors/orphanedExamples.js';
 import { mergePluginPackageJson, removePluginPackageJson } from './injectors/packageJson.js';
 import { applyProject, removeProject } from './injectors/pwConfig.js';
+import { applyReadme, removeReadme } from './injectors/readme.js';
 import { fixtureList, loadPluginManifest, type PluginManifest } from './manifest.js';
 import { findKnownPlugin, KNOWN_PLUGINS } from './registry.js';
 import { ensureDir, exists, readJson, writeJson, writeText } from './util/fs.js';
@@ -27,6 +28,7 @@ function injectManifest(clientDir: string, m: PluginManifest, testsDir: string):
   mergePluginEnv(clientDir, m);
   copyExamples(clientDir, m, testsDir);
   copyDocs(clientDir, m);
+  applyReadme(clientDir, m);
 
   if (applyFixture(clientDir, m) === false) {
     const sources = fixtureList(m)
@@ -353,6 +355,7 @@ export async function removePlugins({
     }
     removeFixture(clientDir, m, keepShared);
     removeProject(clientDir, m);
+    removeReadme(clientDir, m);
     removePluginEnv(clientDir, m);
     removePluginPackageJson(clientDir, m);
     log.done(`Removed ${pkg}`);
