@@ -11,6 +11,7 @@
 import type { MobilePlatform } from '@pwtap/platform';
 
 import { discoverMobileDevices } from './deviceDiscovery.js';
+import type { InspectorDevice } from './types.js';
 
 /** How to create what is missing, per platform. */
 const CREATE_HINT: Record<MobilePlatform, string> = {
@@ -18,18 +19,27 @@ const CREATE_HINT: Record<MobilePlatform, string> = {
   ios: 'create it in Xcode > Windows > Devices and Simulators, or `xcrun simctl create`',
 };
 
+/** What this machine has. Injectable so the message can be tested without the machine deciding the outcome. */
+export type DeviceLister = () => Promise<readonly InspectorDevice[]>;
+
 /**
  * Explain why no device could be acquired, naming the request and listing what this machine actually has.
  * Falls back to a plain sentence if discovery itself fails — a diagnostic must not throw over a diagnostic.
+ *
+ * `lister` exists for the tests: the message takes a different branch depending on whether any device was found,
+ * and its own test used to break `PATH` to force the empty one. That stubbed nothing — the emulator is invoked by
+ * absolute path inside the Android SDK — so the branch under test was whichever one the developer's machine
+ * happened to produce, and CI failed on every run for a week while it passed locally.
  */
 export async function deviceUnavailableMessage(
   driverId: string,
   platform: MobilePlatform,
   requested: string | undefined,
+  lister: DeviceLister = discoverMobileDevices,
 ): Promise<string> {
   let available: string[] = [];
   try {
-    available = listFor(platform, await discoverMobileDevices());
+    available = listFor(platform, await lister());
   } catch {
     // Discovery is best-effort here; the caller still needs an answer.
   }
@@ -56,10 +66,7 @@ const MAX_LISTED = 8;
  * Device names worth showing: booted first (they need no boot), deduplicated by name, and capped. Simulator
  * names repeat across runtimes — six "iPhone 17 Pro" entries are one choice to a reader, not six.
  */
-function listFor(
-  platform: MobilePlatform,
-  devices: readonly { name: string; platform: MobilePlatform; booted: boolean }[],
-): string[] {
+function listFor(platform: MobilePlatform, devices: readonly InspectorDevice[]): string[] {
   const seen = new Set<string>();
   const named: string[] = [];
   for (const device of [...devices].sort((a, b) => Number(b.booted) - Number(a.booted))) {
