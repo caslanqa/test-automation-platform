@@ -280,9 +280,11 @@ The renderer is untrusted even though it is local; the service writes files and 
 - **Validation:** every inbound message MUST be validated _field by field_, not just by `kind` — see the
   per-action required-field table in §5. An action with a missing or wrongly typed field is rejected with
   an `error`, never forwarded to an adapter.
-- **File writes:** confinement MUST be checked against the _realpath_ of the resolved target (symlinks
-  escape a `startsWith` check), the extension MUST be one of the driver extensions in §8, and `new` mode
-  MUST NOT overwrite.
+- **File writes:** confinement MUST be checked against the _realpath_ of the resolved target and by path
+  segment, because two escapes get through the obvious check: a symlink out of the tree, and a sibling
+  directory whose name starts with the project's (`/proj-evil` passes `startsWith('/proj')`). The
+  extension MUST be one of the driver extensions in §8, and `new` mode MUST NOT overwrite. Directory
+  listing for the save dialog is the same trust boundary and uses the same helper.
 - **`appSource`:** accepted only as an existing local file with an allowed extension
   (`.apk/.app/.ipa/.zip`) or an `https:` URL, validated before it reaches an adapter or an installer.
 - **`run`:** argv-only `spawn` (no shell), fixed argument list, explicit env, the child killed on session
@@ -644,15 +646,17 @@ project; `mobile-inspect` opens the window on macOS and Linux; install delta ≤
 reload mid-recording loses neither the device session nor the timeline nor the draft.**
 
 **Phase 2 — Recording core.** ADR-005, ADR-006, ADR-007, §6. Split the god object, new frame schedule and
-dedup, event-sourced timeline with cursor undo/redo, durable draft ownership, AST codegen, node keys.
+dedup, event-sourced timeline with cursor undo/redo, durable draft ownership, AST codegen, node keys. The
+capability gates and the §9 accessibility items landed here too, since both are UI work on the same
+components: the save dialog browses real directories, refused actions are disabled with the driver's own
+reason, and the ADR-010 path confinement is shared by save and browse.
 → **Exit:** a scripted 200-interaction run against the fake driver (below) drops zero actions; the §11
 latency and idle-CPU budgets are met on a real device; `run` never clears the draft.
 
-**Phase 3 — Quality, security, docs.** ADR-009, ADR-010, §9 accessibility, the test strategy below,
-README and user docs (the package currently has none, and `package.json.files` lists `templates`/`docs`
-that do not exist).
-→ **Exit:** CI green on `tsc -b`, `eslint`, and the test suite; the NFR checks run in CI; the capability
-matrix is enforced by the UI; the a11y items are fixed.
+**Phase 3 — Quality, security, docs.** ADR-009, the remaining ADR-010 items (`appSource` validation), the
+test strategy below, README and user docs (the package currently has none, and `package.json.files` lists
+`templates`/`docs` that do not exist).
+→ **Exit:** CI green on `tsc -b`, `eslint`, and the test suite; the NFR checks run in CI.
 
 ### Test strategy
 

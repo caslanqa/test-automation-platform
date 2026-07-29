@@ -1,11 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
-import type { ClientMessage, LocatorCandidate, MobileLocator } from '../protocol';
+import type { GateFn } from '../capabilities';
+import type { ClientMessage, LocatorCandidate, MobileAction, MobileLocator } from '../protocol';
 
 interface LocatorMenuProps {
   anchor: { x: number; y: number } | null;
   candidates: LocatorCandidate[];
   loading: boolean;
+  /** Whether the connected driver accepts an action kind, and why not when it doesn't. */
+  gate: GateFn;
   onClose: () => void;
   send: (message: ClientMessage) => void;
 }
@@ -14,18 +17,46 @@ interface LocatorMenuProps {
  * Right-click context menu anchored to a device element. Lists ranked locator candidates (best-first,
  * with confidence + fragility warnings) and offers Tap / Fill / Assert visible / Assert not visible /
  * Wait / Copy against the chosen candidate — mirroring Maestro Studio's element-to-command flow but
- * generating PWTAP's own `MobileAction`s.
+ * generating PWTAP's own `MobileAction`s. Actions the connected driver refuses are disabled with the
+ * reason as their tooltip, and the candidate list is a radiogroup with arrow-key navigation.
  */
-export function LocatorMenu({ anchor, candidates, loading, onClose, send }: LocatorMenuProps) {
+export function LocatorMenu({
+  anchor,
+  candidates,
+  loading,
+  gate,
+  onClose,
+  send,
+}: LocatorMenuProps) {
   const [selected, setSelected] = useState(0);
   const [fillOpen, setFillOpen] = useState(false);
   const [fillValue, setFillValue] = useState('');
+  const candidateRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const returnFocusRef = useRef<Element | null>(null);
 
+  // A fresh hit-test starts over: first candidate selected, and focus moves into the menu so the
+  // list is reachable by keyboard rather than only by pointer.
   useEffect(() => {
     setSelected(0);
     setFillOpen(false);
     setFillValue('');
+    candidateRefs.current[0]?.focus();
   }, [candidates]);
+
+  // Remember where focus came from and put it back on close, so dismissing the menu does not drop
+  // the user at the top of the document.
+  useEffect(() => {
+    if (!anchor) {
+      return;
+    }
+    returnFocusRef.current = document.activeElement;
+    return () => {
+      const target = returnFocusRef.current;
+      if (target instanceof HTMLElement && target.isConnected) {
+        target.focus();
+      }
+    };
+  }, [anchor]);
 
   useEffect(() => {
     if (!anchor) {
@@ -45,6 +76,25 @@ export function LocatorMenu({ anchor, candidates, loading, onClose, send }: Loca
   }
 
   const candidate = candidates[selected];
+
+  function moveSelection(to: number): void {
+    const index = (to + candidates.length) % candidates.length;
+    setSelected(index);
+    candidateRefs.current[index]?.focus();
+  }
+
+  function onCandidateKeyDown(event: React.KeyboardEvent<HTMLDivElement>): void {
+    const step: Record<string, number> = {
+      ArrowDown: selected + 1,
+      ArrowUp: selected - 1,
+      Home: 0,
+      End: candidates.length - 1,
+    };
+    if (candidates.length > 0 && event.key in step) {
+      event.preventDefault();
+      moveSelection(step[event.key]);
+    }
+  }
 
   function perform(build: (locator: MobileLocator) => ClientMessage): void {
     if (candidate) {
@@ -80,50 +130,59 @@ export function LocatorMenu({ anchor, candidates, loading, onClose, send }: Loca
   return (
     <>
       <div className="menu-backdrop" onClick={onClose} onContextMenu={e => e.preventDefault()} />
-      <div className="locator-menu" style={style} role="menu">
+      <div className="locator-menu" style={style} role="dialog" aria-label="Locator alternatives">
         <div className="locator-menu-title">Locator alternatives</div>
         {loading && <div className="muted locator-loading">inspecting element…</div>}
         {!loading && candidates.length === 0 && (
           <div className="muted locator-loading">no element found here</div>
         )}
-        {candidates.map((c, i) => (
-          <button
-            key={i}
-            className={`locator-candidate${i === selected ? ' active' : ''}`}
-            onClick={() => setSelected(i)}
-            role="menuitemradio"
-            aria-checked={i === selected}
-          >
-            <span className={`badge badge-${c.confidence}`}>{c.confidence}</span>
-            <span className="locator-display">{c.display}</span>
-            <span className="locator-score muted">{c.score}</span>
-            {!c.unique && <span className="warn locator-warn">⚠ non-unique</span>}
-            {c.warnings.length > 0 && c.unique && (
-              <span className="warn locator-warn" title={c.warnings.join('; ')}>
-                ⚠
-              </span>
-            )}
-          </button>
-        ))}
+        <div role="radiogroup" aria-label="Locator candidates" onKeyDown={onCandidateKeyDown}>
+          {candidates.map((c, i) => (
+            <button
+              key={i}
+              ref={element => {
+                candidateRefs.current[i] = element;
+              }}
+              className={`locator-candidate${i === selected ? ' active' : ''}`}
+              onClick={() => setSelected(i)}
+              role="radio"
+              aria-checked={i === selected}
+              // Roving tab stop: Tab reaches the list once, then leaves it for the action buttons.
+              tabIndex={i === selected ? 0 : -1}
+            >
+              <span className={`badge badge-${c.confidence}`}>{c.confidence}</span>
+              <span className="locator-display">{c.display}</span>
+              <span className="locator-score muted">{c.score}</span>
+              {!c.unique && <span className="warn locator-warn">⚠ non-unique</span>}
+              {c.warnings.length > 0 && c.unique && (
+                <span className="warn locator-warn" title={c.warnings.join('; ')}>
+                  ⚠
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
 
         {candidate && (
           <div className="locator-actions">
-            <button className="btn btn-small" onClick={() => perform(l => tap(l))}>
+            <GatedAction gate={gate} kind="tap" onClick={() => perform(l => tap(l))}>
               Tap
-            </button>
-            <button className="btn btn-small" onClick={() => setFillOpen(true)}>
+            </GatedAction>
+            <GatedAction gate={gate} kind="fill" onClick={() => setFillOpen(true)}>
               Fill…
-            </button>
-            <button
-              className="btn btn-small"
+            </GatedAction>
+            <GatedAction
+              gate={gate}
+              kind="assertVisible"
               onClick={() =>
                 perform(l => ({ type: 'perform', action: { kind: 'assertVisible', locator: l } }))
               }
             >
               Assert visible
-            </button>
-            <button
-              className="btn btn-small"
+            </GatedAction>
+            <GatedAction
+              gate={gate}
+              kind="assertNotVisible"
               onClick={() =>
                 perform(l => ({
                   type: 'record',
@@ -132,15 +191,17 @@ export function LocatorMenu({ anchor, candidates, loading, onClose, send }: Loca
               }
             >
               Assert not visible
-            </button>
-            <button
-              className="btn btn-small"
+            </GatedAction>
+            <GatedAction
+              gate={gate}
+              kind="waitFor"
               onClick={() =>
                 perform(l => ({ type: 'perform', action: { kind: 'waitFor', locator: l } }))
               }
             >
               Wait
-            </button>
+            </GatedAction>
+            {/* Not a driver action — copying to the clipboard works with no device at all. */}
             <button className="btn btn-small" onClick={copyLocator}>
               Copy locator
             </button>
@@ -171,6 +232,26 @@ export function LocatorMenu({ anchor, candidates, loading, onClose, send }: Loca
         )}
       </div>
     </>
+  );
+}
+
+/** An action button that disables itself when the connected driver refuses the kind, stating why. */
+function GatedAction({
+  gate,
+  kind,
+  onClick,
+  children,
+}: {
+  gate: GateFn;
+  kind: MobileAction['kind'];
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  const { supported, reason } = gate(kind);
+  return (
+    <button className="btn btn-small" onClick={onClick} disabled={!supported} title={reason}>
+      {children}
+    </button>
   );
 }
 

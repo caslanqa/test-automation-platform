@@ -30,6 +30,7 @@ import {
   resolveSimUdid,
   resolveStableDeviceName,
 } from '@pwtap/mobile-core';
+import { insertStatementIntoTest, loadProjectTypeScript } from './ast.js';
 import { generateTestSource, statementForAction, type GeneratedTarget } from './codegen.js';
 import { DeviceSession } from './deviceSession.js';
 import { Draft } from './draft.js';
@@ -190,6 +191,8 @@ export class RecorderSession {
           return this.editCode(message.source, message.revision);
         case 'listTestFiles':
           return await this.listTestFiles();
+        case 'listDirs':
+          return await this.writer.listDirs(message.path);
         case 'save':
           return await this.save(
             message.mode,
@@ -420,10 +423,21 @@ export class RecorderSession {
     if (!regenerated && appended) {
       // The user owns the buffer, so their edits win — but a newly recorded action is spliced in rather
       // than dropped. Non-append changes (remove/undo/clear) cannot be reconciled with arbitrary edits.
-      this.draft.spliceIntoUserDraft(source =>
-        insertStatementIntoTest(source, statementForAction(appended)),
-      );
+      void this.spliceStatement(appended);
     }
+    this.emitCode();
+  }
+
+  /**
+   * Splice a newly recorded action into a user-owned draft. Asynchronous because the project's TypeScript is
+   * loaded on demand; without it the statement is appended at the end rather than dropped.
+   */
+  private async spliceStatement(action: MobileAction): Promise<void> {
+    const statement = statementForAction(action);
+    const ts = await loadProjectTypeScript(this.projectRoot);
+    this.draft.spliceIntoUserDraft(source =>
+      ts ? insertStatementIntoTest(ts, source, statement) : `${source.trimEnd()}\n${statement}\n`,
+    );
     this.emitCode();
   }
 
@@ -544,19 +558,4 @@ export class RecorderSession {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-/**
- * Insert one new generated statement into an existing test draft without regenerating the whole file.
- * This keeps manual edits intact while still reflecting newly recorded actions.
- */
-function insertStatementIntoTest(source: string, statement: string): string {
-  const insertion = `  ${statement}`;
-  const closingMarker = '\n});\n';
-  const closingIndex = source.lastIndexOf(closingMarker);
-  if (closingIndex >= 0) {
-    return `${source.slice(0, closingIndex)}\n${insertion}${source.slice(closingIndex)}`;
-  }
-  const trimmed = source.trimEnd();
-  return `${trimmed}\n${insertion}\n`;
 }

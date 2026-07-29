@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import type {
   ClientMessage,
@@ -23,7 +23,10 @@ interface ConnectionDrawerProps {
 /**
  * Slide-over connection panel: driver, platform, device, and app selection live here (out of the top
  * bar). Supports installed-app discovery for the selected device, manual package/bundle id entry, and
- * a native file picker for a local `.apk`/`.app`/`.ipa`/`.zip` artifact.
+ * a path to a local `.apk`/`.app`/`.ipa`/`.zip` artifact.
+ *
+ * When closed it is `inert`, not `aria-hidden`: the panel stays in the DOM for the slide transition,
+ * and `aria-hidden` alone would leave its controls tabbable while hidden from screen readers.
  */
 export function ConnectionDrawer({
   open,
@@ -42,6 +45,8 @@ export function ConnectionDrawer({
   const [appSource, setAppSource] = useState('');
   const [appFilter, setAppFilter] = useState('');
   const [headless, setHeadless] = useState(true);
+  const asideRef = useRef<HTMLElement>(null);
+  const driverRef = useRef<HTMLSelectElement>(null);
 
   const platformDevices = useMemo(
     () => devices.filter(d => d.platform === platform),
@@ -54,6 +59,19 @@ export function ConnectionDrawer({
       ? list.filter(a => a.id.toLowerCase().includes(q) || a.name.toLowerCase().includes(q))
       : list;
   }, [apps, platform, appFilter]);
+
+  // Opening the panel moves focus to its first control; closing it hands focus back only if it was
+  // inside the panel, so the auto-close on connect cannot yank focus out of whatever the user is doing.
+  useEffect(() => {
+    if (open) {
+      driverRef.current?.focus();
+      return;
+    }
+    const aside = asideRef.current;
+    if (aside?.contains(document.activeElement)) {
+      (document.activeElement as HTMLElement).blur();
+    }
+  }, [open]);
 
   // Refresh installed apps whenever the driver/platform/device selection changes.
   useEffect(() => {
@@ -85,10 +103,20 @@ export function ConnectionDrawer({
   }
 
   return (
-    <aside className={`drawer${open ? ' open' : ''}`} aria-hidden={!open}>
+    <aside
+      ref={asideRef}
+      className={`drawer${open ? ' open' : ''}`}
+      aria-label="Connection"
+      inert={!open}
+      onKeyDown={event => {
+        if (event.key === 'Escape') {
+          onClose();
+        }
+      }}
+    >
       <div className="drawer-header">
         <span>Connection</span>
-        <button className="btn btn-small" onClick={onClose} aria-label="close">
+        <button className="btn btn-small" onClick={onClose} aria-label="Close connection panel">
           ✕
         </button>
       </div>
@@ -96,7 +124,7 @@ export function ConnectionDrawer({
       <div className="drawer-body">
         <label className="field">
           Driver
-          <select value={driverId} onChange={e => onDriverChange(e.target.value)}>
+          <select ref={driverRef} value={driverId} onChange={e => onDriverChange(e.target.value)}>
             <option value="">select…</option>
             {drivers.map(d => (
               <option key={d.id} value={d.id}>

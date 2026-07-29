@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { actionGate } from './capabilities';
 import { CodeEditor } from './components/CodeEditor';
 import { ConnectionDrawer } from './components/ConnectionDrawer';
 import { ConsolePanel } from './components/ConsolePanel';
@@ -10,6 +11,7 @@ import { RunOutput } from './components/RunOutput';
 import { SaveDialog, type SaveResult } from './components/SaveDialog';
 import { Timeline } from './components/Timeline';
 import { useInspectorBridge } from './hooks/useInspectorBridge';
+import type { LocatorCandidate, MobileAction } from './protocol';
 
 type BottomTab = 'timeline' | 'output' | 'logs';
 type PaneDivider = 'device-code' | 'code-tree';
@@ -18,6 +20,8 @@ const DEFAULT_PANE_RATIOS: [number, number, number] = [1, 1.1, 0.8];
 const PANE_RATIOS_KEY = 'pwtap-inspector-pane-ratios';
 const DIVIDER_WIDTH = 6;
 const MIN_PANE_WIDTHS = [220, 280, 220] as const;
+/** Stable identity: a fresh `[]` each render would restart the locator menu's selection effect. */
+const NO_CANDIDATES: LocatorCandidate[] = [];
 
 export function App() {
   const { state, send } = useInspectorBridge();
@@ -80,6 +84,10 @@ export function App() {
   }, []);
 
   const running = state.runState === 'running';
+  const gate = useCallback(
+    (kind: MobileAction['kind']) => actionGate(state.connected, kind),
+    [state.connected],
+  );
 
   function beginPaneResize(divider: PaneDivider, event: React.PointerEvent<HTMLDivElement>): void {
     const workspace = workspaceRef.current;
@@ -188,6 +196,7 @@ export function App() {
           className="btn"
           onClick={() => {
             send({ type: 'listTestFiles' });
+            send({ type: 'listDirs', path: 'tests' });
             setSaveOpen(true);
           }}
           disabled={!state.code.trim()}
@@ -313,8 +322,9 @@ export function App() {
 
       <LocatorMenu
         anchor={menuAnchor}
-        candidates={state.inspected?.candidates ?? []}
+        candidates={state.inspected?.candidates ?? NO_CANDIDATES}
         loading={!state.inspected}
+        gate={gate}
         onClose={() => setMenuAnchor(null)}
         send={send}
       />
@@ -322,6 +332,8 @@ export function App() {
       {saveOpen && (
         <SaveDialog
           testFiles={state.testFiles}
+          dirs={state.dirs}
+          browse={path => send({ type: 'listDirs', path })}
           extension={
             state.drivers.find(d => d.id === state.connected?.driver)?.testBinding.extension ?? ''
           }
