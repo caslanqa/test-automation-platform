@@ -46,6 +46,17 @@ npm i -D better-sqlite3  # SQLite — a native module, so it needs a build toolc
 A database that is not there, or not configured, **skips** the test with the reason — it never fails it. That is
 the same call the mobile plugins make for an absent device: a missing environment is not a broken test.
 
+The reason is printed next to the skip, so a run does not just show an unexplained gap:
+
+```
+  ↷ skipped — [db] could not reach the pg database: connect ECONNREFUSED 127.0.0.1:5432
+  -  1 tests/db/example.db.spec.ts:20:1 › a row appears after the action
+```
+
+It is also recorded as a `skip` annotation, which is where the HTML and JSON reports read it from. The line
+exists because those reports are the _only_ place Playwright puts it — `list` and `line` print the dash and the
+test name and nothing else.
+
 ## Worker scope, and what it costs
 
 Both connections are worker-scoped, so one pool serves every test a worker runs and Playwright closes it when

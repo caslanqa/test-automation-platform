@@ -20,6 +20,7 @@ import {
   createSqlConnection,
   type SqlConnectionOptions,
 } from './core/sqlConnection.js';
+import { skipWithReason } from './skip.js';
 
 export interface SqlOptions {
   /** Which engine and where. Omit and every test using `sql` skips. */
@@ -68,6 +69,9 @@ export async function provideSql(
   use: (value: Knex) => Promise<void>,
   testInfo: { skip(condition: boolean, description: string): void },
 ): Promise<void> {
-  testInfo.skip(!sqlConnection.sql, `[db] ${sqlConnection.reason ?? 'no SQL connection'}`);
-  await use(sqlConnection.sql as Knex);
+  if (!sqlConnection.sql) {
+    skipWithReason(testInfo, `[db] ${sqlConnection.reason ?? 'no SQL connection'}`);
+    return;
+  }
+  await use(sqlConnection.sql);
 }

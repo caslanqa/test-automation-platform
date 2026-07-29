@@ -9,6 +9,7 @@ import {
   createMongoConnection,
   type MongoConnectionOptions,
 } from './core/mongoConnection.js';
+import { skipWithReason } from './skip.js';
 
 export interface MongoOptions {
   /** Where and which database. Omit and every test using `mongo` skips. */
@@ -55,9 +56,9 @@ export async function provideMongo(
   use: (value: Db) => Promise<void>,
   testInfo: { skip(condition: boolean, description: string): void },
 ): Promise<void> {
-  testInfo.skip(
-    !mongoConnection.mongo,
-    `[db] ${mongoConnection.reason ?? 'no MongoDB connection'}`,
-  );
-  await use(mongoConnection.mongo as Db);
+  if (!mongoConnection.mongo) {
+    skipWithReason(testInfo, `[db] ${mongoConnection.reason ?? 'no MongoDB connection'}`);
+    return;
+  }
+  await use(mongoConnection.mongo);
 }

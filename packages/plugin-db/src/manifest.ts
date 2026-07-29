@@ -54,7 +54,7 @@ export const manifest = {
     'since a different value forces a new worker.',
     '',
     'An unreachable or unconfigured database **skips** the test rather than failing it, the same way an absent',
-    'device does. Reset with `resetSqlDatabase(sql)` / `resetMongoDatabase(mongo)`; migrate SQL with the',
+    'device does, and prints why. Reset with `resetSqlDatabase(sql)` / `resetMongoDatabase(mongo)`; migrate SQL with the',
     '`db:migrate:*` scripts (Knex’s own system) and Mongo with `db:mongo:migrate*`.',
     '',
     'See `docs/DB_TESTING.md`. This plugin does not install a database, just as the mobile plugins do not',

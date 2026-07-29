@@ -92,7 +92,8 @@ test.use({ mobile: devices.android }); // any booted android device
 ```
 
 - `device` — Android AVD name, or iOS simulator name/UDID. If it isn't booted, it's booted for you.
-  A plugged-in Android device works too (target it by serial). **No matching device → the test skips.**
+  A plugged-in Android device works too (target it by serial). **No matching device → the test skips**, with
+  the reason printed next to it and recorded as a `skip` annotation for the report.
 - `headless` — hidden by default; `false` shows the emulator window / Simulator app.
 - `app` — a local path or http(s) URL to an APK / iOS `.app`/`.zip`, installed once before the flow.
 
