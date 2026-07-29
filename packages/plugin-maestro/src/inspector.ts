@@ -201,6 +201,13 @@ class MaestroDriverSession implements DriverSession {
   private readonly maestro: MaestroMcpSession;
   readonly device: InspectorDevice;
   private readonly coordinateSize: { width: number; height: number } | undefined;
+  /**
+   * The coordinate space of the most recent capture, orientation already resolved. Kept so converting a
+   * point locator into Maestro's `x%,y%` does not need a fresh screenshot — the inspector captures on every
+   * action and on every poll, so this is never stale by more than one frame, and taking another screenshot
+   * added ~180 ms to every coordinate tap for a number already in hand.
+   */
+  private lastCoordinateSpace: { width: number; height: number } | undefined;
 
   constructor(
     maestro: MaestroMcpSession,
@@ -226,6 +233,7 @@ class MaestroDriverSession implements DriverSession {
       this.coordinateSize && imageLandscape !== coordinatesLandscape
         ? { width: this.coordinateSize.height, height: this.coordinateSize.width }
         : this.coordinateSize;
+    this.lastCoordinateSpace = coordinateSize ?? { width: size.width, height: size.height };
     return {
       frameId: this.frameCounter++,
       imageBase64: buf.toString('base64'),
@@ -251,8 +259,8 @@ class MaestroDriverSession implements DriverSession {
    */
   private async resolveSelector(locator: MobileLocator): Promise<MaestroSelector> {
     if (locator.point !== undefined) {
-      const frame = await this.captureScreen();
-      return { point: toPercentPoint(locator.point, frame) };
+      const space = this.lastCoordinateSpace ?? (await this.captureScreen());
+      return { point: toPercentPoint(locator.point, space) };
     }
     return toMaestroSelector(locator);
   }

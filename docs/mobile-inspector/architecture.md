@@ -257,6 +257,17 @@ full Maestro tap-latency behind the click.
 - The hierarchy MUST NOT be re-read before hit-testing when the client's `frameId` is the device's current
   frame: the tree already in hand IS the screen the user clicked. Re-reading it unconditionally cost a device
   round trip per interaction for nothing.
+- **A device click MUST be driven by coordinate, while the element is what gets recorded.** The hit-test has
+  already identified the element locally; asking the driver to find it again is a second lookup that costs
+  ~800 ms per tap on Maestro. A driver that cannot tap a raw point MUST fail loudly (the action is retracted
+  and reported) rather than be given a silent locator retry, which would hide the gap and double the latency
+  of every failure. A locator chosen from the right-click menu is the exception — there the user is choosing a
+  locator, so that is what gets performed.
+- **The lost guarantee MUST be bought back by sampling, not by paying per tap.** Driving by coordinate stops
+  proving that the recorded locator resolves on this driver, and that class of bug is real. So each locator
+  _strategy_ in the recording is verified once per session, after the screen has settled and against the
+  current tree — the bugs are systematic, so one element answers for all of them, and the check never blocks
+  an interaction or fails a recording.
 - After an action the device MUST be looked at immediately, then again after the settle delay. Waiting the
   full settle before the first look is what made a tap take half a second to show any visible effect.
 

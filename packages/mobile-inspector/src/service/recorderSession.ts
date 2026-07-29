@@ -17,6 +17,7 @@ import type {
   InstalledApp,
   MobileAction,
   MobileInspectorDriver,
+  MobileNode,
 } from '@pwtap/mobile-core';
 import {
   discoverDriverMap,
@@ -51,6 +52,12 @@ export class RecorderSession {
   private lastTarget: GeneratedTarget | undefined;
   /** Most recent device list, reused for the device-name uniqueness check (see `knownDevices`). */
   private lastDevices: InspectorDevice[] = [];
+  /**
+   * Locator strategies already proven to resolve on this device, so each is checked once per session
+   * rather than once per tap. Translation bugs are systematic — if `{ text }` does not resolve for one
+   * element it does not resolve for any — so one sample per strategy buys the whole guarantee.
+   */
+  private verifiedStrategies = new Set<string>();
   /** The `connected` event for the live session, replayed to a re-attaching client (see `snapshot`). */
   private connectedSummary: Extract<RecorderEvent, { type: 'connected' }> | undefined;
   private closed = false;
@@ -278,6 +285,7 @@ export class RecorderSession {
       };
       this.recorder.clear();
       this.draft.reset();
+      this.verifiedStrategies.clear();
       // Retained so a re-attaching client learns what it is looking at without reconnecting (ADR-011).
       this.connectedSummary = {
         type: 'connected',
@@ -327,7 +335,89 @@ export class RecorderSession {
       this.log('warn', `recorded an element that ${outOfApp}`);
     }
     const locator = node ? locatorForNode(node) : { point: { x, y }, label: 'coordinate tap' };
-    await this.perform({ kind: 'tap', locator });
+    // Record the element, drive the device by coordinate. Asking the driver to find the element again is a
+    // second lookup of something already hit-tested locally, and it costs ~800 ms per tap on Maestro — that
+    // is the whole difference between this and Maestro Studio. The locator is still proven to resolve, once
+    // per strategy, below. (The locator menu is deliberately different: there the user is choosing a
+    // specific locator, so that is what gets performed.)
+    await this.performAs({ kind: 'tap', locator }, { kind: 'tap', locator: { point: { x, y } } });
+  }
+
+  /**
+   * Confirm each locator strategy actually resolves on this driver — once per session, off the critical path.
+   *
+   * Driving the device by coordinate is what makes an interaction fast, but it stops proving that the locator
+   * being written down would work, and that class of bug is real (an iOS text locator once read `value` while
+   * the selector matched only `label`). So the strategy is sampled instead: it is systematic, so one element
+   * answers for all of them. Run after the screen has settled and against the CURRENT tree, because the tap
+   * is usually what changed the screen — checking the element that was just tapped would prove nothing.
+   *
+   * Never awaited by an interaction, and never fails a recording: an unresolvable strategy is a warning.
+   */
+  private async verifyStrategies(): Promise<void> {
+    const strategies = [
+      { key: 'accessibilityId', of: (n: MobileNode) => n.accessibilityId },
+      { key: 'resourceId', of: (n: MobileNode) => n.resourceId },
+      { key: 'text', of: (n: MobileNode) => n.text },
+    ] as const;
+    const used = new Set(
+      this.recorder.actions.flatMap(action =>
+        'locator' in action
+          ? strategies.filter(s => action.locator[s.key] !== undefined).map(s => s.key)
+          : [],
+      ),
+    );
+    for (const strategy of strategies) {
+      if (!used.has(strategy.key) || this.verifiedStrategies.has(strategy.key)) {
+        continue;
+      }
+      const sample = firstNodeWith(this.device.hierarchy, node => Boolean(strategy.of(node)));
+      if (!sample) {
+        continue; // nothing on screen carries this attribute right now; try again after the next action
+      }
+      this.verifiedStrategies.add(strategy.key);
+      const result = await this.device.perform({
+        kind: 'isVisible',
+        locator: { [strategy.key]: strategy.of(sample) },
+      });
+      if (result.ok && result.value !== true) {
+        this.log(
+          'warn',
+          `this driver cannot resolve "${strategy.key}" locators, so tests recorded with them will not ` +
+            'replay — pick another candidate from the right-click menu',
+        );
+      }
+    }
+  }
+
+  /**
+   * Record one action while performing another.
+   *
+   * They differ only for a device click: the recording names the element, the device is driven by coordinate.
+   * A driver that cannot tap a raw point makes the action fail, get retracted and say so — deliberately, in
+   * preference to a silent second attempt with the locator, which would hide the gap and double the latency
+   * of every failure. Both shipped drivers tap points.
+   */
+  private async performAs(recorded: MobileAction, executed: MobileAction): Promise<void> {
+    if (!this.device.connected) {
+      this.send({ type: 'error', message: 'not connected to a device' });
+      return;
+    }
+    this.recorder.append(recorded);
+    this.sendTimelineAndCode(recorded);
+
+    const result = await this.device.perform(executed);
+    this.send({ type: 'actionResult', action: recorded, result });
+    if (result.ok) {
+      // Look again once the screen has had a moment, and once more if it is still moving (ADR-006).
+      await this.device.settle();
+      await this.verifyStrategies();
+      return;
+    }
+    if (this.recorder.retract(recorded)) {
+      this.sendTimelineAndCode();
+    }
+    this.log('error', `${recorded.kind} failed: ${result.error ?? 'unknown driver error'}`);
   }
 
   /**
@@ -392,24 +482,7 @@ export class RecorderSession {
    * user can undo or delete something while the device is still thinking.
    */
   async perform(action: MobileAction): Promise<void> {
-    if (!this.device.connected) {
-      this.send({ type: 'error', message: 'not connected to a device' });
-      return;
-    }
-    this.recorder.append(action);
-    this.sendTimelineAndCode(action);
-
-    const result = await this.device.perform(action);
-    this.send({ type: 'actionResult', action, result });
-    if (result.ok) {
-      // Look again once the screen has had a moment, and once more if it is still moving (ADR-006).
-      await this.device.settle();
-      return;
-    }
-    if (this.recorder.retract(action)) {
-      this.sendTimelineAndCode();
-    }
-    this.log('error', `${action.kind} failed: ${result.error ?? 'unknown driver error'}`);
+    await this.performAs(action, action);
   }
 
   /** Record a declarative step that cannot be true in the current UI state without executing it. */
@@ -591,6 +664,23 @@ export class RecorderSession {
     this.stopRun();
     await this.disconnect();
   }
+}
+
+/** The first node anywhere in the tree matching `predicate`, depth-first. */
+function firstNodeWith(
+  nodes: MobileNode[],
+  predicate: (node: MobileNode) => boolean,
+): MobileNode | undefined {
+  for (const node of nodes) {
+    if (predicate(node)) {
+      return node;
+    }
+    const inChildren = firstNodeWith(node.children ?? [], predicate);
+    if (inChildren) {
+      return inChildren;
+    }
+  }
+  return undefined;
 }
 
 function errorMessage(error: unknown): string {
