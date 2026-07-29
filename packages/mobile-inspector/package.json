@@ -1,6 +1,6 @@
 {
   "name": "@pwtap/mobile-inspector",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "Mobile test recorder for the Playwright Test Automation Platform — local service, browser UI and code generator. A dev tool: the runtime contracts live in @pwtap/mobile-core",
   "type": "module",
   "license": "MIT",
