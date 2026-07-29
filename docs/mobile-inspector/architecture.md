@@ -167,7 +167,15 @@ Decisions encoded above, each one closing a current defect:
    `@pwtap/mobile-core`, regardless of how many mobile plugins are installed. Both plugin manifests
    declare the same fixture fragment with a shared dedupe key; `@pwtap/create`'s injector MUST skip a
    duplicate. The existing `maestro` and `app` fixtures are untouched.
-4. **Device identity.** The emitted `device` MUST be replayable days later, so it MUST NOT be an
+4. **App identity.** A driver that cannot act without an app id MUST NOT hand back a session that has none.
+   Maestro scopes every command — including `tap` and `back` — to one app and refuses until it is set, so a
+   connection with an empty app id used to produce a session that showed the screen and failed every
+   interaction with an internal message. Such a driver MUST resolve an app itself (the foreground app is what
+   the user is looking at, so it is the one they mean) and MUST refuse the connection outright when it cannot,
+   naming what to supply. Whatever it resolves MUST be reported back on the session (`DriverSession.appId`) and
+   is what codegen pins: a recording that pinned nothing would launch nothing on replay and re-record against
+   whatever happened to be open.
+5. **Device identity.** The emitted `device` MUST be replayable days later, so it MUST NOT be an
    ephemeral handle. Android: the AVD name, never the `adb` serial — device discovery reports booted
    emulators _by serial_ (`emulator-5554`), which changes across reboots, so the recorder MUST map the
    connected device back to its AVD name before codegen. **Two rules make that mapping reliable, and both
@@ -184,7 +192,7 @@ Decisions encoded above, each one closing a current defect:
    `resolveSimUdid`, which does the same. When neither handle is durable (an Android emulator whose AVD
    name could not be resolved, leaving only an `adb` serial) the recorder MUST warn rather than quietly
    pin a value that stops matching after a reboot.
-5. **Assertions.** Visibility assertions are generated as `expect.poll(() => mobileApp.isVisible(...))`,
+6. **Assertions.** Visibility assertions are generated as `expect.poll(() => mobileApp.isVisible(...))`,
    which requires `isVisible` to _return a boolean_ — see ADR-004 and §5.
 
 ### ADR-004 — `isVisible` becomes its own boolean action

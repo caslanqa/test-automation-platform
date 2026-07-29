@@ -278,7 +278,9 @@ export class RecorderSession {
         driver: driverId,
         platform: device.platform,
         device: stable.device,
-        appId: options.appId,
+        // The app the session is ACTUALLY scoped to — a driver may have adopted the foreground app when the
+        // user named none, and a recording that pinned nothing would launch nothing on replay.
+        appId: this.device.appId ?? options.appId,
         // The value as the user typed it, not the absolute path the driver got: the generated test is
         // committed and replayed on other machines, so a relative artifact path must stay relative.
         appSource: options.appSource,

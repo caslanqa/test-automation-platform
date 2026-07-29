@@ -40,6 +40,35 @@ export async function avdNameForSerial(serial: string): Promise<string | undefin
 }
 
 /**
+ * The package of the app currently in the foreground, or `undefined` when it cannot be determined.
+ *
+ * Used when a driver needs an app to scope itself to and the caller did not name one: what the user is
+ * looking at is the app they mean. Reads `mCurrentFocus` and falls back to `mFocusedApp`, since a transient
+ * window (a dialog, the notification shade) leaves the first unset.
+ *
+ * @example await foregroundAndroidApp('emulator-5554') // → 'com.android.settings'
+ */
+export async function foregroundAndroidApp(serial: string): Promise<string | undefined> {
+  const platform = getPlatform();
+  const { stdout, code } = await platform.run(
+    platform.adbPath(),
+    ['-s', serial, 'shell', 'dumpsys', 'window'],
+    { timeoutMs: 10_000, env: platform.androidEnv() },
+  );
+  if (code !== 0) {
+    return undefined;
+  }
+  for (const key of ['mCurrentFocus', 'mFocusedApp']) {
+    // e.g. `mCurrentFocus=Window{b53e25 u0 com.android.settings/com.android.settings.homepage...}`
+    const match = new RegExp(`${key}=[^\\n]*?([a-zA-Z][\\w.]+\\.[\\w.]+)/`).exec(stdout);
+    if (match) {
+      return match[1];
+    }
+  }
+  return undefined;
+}
+
+/**
  * Every currently-online Android device/emulator (`adb devices`), regardless of whether THIS
  * framework booted it — unlike the `booted.json` registry (`readBootedDevices`), which only tracks
  * devices booted by a framework run and is meant for its own teardown, not general live status. Use

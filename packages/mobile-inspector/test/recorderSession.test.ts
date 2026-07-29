@@ -131,6 +131,25 @@ test('the generated header carries driver, platform, stable device name and appI
   await h.session.close();
 });
 
+test('codegen pins the app the session is scoped to, even when the user named none', async () => {
+  // Found in the field: connecting the Maestro driver with an empty app id produced a session that showed the
+  // screen and refused every interaction, because Maestro scopes every command to one app. The driver now
+  // adopts whatever is in the foreground, and the recording has to pin THAT — a test pinning nothing would
+  // launch nothing on replay and record against whatever happened to be open.
+  const h = harness({ adoptedAppId: 'com.adopted.app' });
+
+  await h.send({ type: 'connect', driver: 'fake', options: { platform: 'android' } });
+
+  assert.equal(h.driver.connects.at(-1)?.appId, undefined, 'the user named no app');
+  assert.match(
+    h.code(),
+    /appId: "com\.adopted\.app"/,
+    'the recording pins the one actually in use',
+  );
+
+  await h.session.close();
+});
+
 test('appId and appSource reach the driver instead of being dropped', async () => {
   const h = harness();
   fs.mkdirSync(path.join(h.dir, 'build'), { recursive: true });

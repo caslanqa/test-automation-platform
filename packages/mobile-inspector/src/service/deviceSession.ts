@@ -69,6 +69,11 @@ export class DeviceSession {
     return this.session !== undefined;
   }
 
+  /** The app the driver is actually scoped to, when it resolved one the caller did not name. */
+  get appId(): string | undefined {
+    return this.session?.appId;
+  }
+
   get device(): InspectorDevice | undefined {
     return this.session?.device;
   }
