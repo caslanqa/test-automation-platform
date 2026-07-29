@@ -97,14 +97,38 @@ function checkboxPrompt(plugins: KnownPlugin[]): Promise<string[]> {
       return `${pointer} ${box} [${plugin.category}] ${plugin.package} — ${plugin.description}${tag}`;
     };
 
+    /**
+     * Keep every entry on exactly one terminal row.
+     *
+     * The bug this replaces: the redraw moved the cursor up by the NUMBER OF PLUGINS, which is the number of
+     * physical rows only when nothing wraps — and the real entries are 88 to 141 characters, so at 80 columns
+     * every one of them already wrapped. The rows the count missed stayed on screen and the next draw landed
+     * underneath them, which is why pressing space looked like it duplicated the line. It worked on a wide
+     * terminal and broke on a normal one.
+     *
+     * Truncating rather than measuring the wrap is the safer of the two fixes: one row per item keeps the cursor
+     * arithmetic trivially right, and if these lines ever gain ANSI colour the worst outcome is a few visible
+     * characters lost to the escape bytes, not a corrupted screen.
+     */
+    const fit = (text: string): string => {
+      const width = (stdout.columns || 80) - 1; // -1: some terminals wrap when the last column is filled
+      return text.length <= width ? text : `${text.slice(0, Math.max(0, width - 1))}…`;
+    };
+
     let rendered = false;
     const render = (): void => {
       if (rendered) {
-        stdout.write(`\x1b[${plugins.length}A`); // cursor up to the first item line
+        // `\x1b[0A` means one row, not zero, so a single-item list must not ask to move at all.
+        if (plugins.length > 1) {
+          stdout.write(`\x1b[${plugins.length - 1}A`);
+        }
+        // Clear to the end of the screen rather than line by line, so a terminal resized between two draws
+        // cannot leave a wider earlier row behind.
+        stdout.write('\r\x1b[0J');
       }
-      for (const [i, plugin] of plugins.entries()) {
-        stdout.write(`\x1b[2K\r${lineFor(plugin, i)}\n`); // clear the line, then redraw it
-      }
+      // No trailing newline. At the bottom of a terminal it would scroll the screen, and then every later
+      // cursor-up would be one row short — the same class of mistake in a place much harder to see.
+      stdout.write(plugins.map((plugin, i) => fit(lineFor(plugin, i))).join('\n'));
       rendered = true;
     };
 
@@ -143,7 +167,9 @@ function checkboxPrompt(plugins: KnownPlugin[]): Promise<string[]> {
       }
     };
 
-    stdout.write('\nOptional plugins — ↑/↓ move, space toggle, enter confirm:\n');
+    // Two lines rather than one: as a single line this was 57 characters and wrapped on a narrow terminal. It is
+    // written once and never redrawn, so its height does not enter the cursor arithmetic below.
+    stdout.write('\nOptional plugins:\n↑/↓ move · space toggle · enter confirm\n');
     render();
 
     emitKeypressEvents(stdin);
