@@ -243,6 +243,23 @@ The current model gates every interaction on `frameId === lastFrameId` while a 1
 - **Hover highlight is client-side** against the last hierarchy (target: no round trip, see §11), and the
   hit-test MUST be throttled to at most one evaluation per animation frame.
 
+#### ADR-006 addendum — the recording MUST NOT wait for the device
+
+Reported from a live installation as 2–3 s of lag on every interaction, and the measurement above says why:
+the action was performed first and recorded only once the driver confirmed, so the generated code arrived a
+full Maestro tap-latency behind the click.
+
+- Hit-testing is local, so a click becomes an action with no device round trip. The action MUST enter the
+  timeline and the code **immediately**, before the driver is asked to perform it.
+- A driver that then refuses it MUST cause the action to be **retracted** — by identity, not by position,
+  because the user can undo or delete something while the device is still answering — and the refusal MUST be
+  surfaced on screen (§9), not only in the log.
+- The hierarchy MUST NOT be re-read before hit-testing when the client's `frameId` is the device's current
+  frame: the tree already in hand IS the screen the user clicked. Re-reading it unconditionally cost a device
+  round trip per interaction for nothing.
+- After an action the device MUST be looked at immediately, then again after the settle delay. Waiting the
+  full settle before the first look is what made a tap take half a second to show any visible effect.
+
 ### ADR-007 — Node identity: every hierarchy node carries a stable key
 
 Tree selection currently compares node objects by reference, so a hierarchy refresh silently drops the
@@ -633,11 +650,26 @@ Measured, not aspirational. The deterministic rows — dependency footprint and 
 by `npm run nfr` in CI; the frame, log and poll bounds are unit-tested; the latency and idle-CPU rows need a
 device and belong to `device.yml`.
 
+**Measured on an Android emulator (Pixel 9 API 36, host: M-series macOS), p50 of 3–5 samples:**
+
+| Phase                      | Maestro | Appium |
+| -------------------------- | ------- | ------ |
+| `inspectHierarchy`         | 107 ms  | 22 ms  |
+| `captureScreen`            | 182 ms  | 130 ms |
+| `perform` a tap            | 1258 ms | 75 ms  |
+| **click → code on screen** | 3 ms    | 45 ms  |
+| **click → screen moves**   | 1510 ms | 194 ms |
+
+The tap itself is the whole story, and it belongs to the driver: Maestro runs each command as its own flow
+over MCP and charges ~1.3 s for it, which no change on our side removes. Appium's 75 ms is why it feels live.
+Both meet the frame budget; the code budget is met because the recording no longer waits for either.
+
 | Budget                                                                | Target                                                                                           |
 | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
 | Install size added to a client project that never opens the inspector | **≈ 0** (`@pwtap/mobile-core` only; no Electron, no `ws`, no formatter)                          |
 | Install size added by the inspector devDependency                     | ≤ 5 MB                                                                                           |
 | Hover highlight latency                                               | ≤ 1 animation frame, no round trip                                                               |
+| click → generated code, p50                                           | ≤ 100 ms, and independent of the driver — it MUST NOT wait for the device                        |
 | tap → updated frame, p50                                              | ≤ 1.5 s Appium · ≤ 3 s Maestro                                                                   |
 | Idle CPU, connected and untouched                                     | < 5 % of one core                                                                                |
 | Idle poll interval                                                    | adaptive, ≥ 750 ms, ≤ 5 s; ≤ 30 s while failing                                                  |
@@ -689,10 +721,17 @@ The enabling piece is a **fake driver adapter** implementing `MobileInspectorDri
 hierarchy and canned screenshots. It makes the entire recording engine testable in CI with no device, and
 it is a Phase 0 deliverable, not an afterthought.
 
+**A UI row was missing and it cost two shipped defects.** Both were in the seam between the page and the
+service — where the service tests speak the protocol correctly by construction and the engine tests never
+load a page — so nothing in the suite could see either. A recorder is a browser application; the browser MUST
+be in the loop somewhere. The UI row below uses the same fake driver, needs no device, and runs in CI after
+the UI bundle is built and a Chromium installed.
+
 | Layer                                         | Covered                                                                                                                                                                                                                                 |
 | --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Unit (pure, golden-file where output is text) | locator ranking and warnings, hit-test policy, node key/path derivation, codegen output, AST append/merge, protocol field validation (including malformed payloads), draft revision state machine, `imageSize` on real PNG/JPEG headers |
 | Integration (fake driver)                     | connect → tap → timeline → codegen → save → run with a stubbed Playwright binary; disconnect-does-not-clear-draft; no dropped interactions under load                                                                                   |
+| UI (real browser + fake driver)               | reload keeps recording, the picker's serial still becomes an AVD name in codegen, a refused action is stated on screen, a second view takes over instead of going deaf                                                                  |
 | Device-gated (nightly / manual)               | Android emulator × {Maestro, Appium} and iOS simulator × {Maestro, Appium} record→save→run smoke                                                                                                                                        |
 
 ---

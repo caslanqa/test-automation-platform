@@ -189,6 +189,67 @@ test('tapping the login button records its accessibility id, not a coordinate', 
   await h.session.close();
 });
 
+test('the code appears before the driver answers, not after', async () => {
+  // Measured on a device: a Maestro tap takes ~1.3 s of its own, so waiting for it before showing anything
+  // put the generated code 1.4 s behind the click and the recorder felt broken. The hit-test is local, so
+  // the recording does not need the device to answer first — it needs to be taken back if the device says no.
+  const h = harness();
+  await connect(h);
+  const frameId = h.last('frame')?.frame.frameId ?? 0;
+  const mark = h.events.length;
+
+  await h.send({ type: 'tapAt', ...LOGIN_BUTTON, frameId });
+
+  const since = h.events.slice(mark).map(e => e.type);
+  assert.ok(
+    since.indexOf('timeline') < since.indexOf('actionResult'),
+    `the timeline must be sent before the driver's result; saw ${since.join(', ')}`,
+  );
+  assert.ok(since.indexOf('code') < since.indexOf('actionResult'), 'and so must the code');
+
+  await h.session.close();
+});
+
+test('a refused action is taken back out of the timeline it was already in', async () => {
+  const h = harness();
+  await connect(h);
+  const driverSession = h.driver.session;
+  assert.ok(driverSession);
+  driverSession.failNextAction = 'element went away';
+  const mark = h.events.length;
+
+  await h.send({ type: 'perform', action: { kind: 'tap', locator: { text: 'Log in' } } });
+
+  const timelines = h.events
+    .slice(mark)
+    .flatMap(e => (e.type === 'timeline' ? [e.actions.length] : []));
+  assert.deepEqual(timelines, [1, 0], 'recorded optimistically, then retracted');
+  assert.deepEqual(h.last('timeline')?.actions, [], 'nothing that did not happen may survive');
+  assert.match(h.logs().join('\n'), /element went away/);
+
+  await h.session.close();
+});
+
+test('retraction removes the refused action, not whatever happens to be last', async () => {
+  // The device can take a second or two to refuse, and the user may edit the timeline in the meantime, so
+  // the retraction is by identity rather than by position.
+  const h = harness();
+  await connect(h);
+  const frameId = h.last('frame')?.frame.frameId ?? 0;
+  await h.send({ type: 'tapAt', ...LOGIN_BUTTON, frameId });
+  const driverSession = h.driver.session;
+  assert.ok(driverSession);
+  driverSession.failNextAction = 'element went away';
+
+  await h.send({ type: 'perform', action: { kind: 'back' } });
+
+  const actions = h.last('timeline')?.actions ?? [];
+  assert.equal(actions.length, 1, 'only the refused action is gone');
+  assert.equal(actions[0]?.kind, 'tap', 'the earlier, successful action survives');
+
+  await h.session.close();
+});
+
 test('a failed action is reported and NOT recorded', async () => {
   const h = harness();
   await connect(h);

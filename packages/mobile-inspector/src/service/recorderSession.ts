@@ -320,14 +320,7 @@ export class RecorderSession {
     if (!this.device.connected) {
       return;
     }
-    const fresh = await this.refreshHierarchy();
-    if (frameId !== this.device.frameId) {
-      this.log(
-        'info',
-        `tapped against frame ${frameId} while the device is on ${this.device.frameId}; ` +
-          'hit-tested the current screen',
-      );
-    }
+    const fresh = await this.hierarchyForClick(frameId, 'tapped');
     const node = fresh ? hitTest(this.device.hierarchy, x, y) : undefined;
     const outOfApp = node && outOfAppWarning(node, this.lastTarget?.appId);
     if (outOfApp) {
@@ -347,16 +340,7 @@ export class RecorderSession {
     if (!this.device.connected) {
       return;
     }
-    // Advisory, exactly as in `tapAt`: right-clicking must always answer with the current screen's
-    // candidates rather than an empty menu because a frame id moved on (ADR-006).
-    const fresh = await this.refreshHierarchy();
-    if (frameId !== this.device.frameId) {
-      this.log(
-        'info',
-        `inspected frame ${frameId} while the device is on ${this.device.frameId}; ` +
-          'hit-tested the current screen',
-      );
-    }
+    const fresh = await this.hierarchyForClick(frameId, 'inspected');
     const node = fresh ? (hitTest(this.device.hierarchy, x, y) ?? null) : null;
     const candidates = node
       ? locatorCandidates(node, this.device.hierarchy, { appId: this.lastTarget?.appId })
@@ -374,21 +358,58 @@ export class RecorderSession {
     this.send({ type: 'inspected', node, candidates });
   }
 
+  /**
+   * The hierarchy to hit-test a click against.
+   *
+   * Re-reading the tree on every click used to be unconditional. It is only necessary when the screen has
+   * moved on since the frame the user clicked: if the client's frame is the device's current one, the tree
+   * already in hand IS the screen they clicked, and re-reading it costs a device round trip per interaction
+   * for nothing. `frameId` stays advisory — a mismatch refreshes and notes it, never refuses (ADR-006).
+   */
+  private async hierarchyForClick(frameId: number, verb: string): Promise<boolean> {
+    if (frameId === this.device.frameId && this.device.hierarchy.length > 0) {
+      return true;
+    }
+    const fresh = await this.refreshHierarchy();
+    if (frameId !== this.device.frameId) {
+      this.log(
+        'info',
+        `${verb} frame ${frameId} while the device is on ${this.device.frameId}; ` +
+          'hit-tested the current screen',
+      );
+    }
+    return fresh;
+  }
+
+  /**
+   * Record first, then drive the device — and retract if the device refuses.
+   *
+   * Waiting for the driver before showing anything made every interaction feel broken: a Maestro tap takes
+   * ~1.3 s on its own, so the code appeared a second and a half after the click and users reported the
+   * recorder as laggy. Nothing about the recording depends on the device answering first — the hit-test is
+   * local — so the action goes into the timeline and the code immediately and is taken back out if the
+   * driver rejects it, which the failure banner already explains. Retraction is by identity, because the
+   * user can undo or delete something while the device is still thinking.
+   */
   async perform(action: MobileAction): Promise<void> {
     if (!this.device.connected) {
       this.send({ type: 'error', message: 'not connected to a device' });
       return;
     }
+    this.recorder.append(action);
+    this.sendTimelineAndCode(action);
+
     const result = await this.device.perform(action);
     this.send({ type: 'actionResult', action, result });
     if (result.ok) {
-      this.recorder.append(action);
-      this.sendTimelineAndCode(action);
       // Look again once the screen has had a moment, and once more if it is still moving (ADR-006).
       await this.device.settle();
-    } else {
-      this.log('error', `${action.kind} failed: ${result.error ?? 'unknown driver error'}`);
+      return;
     }
+    if (this.recorder.retract(action)) {
+      this.sendTimelineAndCode();
+    }
+    this.log('error', `${action.kind} failed: ${result.error ?? 'unknown driver error'}`);
   }
 
   /** Record a declarative step that cannot be true in the current UI state without executing it. */

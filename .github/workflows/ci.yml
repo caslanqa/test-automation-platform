@@ -34,6 +34,10 @@ jobs:
       # the UI bundle in CI, so a vite failure would only have surfaced at publish time.
       - name: Build inspector UI
         run: npm run build:ui -w @pwtap/mobile-inspector
+      # The UI tests drive the real page in a real browser and skip without one, which would make them
+      # silently worthless here. `ui-dist` is built by the step above; this adds the browser.
+      - name: Install Chromium for the UI tests
+        run: npx playwright install --with-deps chromium
       - name: Unit tests
         run: npm test
       - name: Smoke — scaffold a core-only project and verify it builds

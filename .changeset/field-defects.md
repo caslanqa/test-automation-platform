@@ -30,3 +30,11 @@ forever), and either can take it back.
 **A refused action is now stated on screen.** An action the driver rejects is deliberately not recorded, but
 the reason lived only in a log tab the user had to know to open, so a click that produced nothing looked like
 a bug in the recorder. It now says which action was refused and why.
+
+**And a test layer that would have caught all of it.** The suite had no UI row: the service tests speak the
+protocol correctly by construction and the engine tests never load a page, so the seam where both defects
+lived was untested. Four tests now drive the real page in a real browser against the fake driver — reload
+keeps recording, the picker's serial still becomes an AVD name in codegen, a refused action is stated on
+screen, and a second view takes over instead of going deaf. Each was checked against the unfixed code first;
+the AVD-name one fails with exactly the `device: "emulator-5554"` seen in the field. CI installs Chromium so
+they cannot silently skip.
