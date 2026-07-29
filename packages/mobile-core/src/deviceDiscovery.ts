@@ -46,6 +46,15 @@ export function resolveStableDeviceName(
     if (connected.name && connected.name !== connected.id) {
       return { device: connected.name };
     }
+    // The adapter did not report a name, so ask discovery — which lists booted emulators BY SERIAL with
+    // their AVD name, and is the authority for that mapping. Skipping this step is what made a recording
+    // pin `emulator-5554`: the mapping was in `known` all along, sitting unused.
+    const bySerial = known.find(
+      d => d.platform === 'android' && d.id === connected.id && d.name && d.name !== d.id,
+    );
+    if (bySerial?.name) {
+      return { device: bySerial.name };
+    }
     return {
       device: connected.id,
       warning:

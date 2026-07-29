@@ -40,6 +40,10 @@ export interface InspectorState {
   connectedToService: boolean;
   /** Set when the service refuses or drops us, so the UI can say why instead of just going quiet. */
   serviceError: string | null;
+  /** Another view took this stream over; this one is finished and must not silently look alive. */
+  displaced: boolean;
+  /** The last action the driver refused, surfaced where the user is looking rather than only in the logs. */
+  lastFailure: { action: MobileAction; error: string } | null;
   drivers: DriverSummary[];
   devices: InspectorDevice[];
   apps: InstalledApp[];
@@ -68,6 +72,8 @@ export interface InspectorState {
 const INITIAL_STATE: InspectorState = {
   connectedToService: false,
   serviceError: null,
+  displaced: false,
+  lastFailure: null,
   drivers: [],
   devices: [],
   apps: [],
@@ -151,6 +157,15 @@ export function useInspectorBridge(): {
 
   useEffect(() => {
     const source = new EventSource('/events');
+    const onMessage = (event: MessageEvent<string>): void => {
+      const message = JSON.parse(event.data) as ServerMessage;
+      if (message.type === 'displaced') {
+        // Closed here, not by the server alone: a server-closed stream is a clean close, which EventSource
+        // retries — and two views would then take turns displacing each other forever.
+        source.close();
+      }
+      applyServerMessage(setState, message);
+    };
     source.onopen = () => {
       setState(s => ({ ...s, connectedToService: true, serviceError: null }));
       // The re-sync snapshot covers device/timeline/draft, but the installed driver list is discovered on
@@ -158,8 +173,7 @@ export function useInspectorBridge(): {
       // Without this the driver picker stays empty and nothing can be connected at all.
       send({ type: 'listDrivers' });
     };
-    source.onmessage = event =>
-      applyServerMessage(setState, JSON.parse(event.data as string) as ServerMessage);
+    source.onmessage = onMessage;
     source.onerror = () =>
       // EventSource retries by itself; report the gap rather than looking frozen.
       setState(s => ({
@@ -212,8 +226,21 @@ function applyServerMessage(
         return { ...s, hierarchy: message.nodes };
       case 'inspected':
         return { ...s, inspected: { node: message.node, candidates: message.candidates } };
+      case 'displaced':
+        return { ...s, displaced: true, connectedToService: false, serviceError: null };
       case 'actionResult':
-        return { ...s, lastResult: { action: message.action, result: message.result } };
+        return {
+          ...s,
+          lastResult: { action: message.action, result: message.result },
+          // A refused action is not recorded, so without this the user sees a click that did nothing and no
+          // reason anywhere except a log tab they have to know to open.
+          lastFailure: message.result.ok
+            ? null
+            : {
+                action: message.action,
+                error: message.result.error ?? 'the driver gave no reason',
+              },
+        };
       case 'timeline':
         return { ...s, timeline: message.actions };
       case 'code':

@@ -69,6 +69,11 @@ export class DeviceSession {
     return this.session !== undefined;
   }
 
+  /** The app the driver is actually scoped to, when it resolved one the caller did not name. */
+  get appId(): string | undefined {
+    return this.session?.appId;
+  }
+
   get device(): InspectorDevice | undefined {
     return this.session?.device;
   }
@@ -133,6 +138,11 @@ export class DeviceSession {
    * the UI stays responsive; a second only follows when there is something new to show.
    */
   async settle(): Promise<void> {
+    // Look once immediately: the device has already performed the action, so whatever moved is on screen
+    // now, not only after the settle sleep. Identical frames are deduped, so a look that finds nothing new
+    // costs a hash rather than a repaint — and waiting the full settle before the FIRST look is what made a
+    // tap take about half a second to show any visible effect.
+    await this.refreshFrame();
     const before = this.lastFrameBytes;
     await sleep(this.timing.settleMs);
     await this.refreshHierarchy();

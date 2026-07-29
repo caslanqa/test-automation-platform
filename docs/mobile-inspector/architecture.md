@@ -44,8 +44,11 @@ Recording a driver-neutral mobile flow against a booted Android emulator or iOS 
 locators for the elements touched, generating a readable Playwright test that uses the platform's own
 fixture barrel, saving it into the project, and running it back.
 
-**Supported hosts.** macOS (Android + iOS) and Linux (Android only) are supported and CI-verified.
-Windows is **best-effort**: the code MUST stay path-portable (it already branches on `playwright.cmd`)
+**Supported hosts.** macOS (Android + iOS) is supported and CI-verified. **Linux is NOT supported**: the
+first nightly device run failed with `no Platform implementation for 'linux'` — `@pwtap/platform` branches on
+the host in `getPlatform()` and only has a macOS implementation. The Android job therefore has to run on a
+macOS runner, or a `linux.ts` has to be written. This document previously claimed Linux was CI-verified; it
+never was. Windows is **best-effort**: the code MUST stay path-portable (it already branches on `playwright.cmd`)
 and MUST NOT hard-code POSIX separators, but no phase exit criterion depends on Windows and no CI job
 covers it. iOS is macOS-only by platform constraint, not by our choice.
 
@@ -164,10 +167,23 @@ Decisions encoded above, each one closing a current defect:
    `@pwtap/mobile-core`, regardless of how many mobile plugins are installed. Both plugin manifests
    declare the same fixture fragment with a shared dedupe key; `@pwtap/create`'s injector MUST skip a
    duplicate. The existing `maestro` and `app` fixtures are untouched.
-4. **Device identity.** The emitted `device` MUST be replayable days later, so it MUST NOT be an
+4. **App identity.** A driver that cannot act without an app id MUST NOT hand back a session that has none.
+   Maestro scopes every command — including `tap` and `back` — to one app and refuses until it is set, so a
+   connection with an empty app id used to produce a session that showed the screen and failed every
+   interaction with an internal message. Such a driver MUST resolve an app itself (the foreground app is what
+   the user is looking at, so it is the one they mean) and MUST refuse the connection outright when it cannot,
+   naming what to supply. Whatever it resolves MUST be reported back on the session (`DriverSession.appId`) and
+   is what codegen pins: a recording that pinned nothing would launch nothing on replay and re-record against
+   whatever happened to be open.
+5. **Device identity.** The emitted `device` MUST be replayable days later, so it MUST NOT be an
    ephemeral handle. Android: the AVD name, never the `adb` serial — device discovery reports booted
    emulators _by serial_ (`emulator-5554`), which changes across reboots, so the recorder MUST map the
-   connected device back to its AVD name before codegen. iOS: the simulator name when it is unambiguous
+   connected device back to its AVD name before codegen. **Two rules make that mapping reliable, and both
+   were broken in the field:** `DiscoveredDevice.name` MUST be the device's own AVD name — never the
+   caller's input echoed back, never the serial — and the resolver MUST look the connected `id` up in the
+   device list it is handed, which is the authority for the serial→AVD mapping. Getting either wrong
+   produced a recording pinned to `emulator-5554`, which fails with "no android device available" the
+   moment that emulator instance is gone. iOS: the simulator name when it is unambiguous
    among installed simulators, otherwise the UDID (names are not unique — two "iPhone 15" runtimes are
    legal; UDIDs are stable across reboots). The resolver lives in `@pwtap/mobile-core` next to
    `deviceDiscovery`, so the fixture and the recorder cannot disagree about what a `device` string means.
@@ -176,7 +192,7 @@ Decisions encoded above, each one closing a current defect:
    `resolveSimUdid`, which does the same. When neither handle is durable (an Android emulator whose AVD
    name could not be resolved, leaving only an `adb` serial) the recorder MUST warn rather than quietly
    pin a value that stops matching after a reboot.
-5. **Assertions.** Visibility assertions are generated as `expect.poll(() => mobileApp.isVisible(...))`,
+6. **Assertions.** Visibility assertions are generated as `expect.poll(() => mobileApp.isVisible(...))`,
    which requires `isVisible` to _return a boolean_ — see ADR-004 and §5.
 
 ### ADR-004 — `isVisible` becomes its own boolean action
@@ -234,6 +250,34 @@ The current model gates every interaction on `frameId === lastFrameId` while a 1
   down-scale or re-encode to stay under the §11 payload budget.
 - **Hover highlight is client-side** against the last hierarchy (target: no round trip, see §11), and the
   hit-test MUST be throttled to at most one evaluation per animation frame.
+
+#### ADR-006 addendum — the recording MUST NOT wait for the device
+
+Reported from a live installation as 2–3 s of lag on every interaction, and the measurement above says why:
+the action was performed first and recorded only once the driver confirmed, so the generated code arrived a
+full Maestro tap-latency behind the click.
+
+- Hit-testing is local, so a click becomes an action with no device round trip. The action MUST enter the
+  timeline and the code **immediately**, before the driver is asked to perform it.
+- A driver that then refuses it MUST cause the action to be **retracted** — by identity, not by position,
+  because the user can undo or delete something while the device is still answering — and the refusal MUST be
+  surfaced on screen (§9), not only in the log.
+- The hierarchy MUST NOT be re-read before hit-testing when the client's `frameId` is the device's current
+  frame: the tree already in hand IS the screen the user clicked. Re-reading it unconditionally cost a device
+  round trip per interaction for nothing.
+- **A device click MUST be driven by coordinate, while the element is what gets recorded.** The hit-test has
+  already identified the element locally; asking the driver to find it again is a second lookup that costs
+  ~800 ms per tap on Maestro. A driver that cannot tap a raw point MUST fail loudly (the action is retracted
+  and reported) rather than be given a silent locator retry, which would hide the gap and double the latency
+  of every failure. A locator chosen from the right-click menu is the exception — there the user is choosing a
+  locator, so that is what gets performed.
+- **The lost guarantee MUST be bought back by sampling, not by paying per tap.** Driving by coordinate stops
+  proving that the recorded locator resolves on this driver, and that class of bug is real. So each locator
+  _strategy_ in the recording is verified once per session, after the screen has settled and against the
+  current tree — the bugs are systematic, so one element answers for all of them, and the check never blocks
+  an interaction or fails a recording.
+- After an action the device MUST be looked at immediately, then again after the settle delay. Waiting the
+  full settle before the first look is what made a tap take half a second to show any visible effect.
 
 ### ADR-007 — Node identity: every hierarchy node carries a stable key
 
@@ -366,6 +410,15 @@ client→server requests, events are a server→client stream, and frames are im
   MUST keep at most one command in flight and every command MUST carry a monotonic client `seq` that the
   server rejects when it arrives out of order — a reordered or dropped `tapAt` must surface as a visible
   error (§6), never as a silent no-op.
+- **`seq` is scoped to the ATTACHED CLIENT, and MUST be reset on attach.** A browser counts from 1 on every
+  page load, so a launch-wide counter refused every command from a reloaded page while frames kept arriving:
+  the page looked alive and recorded nothing. Ordering only ever needed to hold within one client's own
+  stream of POSTs.
+- **A new client TAKES OVER rather than being refused.** Two clients must never share one device and one
+  draft, but refusing the newcomer was the wrong end to cut: the CLI opens a window and prints the URL, and
+  an `EventSource` that receives a non-200 never retries, so opening that URL produced a permanently deaf
+  page. The displaced client MUST be told (`displaced`) and MUST close its own stream, or a server-side close
+  reads as a retryable drop and the two views displace each other forever.
 - `ws` MUST NOT be a dependency of any published package.
 
 ### ADR-014 — Dependency policy: use the host project's toolchain, never ship a second copy
@@ -616,11 +669,26 @@ Measured, not aspirational. The deterministic rows — dependency footprint and 
 by `npm run nfr` in CI; the frame, log and poll bounds are unit-tested; the latency and idle-CPU rows need a
 device and belong to `device.yml`.
 
+**Measured on an Android emulator (Pixel 9 API 36, host: M-series macOS), p50 of 3–5 samples:**
+
+| Phase                      | Maestro | Appium |
+| -------------------------- | ------- | ------ |
+| `inspectHierarchy`         | 107 ms  | 22 ms  |
+| `captureScreen`            | 182 ms  | 130 ms |
+| `perform` a tap            | 1258 ms | 75 ms  |
+| **click → code on screen** | 3 ms    | 45 ms  |
+| **click → screen moves**   | 1510 ms | 194 ms |
+
+The tap itself is the whole story, and it belongs to the driver: Maestro runs each command as its own flow
+over MCP and charges ~1.3 s for it, which no change on our side removes. Appium's 75 ms is why it feels live.
+Both meet the frame budget; the code budget is met because the recording no longer waits for either.
+
 | Budget                                                                | Target                                                                                           |
 | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
 | Install size added to a client project that never opens the inspector | **≈ 0** (`@pwtap/mobile-core` only; no Electron, no `ws`, no formatter)                          |
 | Install size added by the inspector devDependency                     | ≤ 5 MB                                                                                           |
 | Hover highlight latency                                               | ≤ 1 animation frame, no round trip                                                               |
+| click → generated code, p50                                           | ≤ 100 ms, and independent of the driver — it MUST NOT wait for the device                        |
 | tap → updated frame, p50                                              | ≤ 1.5 s Appium · ≤ 3 s Maestro                                                                   |
 | Idle CPU, connected and untouched                                     | < 5 % of one core                                                                                |
 | Idle poll interval                                                    | adaptive, ≥ 750 ms, ≤ 5 s; ≤ 30 s while failing                                                  |
@@ -672,10 +740,17 @@ The enabling piece is a **fake driver adapter** implementing `MobileInspectorDri
 hierarchy and canned screenshots. It makes the entire recording engine testable in CI with no device, and
 it is a Phase 0 deliverable, not an afterthought.
 
+**A UI row was missing and it cost two shipped defects.** Both were in the seam between the page and the
+service — where the service tests speak the protocol correctly by construction and the engine tests never
+load a page — so nothing in the suite could see either. A recorder is a browser application; the browser MUST
+be in the loop somewhere. The UI row below uses the same fake driver, needs no device, and runs in CI after
+the UI bundle is built and a Chromium installed.
+
 | Layer                                         | Covered                                                                                                                                                                                                                                 |
 | --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Unit (pure, golden-file where output is text) | locator ranking and warnings, hit-test policy, node key/path derivation, codegen output, AST append/merge, protocol field validation (including malformed payloads), draft revision state machine, `imageSize` on real PNG/JPEG headers |
 | Integration (fake driver)                     | connect → tap → timeline → codegen → save → run with a stubbed Playwright binary; disconnect-does-not-clear-draft; no dropped interactions under load                                                                                   |
+| UI (real browser + fake driver)               | reload keeps recording, the picker's serial still becomes an AVD name in codegen, a refused action is stated on screen, a second view takes over instead of going deaf                                                                  |
 | Device-gated (nightly / manual)               | Android emulator × {Maestro, Appium} and iOS simulator × {Maestro, Appium} record→save→run smoke                                                                                                                                        |
 
 ---

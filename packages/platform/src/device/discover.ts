@@ -43,13 +43,17 @@ async function findBootedAndroid(deviceName?: string): Promise<DiscoveredDevice 
     if (!id || state !== 'device') {
       continue;
     }
+    // `name` is the AVD name (see DiscoveredDevice) — the device's own durable handle, never the caller's
+    // input and never the serial. Echoing either is how a recorded test came to pin `emulator-5554`, which
+    // stops resolving the moment that emulator instance goes away.
+    const avdName = await avdNameForSerial(id);
     if (deviceName) {
-      if (id === deviceName || (await avdNameForSerial(id)) === deviceName) {
-        return { id, platform: 'android', name: deviceName };
+      if (id === deviceName || avdName === deviceName) {
+        return { id, platform: 'android', name: avdName };
       }
       continue;
     }
-    return { id, platform: 'android', name: id };
+    return { id, platform: 'android', name: avdName };
   }
   return null;
 }

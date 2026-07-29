@@ -23,6 +23,7 @@ export {
   clearLogcat,
   dumpLogcat,
   emulatorMode,
+  foregroundAndroidApp,
   getAndroidViewportSize,
   listAvds,
   listBootedAndroidDevices,

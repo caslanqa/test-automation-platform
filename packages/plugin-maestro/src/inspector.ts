@@ -30,6 +30,7 @@ import {
   acquireDeviceLock,
   bootIosSim,
   deviceLockKey,
+  foregroundAndroidApp,
   getAndroidViewportSize,
   getIosSimulatorViewportSize,
   recordBootedDevice,
@@ -200,18 +201,29 @@ class MaestroDriverSession implements DriverSession {
 
   private readonly maestro: MaestroMcpSession;
   readonly device: InspectorDevice;
+  /** The app this session is scoped to — the one requested, or the one adopted from the foreground. */
+  readonly appId: string;
   private readonly coordinateSize: { width: number; height: number } | undefined;
+  /**
+   * The coordinate space of the most recent capture, orientation already resolved. Kept so converting a
+   * point locator into Maestro's `x%,y%` does not need a fresh screenshot — the inspector captures on every
+   * action and on every poll, so this is never stale by more than one frame, and taking another screenshot
+   * added ~180 ms to every coordinate tap for a number already in hand.
+   */
+  private lastCoordinateSpace: { width: number; height: number } | undefined;
 
   constructor(
     maestro: MaestroMcpSession,
     device: InspectorDevice,
     coordinateSize: { width: number; height: number } | undefined,
     release: () => void,
+    appId: string,
   ) {
     this.maestro = maestro;
     this.device = device;
     this.coordinateSize = coordinateSize;
     this.releaseLock = release;
+    this.appId = appId;
   }
 
   async captureScreen(): Promise<ScreenFrame> {
@@ -226,6 +238,7 @@ class MaestroDriverSession implements DriverSession {
       this.coordinateSize && imageLandscape !== coordinatesLandscape
         ? { width: this.coordinateSize.height, height: this.coordinateSize.width }
         : this.coordinateSize;
+    this.lastCoordinateSpace = coordinateSize ?? { width: size.width, height: size.height };
     return {
       frameId: this.frameCounter++,
       imageBase64: buf.toString('base64'),
@@ -251,8 +264,8 @@ class MaestroDriverSession implements DriverSession {
    */
   private async resolveSelector(locator: MobileLocator): Promise<MaestroSelector> {
     if (locator.point !== undefined) {
-      const frame = await this.captureScreen();
-      return { point: toPercentPoint(locator.point, frame) };
+      const space = this.lastCoordinateSpace ?? (await this.captureScreen());
+      return { point: toPercentPoint(locator.point, space) };
     }
     return toMaestroSelector(locator);
   }
@@ -397,6 +410,21 @@ class MaestroInspectorDriver implements MobileInspectorDriver {
         acquired.platform === 'android'
           ? await getAndroidViewportSize(acquired.id)
           : await getIosSimulatorViewportSize(acquired.id);
+      // Maestro scopes EVERY command to an app id and throws until one is set, so a session without one can
+      // show the screen and do nothing else — which is exactly what it used to hand back, with the internal
+      // message "call maestro.launchApp(appId) before other commands" on every interaction. What the user is
+      // looking at is the app they mean, so adopt it; if that cannot be determined, refuse here instead.
+      let appId = options.appId;
+      if (!appId) {
+        appId =
+          acquired.platform === 'android' ? await foregroundAndroidApp(acquired.id) : undefined;
+        if (!appId) {
+          throw new Error(
+            '[maestro-inspector] the Maestro driver scopes every command to one app, and no app id was ' +
+              'given or could be detected on the device — connect with an app id (e.g. com.example.app)',
+          );
+        }
+      }
       for (let attempt = 1; ; attempt += 1) {
         const maestro = new MaestroMcpSession(acquired, inspectorHooks(outputDir), {
           screenshotMode: 'off',
@@ -404,16 +432,13 @@ class MaestroInspectorDriver implements MobileInspectorDriver {
         try {
           // Maestro initializes its device connection lazily on the first command. A freshly
           // released iOS driver can briefly report "not connected", so rebuild MCP once.
-          if (options.appId) {
-            await maestro.launchApp(options.appId);
-          } else {
-            await maestro.inspectScreen();
-          }
+          await maestro.launchApp(appId);
           return new MaestroDriverSession(
             maestro,
             toInspectorDevice(acquired, true),
             coordinateSize,
             release,
+            appId,
           );
         } catch (error) {
           await maestro.close();

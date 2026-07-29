@@ -131,6 +131,25 @@ test('the generated header carries driver, platform, stable device name and appI
   await h.session.close();
 });
 
+test('codegen pins the app the session is scoped to, even when the user named none', async () => {
+  // Found in the field: connecting the Maestro driver with an empty app id produced a session that showed the
+  // screen and refused every interaction, because Maestro scopes every command to one app. The driver now
+  // adopts whatever is in the foreground, and the recording has to pin THAT — a test pinning nothing would
+  // launch nothing on replay and record against whatever happened to be open.
+  const h = harness({ adoptedAppId: 'com.adopted.app' });
+
+  await h.send({ type: 'connect', driver: 'fake', options: { platform: 'android' } });
+
+  assert.equal(h.driver.connects.at(-1)?.appId, undefined, 'the user named no app');
+  assert.match(
+    h.code(),
+    /appId: "com\.adopted\.app"/,
+    'the recording pins the one actually in use',
+  );
+
+  await h.session.close();
+});
+
 test('appId and appSource reach the driver instead of being dropped', async () => {
   const h = harness();
   fs.mkdirSync(path.join(h.dir, 'build'), { recursive: true });
@@ -185,6 +204,126 @@ test('tapping the login button records its accessibility id, not a coordinate', 
   assert.match(h.code(), /await mobileApp\.tap\(\{ accessibilityId: "loginButton" \}\)/);
   // The tap landed on an anonymous inner view too; hit-testing must still prefer the identified parent.
   assert.doesNotMatch(h.code(), /point:/);
+
+  await h.session.close();
+});
+
+test('the code appears before the driver answers, not after', async () => {
+  // Measured on a device: a Maestro tap takes ~1.3 s of its own, so waiting for it before showing anything
+  // put the generated code 1.4 s behind the click and the recorder felt broken. The hit-test is local, so
+  // the recording does not need the device to answer first — it needs to be taken back if the device says no.
+  const h = harness();
+  await connect(h);
+  const frameId = h.last('frame')?.frame.frameId ?? 0;
+  const mark = h.events.length;
+
+  await h.send({ type: 'tapAt', ...LOGIN_BUTTON, frameId });
+
+  const since = h.events.slice(mark).map(e => e.type);
+  assert.ok(
+    since.indexOf('timeline') < since.indexOf('actionResult'),
+    `the timeline must be sent before the driver's result; saw ${since.join(', ')}`,
+  );
+  assert.ok(since.indexOf('code') < since.indexOf('actionResult'), 'and so must the code');
+
+  await h.session.close();
+});
+
+test('a refused action is taken back out of the timeline it was already in', async () => {
+  const h = harness();
+  await connect(h);
+  const driverSession = h.driver.session;
+  assert.ok(driverSession);
+  driverSession.failNextAction = 'element went away';
+  const mark = h.events.length;
+
+  await h.send({ type: 'perform', action: { kind: 'tap', locator: { text: 'Log in' } } });
+
+  const timelines = h.events
+    .slice(mark)
+    .flatMap(e => (e.type === 'timeline' ? [e.actions.length] : []));
+  assert.deepEqual(timelines, [1, 0], 'recorded optimistically, then retracted');
+  assert.deepEqual(h.last('timeline')?.actions, [], 'nothing that did not happen may survive');
+  assert.match(h.logs().join('\n'), /element went away/);
+
+  await h.session.close();
+});
+
+test('retraction removes the refused action, not whatever happens to be last', async () => {
+  // The device can take a second or two to refuse, and the user may edit the timeline in the meantime, so
+  // the retraction is by identity rather than by position.
+  const h = harness();
+  await connect(h);
+  const frameId = h.last('frame')?.frame.frameId ?? 0;
+  await h.send({ type: 'tapAt', ...LOGIN_BUTTON, frameId });
+  const driverSession = h.driver.session;
+  assert.ok(driverSession);
+  driverSession.failNextAction = 'element went away';
+
+  await h.send({ type: 'perform', action: { kind: 'back' } });
+
+  const actions = h.last('timeline')?.actions ?? [];
+  assert.equal(actions.length, 1, 'only the refused action is gone');
+  assert.equal(actions[0]?.kind, 'tap', 'the earlier, successful action survives');
+
+  await h.session.close();
+});
+
+test('the device is driven by coordinate while the element is what gets recorded', async () => {
+  // Measured on a device: asking Maestro to find the element we just hit-tested locally costs ~800 ms per
+  // tap, and it is the whole difference between this and Maestro Studio. So the driver is told where to tap
+  // and the recording still names the element — which is the artifact that has to survive.
+  const h = harness();
+  await connect(h);
+  const frameId = h.last('frame')?.frame.frameId ?? 0;
+
+  await h.send({ type: 'tapAt', ...LOGIN_BUTTON, frameId });
+
+  const taps = h.driver.session?.performed.filter(a => a.kind === 'tap') ?? [];
+  assert.equal(taps.length, 1);
+  assert.deepEqual(
+    taps[0].kind === 'tap' ? taps[0].locator : undefined,
+    { point: LOGIN_BUTTON },
+    'the device gets the coordinate the user clicked',
+  );
+  assert.deepEqual(
+    h.last('timeline')?.actions,
+    [{ kind: 'tap', locator: { accessibilityId: 'loginButton', label: 'loginButton' } }],
+    'the recording names the element, not the coordinate',
+  );
+
+  await h.session.close();
+});
+
+test('a locator chosen from the menu is performed as chosen, not as a coordinate', async () => {
+  // The substitution belongs to the device click only. Picking a candidate from the right-click menu IS the
+  // user choosing a locator, so that is what must be exercised.
+  const h = harness();
+  await connect(h);
+
+  await h.send({ type: 'perform', action: { kind: 'tap', locator: { text: 'Log in' } } });
+
+  const taps = h.driver.session?.performed.filter(a => a.kind === 'tap') ?? [];
+  assert.deepEqual(taps[0].kind === 'tap' ? taps[0].locator : undefined, { text: 'Log in' });
+
+  await h.session.close();
+});
+
+test('each locator strategy is proven on the driver once, after the screen settles', async () => {
+  // Driving by coordinate stops proving that the recorded locator resolves, so the strategy is sampled
+  // instead — systematic bugs (an iOS text locator reading `value` while the selector matched `label`) show
+  // up on the first sample. Off the critical path: it runs after the action, never before it.
+  const h = harness();
+  await connect(h);
+  const frameId = h.last('frame')?.frame.frameId ?? 0;
+
+  await h.send({ type: 'tapAt', ...LOGIN_BUTTON, frameId });
+  const afterFirst = h.driver.session?.performed.filter(a => a.kind === 'isVisible').length ?? 0;
+  await h.send({ type: 'tapAt', ...LOGIN_BUTTON, frameId });
+  const afterSecond = h.driver.session?.performed.filter(a => a.kind === 'isVisible').length ?? 0;
+
+  assert.equal(afterFirst, 1, 'the accessibilityId strategy is sampled once');
+  assert.equal(afterSecond, 1, 'and not again for the same strategy');
 
   await h.session.close();
 });

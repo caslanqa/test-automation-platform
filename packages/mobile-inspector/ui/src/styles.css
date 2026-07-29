@@ -632,6 +632,17 @@ dialog.modal::backdrop {
   word-break: break-all;
 }
 
+.banner-displaced,
+.banner-failure {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: space-between;
+}
+.banner-failure {
+  background: #6b3a1f;
+}
+
 /* Connection-loss banner. The event stream retries by itself, so this states the gap and gets out of the
    way — replacing the whole UI would imply the recording was lost, which it is not. */
 .service-banner {

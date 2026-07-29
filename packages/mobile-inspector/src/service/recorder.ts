@@ -49,6 +49,16 @@ export class Recorder {
   }
 
   /**
+   * Remove a specific action object, if it is still live. Used to retract an optimistically recorded action
+   * the driver then refused: by identity, because the user may have undone or removed something in the
+   * second or two the device took to answer, and removing "the last one" would then take the wrong step.
+   */
+  retract(action: MobileAction): boolean {
+    const index = this.actions.lastIndexOf(action);
+    return index === -1 ? false : this.remove(index);
+  }
+
+  /**
    * Remove one live action. This rewrites the log, so anything undone past this point is abandoned — the
    * alternative is a redo that reinserts a step around a hole the user deliberately made.
    */

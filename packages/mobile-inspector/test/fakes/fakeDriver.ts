@@ -109,9 +109,17 @@ export interface FakeDriverOptions {
   screens?: MobileNode[][];
   /** Make `connect` reject, to exercise the engine's connect-failure path. */
   failConnect?: string;
+  /**
+   * An app the driver resolves for itself when the caller names none — what the Maestro adapter does by
+   * adopting the foreground app, since it cannot perform anything without one.
+   */
+  adoptedAppId?: string;
 }
 
 export class FakeDriverSession implements DriverSession {
+  /** Set when the driver resolved an app the caller did not name, mirroring the Maestro adapter. */
+  readonly appId: string | undefined;
+
   readonly driverId = 'fake';
   readonly device: InspectorDevice;
   /** Every action that actually reached the driver, in order. */
@@ -126,7 +134,8 @@ export class FakeDriverSession implements DriverSession {
   private screenIndex = 0;
   private readonly screens: MobileNode[][];
 
-  constructor(device: InspectorDevice, screens: MobileNode[][]) {
+  constructor(device: InspectorDevice, screens: MobileNode[][], appId?: string) {
+    this.appId = appId;
     this.device = device;
     this.screens = screens;
   }
@@ -213,6 +222,7 @@ export class FakeDriver implements MobileInspectorDriver {
     this.session = new FakeDriverSession(
       device,
       this.options.screens ?? [LOGIN_SCREEN, DASHBOARD_SCREEN],
+      options.appId ?? this.options.adoptedAppId,
     );
     return this.session;
   }

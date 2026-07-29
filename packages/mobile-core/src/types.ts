@@ -268,6 +268,13 @@ export interface DriverCapabilities {
 export interface DriverSession {
   readonly driverId: MobileDriverId;
   readonly device: InspectorDevice;
+  /**
+   * The app this session is actually scoped to, when the driver resolved one the caller did not name (e.g.
+   * adopting whatever was in the foreground). Codegen prefers it over the requested `appId`, so a recording
+   * pins the app it was really made against instead of nothing. Optional: an adapter that always requires an
+   * explicit app id simply omits it.
+   */
+  readonly appId?: string;
   captureScreen(): Promise<ScreenFrame>;
   inspectHierarchy(): Promise<MobileNode[]>;
   perform(action: MobileAction): Promise<ActionResult>;
