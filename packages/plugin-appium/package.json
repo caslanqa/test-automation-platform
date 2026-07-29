@@ -1,6 +1,6 @@
 {
   "name": "@pwtap/plugin-appium",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "Mobile testing for Playwright via Appium — a raw WebdriverIO session (app: WebdriverIO.Browser) over Android + iOS simulator, macOS-first",
   "type": "module",
   "license": "MIT",
