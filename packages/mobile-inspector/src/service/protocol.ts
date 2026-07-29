@@ -82,6 +82,8 @@ export type ClientMessage =
 // ----- server -> client -----
 
 export type ServerMessage =
+  /** This client's stream was taken over by a newer one; it must stop, not retry (see server.ts attach). */
+  | { type: 'displaced' }
   | { type: 'drivers'; drivers: DriverSummary[] }
   | { type: 'devices'; driver: MobileDriverId; devices: InspectorDevice[] }
   | { type: 'apps'; driver: MobileDriverId; apps: InstalledApp[] }

@@ -158,11 +158,29 @@ export function App() {
 
   return (
     <div className="app">
+      {/* Displaced is terminal for this view, so it offers the way back instead of a status line. */}
+      {state.displaced && (
+        <div className="service-banner banner-displaced" role="alert">
+          Another inspector view took over this session. The recording is safe — reload to bring it
+          back here.
+          <button className="btn btn-small" onClick={() => location.reload()}>
+            Take over
+          </button>
+        </div>
+      )}
       {/* The event stream reconnects on its own, so this reports the gap rather than replacing the UI:
           the recording lives on the service and is still there when the stream comes back (ADR-011). */}
-      {state.serviceError && (
+      {state.serviceError && !state.displaced && (
         <div className="service-banner" role="status">
           {state.serviceError}
+        </div>
+      )}
+      {/* A refused action is never recorded, so it has to be said out loud: the user's click produced
+          nothing and the reason used to live only in the logs tab. */}
+      {state.lastFailure && (
+        <div className="service-banner banner-failure" role="alert">
+          {state.lastFailure.action.kind} was refused by the driver: {state.lastFailure.error} —
+          nothing was recorded.
         </div>
       )}
       <header className="topbar">

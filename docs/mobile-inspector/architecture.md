@@ -44,8 +44,11 @@ Recording a driver-neutral mobile flow against a booted Android emulator or iOS 
 locators for the elements touched, generating a readable Playwright test that uses the platform's own
 fixture barrel, saving it into the project, and running it back.
 
-**Supported hosts.** macOS (Android + iOS) and Linux (Android only) are supported and CI-verified.
-Windows is **best-effort**: the code MUST stay path-portable (it already branches on `playwright.cmd`)
+**Supported hosts.** macOS (Android + iOS) is supported and CI-verified. **Linux is NOT supported**: the
+first nightly device run failed with `no Platform implementation for 'linux'` — `@pwtap/platform` branches on
+the host in `getPlatform()` and only has a macOS implementation. The Android job therefore has to run on a
+macOS runner, or a `linux.ts` has to be written. This document previously claimed Linux was CI-verified; it
+never was. Windows is **best-effort**: the code MUST stay path-portable (it already branches on `playwright.cmd`)
 and MUST NOT hard-code POSIX separators, but no phase exit criterion depends on Windows and no CI job
 covers it. iOS is macOS-only by platform constraint, not by our choice.
 
@@ -167,7 +170,12 @@ Decisions encoded above, each one closing a current defect:
 4. **Device identity.** The emitted `device` MUST be replayable days later, so it MUST NOT be an
    ephemeral handle. Android: the AVD name, never the `adb` serial — device discovery reports booted
    emulators _by serial_ (`emulator-5554`), which changes across reboots, so the recorder MUST map the
-   connected device back to its AVD name before codegen. iOS: the simulator name when it is unambiguous
+   connected device back to its AVD name before codegen. **Two rules make that mapping reliable, and both
+   were broken in the field:** `DiscoveredDevice.name` MUST be the device's own AVD name — never the
+   caller's input echoed back, never the serial — and the resolver MUST look the connected `id` up in the
+   device list it is handed, which is the authority for the serial→AVD mapping. Getting either wrong
+   produced a recording pinned to `emulator-5554`, which fails with "no android device available" the
+   moment that emulator instance is gone. iOS: the simulator name when it is unambiguous
    among installed simulators, otherwise the UDID (names are not unique — two "iPhone 15" runtimes are
    legal; UDIDs are stable across reboots). The resolver lives in `@pwtap/mobile-core` next to
    `deviceDiscovery`, so the fixture and the recorder cannot disagree about what a `device` string means.
@@ -366,6 +374,15 @@ client→server requests, events are a server→client stream, and frames are im
   MUST keep at most one command in flight and every command MUST carry a monotonic client `seq` that the
   server rejects when it arrives out of order — a reordered or dropped `tapAt` must surface as a visible
   error (§6), never as a silent no-op.
+- **`seq` is scoped to the ATTACHED CLIENT, and MUST be reset on attach.** A browser counts from 1 on every
+  page load, so a launch-wide counter refused every command from a reloaded page while frames kept arriving:
+  the page looked alive and recorded nothing. Ordering only ever needed to hold within one client's own
+  stream of POSTs.
+- **A new client TAKES OVER rather than being refused.** Two clients must never share one device and one
+  draft, but refusing the newcomer was the wrong end to cut: the CLI opens a window and prints the URL, and
+  an `EventSource` that receives a non-200 never retries, so opening that URL produced a permanently deaf
+  page. The displaced client MUST be told (`displaced`) and MUST close its own stream, or a server-side close
+  reads as a retryable drop and the two views displace each other forever.
 - `ws` MUST NOT be a dependency of any published package.
 
 ### ADR-014 — Dependency policy: use the host project's toolchain, never ship a second copy

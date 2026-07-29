@@ -45,6 +45,33 @@ test('Android warns when only a serial is available, instead of hiding it', () =
   assert.match(resolved.warning ?? '', /AVD name/, 'the warning must say how to fix it');
 });
 
+test('a connected serial is resolved through the device list, which knows its AVD name', () => {
+  // Found in the field: the UI connects by adb serial (the only handle that addresses a LIVE emulator),
+  // the adapter reported that serial as the device's name, and this function ignored the `known` list it
+  // is handed — so the recording pinned `emulator-5554` and could not connect once that instance was gone.
+  const connected = android('emulator-5554', 'emulator-5554');
+  const known = [android('emulator-5554', 'pixel9'), android('pixel10', 'pixel10')];
+
+  assert.deepEqual(resolveStableDeviceName(connected, known), { device: 'pixel9' });
+});
+
+test('the device list is consulted by serial, not by position', () => {
+  const connected = android('emulator-5556', 'emulator-5556');
+  const known = [android('emulator-5554', 'pixel9'), android('emulator-5556', 'galaxy21')];
+
+  assert.deepEqual(resolveStableDeviceName(connected, known), { device: 'galaxy21' });
+});
+
+test('a device list that only echoes the serial still warns rather than pinning it silently', () => {
+  const connected = android('emulator-5554', 'emulator-5554');
+  const known = [android('emulator-5554', 'emulator-5554')];
+
+  const resolved = resolveStableDeviceName(connected, known);
+
+  assert.equal(resolved.device, 'emulator-5554');
+  assert.match(resolved.warning ?? '', /after a reboot/);
+});
+
 test('an Android AVD name needs no device list to be trusted', () => {
   // AVD names are directory names, so they are unique by construction — no uniqueness check needed.
   assert.deepEqual(resolveStableDeviceName(android('emulator-5554', 'Pixel_9'), []), {

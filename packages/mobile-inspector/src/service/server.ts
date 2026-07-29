@@ -161,7 +161,13 @@ export async function startInspectorService(
   /** Monotonic event id: `EventSource` reports the last one it saw, which is how a reload resumes. */
   let nextEventId = 1;
   let subscriber: Subscriber | undefined;
-  /** Rejects a command that arrives out of order — POSTs can race in a way WS framing used to hide. */
+  /**
+   * Rejects a command that arrives out of order — POSTs can race in a way WS framing used to hide. Scoped to
+   * the ATTACHED CLIENT, not the launch: a browser counts from 1 on every page load, so a launch-wide
+   * counter refused every command from a reloaded page (`command 1 arrived after 5`) while frames kept
+   * arriving. The page looked alive and recorded nothing — the defect users reported as taps that never
+   * became code. Ordering only ever needed to hold within one client's own stream of POSTs (ADR-013).
+   */
   let lastSeq = 0;
 
   function writeEvent(message: ServerMessage): void {
@@ -229,11 +235,16 @@ export async function startInspectorService(
   }
 
   function attach(req: http.IncomingMessage, res: http.ServerResponse): void {
+    // Two clients must never share one device and one draft, but refusing the NEW one was the wrong end to
+    // cut: `mobile-inspect` opens a window and prints the URL, so opening that URL — which the README
+    // invites — got a 409, and an EventSource that receives a non-200 never retries. The page then rendered
+    // and stayed deaf forever. The session belongs to the launch (ADR-011), so the newest view wins: the
+    // previous one is told it was displaced and stops, and the recording is untouched either way.
     if (subscriber && !subscriber.response.writableEnded) {
-      // Two clients would race over one device and two drafts of one test. Say so rather than interleave.
-      res.writeHead(409, { 'content-type': 'text/plain' });
-      res.end('an inspector client is already attached to this service');
-      return;
+      const previous = subscriber.response;
+      previous.write(`id: ${nextEventId++}\ndata: ${JSON.stringify({ type: 'displaced' })}\n\n`);
+      previous.end();
+      subscriber = undefined;
     }
     res.writeHead(200, {
       'content-type': 'text/event-stream',
@@ -242,6 +253,7 @@ export async function startInspectorService(
       'x-accel-buffering': 'no',
     });
     subscriber = { response: res };
+    lastSeq = 0; // a new client is a new ordering domain
     req.on('close', () => {
       if (subscriber?.response === res) {
         subscriber = undefined; // detached, NOT torn down — the session outlives the connection

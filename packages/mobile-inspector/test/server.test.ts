@@ -64,6 +64,21 @@ class EventStream {
     return stream;
   }
 
+  /** Set once the server ends the response, which is how a displaced client learns it is finished. */
+  private finished = false;
+
+  /** Resolves true when the server has ended this stream, false if it is still open after `timeoutMs`. */
+  async ended(timeoutMs = 5000): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (this.finished) {
+        return true;
+      }
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    return false;
+  }
+
   private async consume(body: ReadableStream<Uint8Array>): Promise<void> {
     const decoder = new TextDecoder();
     try {
@@ -79,6 +94,7 @@ class EventStream {
     } catch {
       // Aborted by `close()` — expected.
     }
+    this.finished = true;
   }
 
   private push(frame: string): void {
@@ -265,15 +281,73 @@ test('a malformed command is rejected before it can reach a driver', async () =>
   events.close();
 });
 
-test('a second client is refused rather than allowed to race the first', async () => {
+test('a second client takes the view over instead of being refused', async () => {
+  // This used to answer 409. Found in the field: `mobile-inspect` opens a window AND prints the URL, so
+  // opening that URL — which the README invites — was refused, and an EventSource that receives a non-200
+  // never retries, leaving a page that rendered and stayed deaf forever. Two clients still never share the
+  // device: the older view is told it was displaced (ADR-011 — the session belongs to the launch).
+  const service = await startService();
+  const first = await EventStream.open(service);
+  await connect(service);
+  await first.waitFor('frame');
+
+  const second = await EventStream.open(service);
+
+  assert.equal(
+    await first.waitFor('displaced').then(() => true),
+    true,
+    'the old view must be told',
+  );
+  // The recording is untouched: the new view re-syncs the live session rather than starting a fresh one.
+  assert.equal((await second.waitFor('connected')).device.platform, 'android');
+  second.close();
+});
+
+test('the displaced client is closed, so it cannot reconnect and displace back', async () => {
   const service = await startService();
   const first = await EventStream.open(service);
 
-  const second = await fetch(`${service.base}/events?token=${service.token}`);
+  const second = await EventStream.open(service);
+  await first.waitFor('displaced');
 
-  assert.equal(second.status, 409);
-  await second.body?.cancel();
+  // The server ends the old response; a client that keeps reading sees the stream finish.
+  assert.equal(await first.ended(), true, 'the displaced stream must be ended by the server');
+  second.close();
+});
+
+test('a reattached client starts its own command ordering, so a reload can still record', async () => {
+  // The field defect behind "taps never become code": the sequence guard was launch-wide while a browser
+  // counts from 1 on every page load, so after a reload EVERY command came back `409 command 1 arrived
+  // after 5`. Frames need no command, so the screen kept updating and the page looked perfectly alive.
+  const service = await startService();
+  const first = await EventStream.open(service);
+  await connect(service);
+  await first.waitFor('frame');
+  await command(service, { type: 'tapAt', ...LOGIN_BUTTON, frameId: 0 });
+  await first.waitFor('timeline', t => t.actions.length === 1);
   first.close();
+  await new Promise(resolve => setTimeout(resolve, 50));
+
+  const second = await EventStream.open(service);
+  // A fresh page's very first command is #1, however many the previous one sent.
+  const response = await command(service, { type: 'tapAt', ...LOGIN_BUTTON, frameId: 0 }, 1);
+
+  assert.equal(response.status, 202, 'a reloaded page must not have its commands refused');
+  const timeline = await second.waitFor('timeline', t => t.actions.length === 2);
+  assert.equal(timeline.actions.length, 2, 'the recording continues rather than stalling');
+  second.close();
+});
+
+test('within one client, an out-of-order command is still refused', async () => {
+  // The guard itself must survive the fix: it exists because independent POSTs can race (ADR-013).
+  const service = await startService();
+  const events = await EventStream.open(service);
+  await command(service, { type: 'listDrivers' }, 5);
+
+  const late = await command(service, { type: 'listDrivers' }, 3);
+
+  assert.equal(late.status, 409);
+  events.close();
 });
 
 test('losing the event stream does NOT end the recording — reattaching resyncs it', async () => {
