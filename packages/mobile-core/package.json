@@ -1,6 +1,6 @@
 {
   "name": "@pwtap/mobile-core",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Driver-neutral mobile contracts for the Playwright Test Automation Platform — the action IR, locator engine, device discovery, driver-adapter registry and the mobileApp test fixture",
   "type": "module",
   "license": "MIT",
@@ -30,7 +30,7 @@
     "@playwright/test": ">=1.61.0"
   },
   "dependencies": {
-    "@pwtap/platform": "^1.0.0"
+    "@pwtap/platform": "^1.1.0"
   },
   "scripts": {
     "build": "tsc -b",
