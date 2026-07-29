@@ -5,39 +5,69 @@
  * another laptop or in CI is that the name does not resolve. The adapters answered `no android device
  * available to connect the inspector to`, which named neither the device asked for nor the ones present, said
  * nothing about how to proceed, and mentioned the inspector during a plain test run.
+ *
+ * The device list is INJECTED here. It used to be forced empty by setting `PATH=/nonexistent`, which stubbed
+ * nothing — the emulator is invoked by absolute path inside the Android SDK — so the branch actually under test
+ * was whichever one the developer's machine produced. On a laptop with AVDs the message named them and the
+ * assertions passed; in CI there are none, the other branch ran, and every run failed for a week.
  */
 import assert from 'node:assert/strict';
-import { after, test } from 'node:test';
+import { test } from 'node:test';
 
-import { deviceUnavailableMessage } from '../src/deviceMessage.js';
+import { deviceUnavailableMessage, type DeviceLister } from '../src/deviceMessage.js';
+import type { InspectorDevice } from '../src/types.js';
 
-// Discovery shells out to adb/simctl. Stubbed here so the message is tested, not the machine.
-const original = process.env.PATH;
-after(() => {
-  process.env.PATH = original;
+const lister =
+  (...devices: InspectorDevice[]): DeviceLister =>
+  () =>
+    Promise.resolve(devices);
+
+const android = (name: string, booted = false): InspectorDevice => ({
+  id: name,
+  name,
+  platform: 'android',
+  booted,
 });
-process.env.PATH = '/nonexistent';
 
-test('a device that was asked for is named, and so is the way out', async () => {
-  const message = await deviceUnavailableMessage('maestro', 'android', 'pixel9');
+const NONE = lister();
+const SOME = lister(android('pixel8'), android('pixel9b', true));
+
+test('a device that was asked for is named, and so are the ones present', async () => {
+  const message = await deviceUnavailableMessage('maestro', 'android', 'pixel9', SOME);
 
   assert.match(message, /"pixel9"/, 'the request must be quoted back');
+  assert.match(message, /pixel8/, 'and what this machine has instead');
+  assert.match(message, /pixel9b \(booted\)/, 'with the booted one marked, since it needs no boot');
   assert.match(message, /MOBILE_INSPECTOR_DEVICE/, 'and the override that avoids editing the test');
+});
+
+test('with nothing to point at, the advice is to create one rather than to override', async () => {
+  const message = await deviceUnavailableMessage('maestro', 'android', 'pixel9', NONE);
+
+  assert.match(message, /"pixel9"/, 'the request is still quoted back');
+  assert.match(message, /no android devices at all/);
   assert.match(message, /avdmanager|Device Manager/, 'and how to create one');
-  assert.doesNotMatch(
-    message,
-    /inspector to/,
-    'a plain test run must not be told about the inspector',
-  );
+  // Offering an override here would be advice that cannot work: there is no device for it to name.
+  assert.doesNotMatch(message, /MOBILE_INSPECTOR_DEVICE/);
+});
+
+test('no branch mentions the inspector, since a plain test run produces this too', async () => {
+  for (const devices of [NONE, SOME]) {
+    for (const requested of ['pixel9', undefined]) {
+      const message = await deviceUnavailableMessage('maestro', 'android', requested, devices);
+      assert.doesNotMatch(message, /inspector to/, `leaked the inspector for ${requested}`);
+    }
+  }
 });
 
 test('the platform decides which tool the hint names', async () => {
-  assert.match(await deviceUnavailableMessage('maestro', 'ios', 'iPhone 99'), /simctl|Xcode/);
-  assert.doesNotMatch(await deviceUnavailableMessage('maestro', 'ios', 'iPhone 99'), /avdmanager/);
+  const message = await deviceUnavailableMessage('maestro', 'ios', 'iPhone 99', NONE);
+  assert.match(message, /simctl|Xcode/);
+  assert.doesNotMatch(message, /avdmanager/);
 });
 
 test('naming no device at all is a different problem, and says so', async () => {
-  const message = await deviceUnavailableMessage('appium', 'android', undefined);
+  const message = await deviceUnavailableMessage('appium', 'android', undefined, NONE);
 
   assert.match(
     message,
@@ -47,9 +77,26 @@ test('naming no device at all is a different problem, and says so', async () => 
   assert.doesNotMatch(message, /"undefined"/, 'and must never quote a missing name back');
 });
 
+test('naming none while devices exist says which one to boot', async () => {
+  const message = await deviceUnavailableMessage('appium', 'android', undefined, SOME);
+
+  assert.match(message, /Boot one of/);
+  assert.match(message, /pixel8/);
+  assert.doesNotMatch(message, /"undefined"/);
+});
+
 test('the driver is named, since two of them can produce this', async () => {
-  assert.match(await deviceUnavailableMessage('appium', 'android', 'x'), /^\[appium\]/);
-  assert.match(await deviceUnavailableMessage('maestro', 'android', 'x'), /^\[maestro\]/);
+  assert.match(await deviceUnavailableMessage('appium', 'android', 'x', NONE), /^\[appium\]/);
+  assert.match(await deviceUnavailableMessage('maestro', 'android', 'x', NONE), /^\[maestro\]/);
+});
+
+test('a lister that throws still produces an answer', async () => {
+  // Discovery shells out, and a diagnostic must not throw over a diagnostic.
+  const broken: DeviceLister = () => Promise.reject(new Error('adb exploded'));
+  const message = await deviceUnavailableMessage('maestro', 'android', 'pixel9', broken);
+
+  assert.match(message, /"pixel9"/);
+  assert.match(message, /avdmanager|Device Manager/, 'it falls back to the no-devices advice');
 });
 
 test('the environment overrides a pinned device, unlike the other options', async () => {
