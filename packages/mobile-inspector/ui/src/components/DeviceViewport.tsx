@@ -117,9 +117,15 @@ export function DeviceViewport({
       }
       return;
     }
-    const direction =
-      Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : dy > 0 ? 'down' : 'up';
-    send({ type: 'perform', action: { kind: 'swipe', direction } });
+    // Carry how far the finger travelled, not just which way (§9). Every drag used to collapse into a
+    // full-screen swipe, so a short flick and a long pull recorded identically — and the generated test then
+    // scrolled a different amount than the user did.
+    const horizontal = Math.abs(dx) > Math.abs(dy);
+    const direction = horizontal ? (dx > 0 ? 'right' : 'left') : dy > 0 ? 'down' : 'up';
+    const rect = event.currentTarget.getBoundingClientRect();
+    const travelled = horizontal ? Math.abs(dx) / rect.width : Math.abs(dy) / rect.height;
+    const distance = Math.min(1, Math.max(0.05, Number(travelled.toFixed(2))));
+    send({ type: 'perform', action: { kind: 'swipe', direction, options: { distance } } });
   }
 
   function onPointerCancel(event: React.PointerEvent<HTMLImageElement>): void {

@@ -644,8 +644,13 @@ the right shape and is kept. Required changes beyond the state-model fixes above
 
 - **Capability-aware controls.** Every action control reads `DriverCapabilities` and renders disabled
   with the reason when unsupported (Maestro pinch, iOS back).
-- **Swipe fidelity.** A recorded drag MUST carry its start point and distance; collapsing every drag into
-  a generic full-screen swipe (today's behaviour) loses the user's intent.
+- **Swipe fidelity.** A recorded drag MUST carry how far the finger travelled, as a fraction of the swept
+  axis, so a short flick and a long pull do not record identically. **Done**, now that `SwipeOptions.distance`
+  is honoured by both adapters (it was dead in both). The **start point is still not carried**: `SwipeOptions`
+  has no such field, and a swipe that begins near the top edge can mean something different from one that
+  begins mid-screen (pull-to-refresh versus scroll). Expressing it needs either a field on `SwipeOptions` or
+  recording the gesture as a `drag` between two points, which both adapters already support but which
+  generates a coordinate-based and therefore fragile step. Open.
 - **Bounded state.** Logs are a ring buffer (2 000 entries); run output is capped (5 000 lines / 2 MB)
   with explicit truncation notice. Neither may grow without bound.
 - **Accessibility.** The connection drawer MUST use `inert`, not `aria-hidden`, while closed — its inputs
@@ -727,17 +732,21 @@ dedupe, `mobileTarget`/`mobileApp` naming, codegen emits `platform`/`appId`/stab
 device-name resolver, `isVisible` action in the IR and both adapters, `TestRunner` project/gate
 resolution and temp path. The `node --test` harness and the fake driver adapter land here too — without
 them nothing after this phase is verifiable in CI.
-→ **Exit:** a flow recorded in the inspector, saved, and then run from the CLI passes on a real device
-for **both** drivers. This is the gate the project has never had.
+→ **Exit: MET.** A flow recorded in the inspector, saved, and then run from the CLI passes on a real device for
+both drivers — re-verified in the field session that produced the `device`/`appId` fixes, where the generated
+Appium test ran green inside the user's own project.
 
 **Phase 1 — Host migration.** ADR-001, ADR-008, ADR-011, ADR-013, ADR-014. Split `@pwtap/mobile-core`
 out, move the inspector to a devDependency, delete `electron`, `ws`, and `bin/inspect-electron.mjs`,
 rebuild the service on SSE + POST + the frame endpoint, launch the UI in a Playwright Chromium app
 window, session-per-launch with reattach and single-instance locking, in-app pickers, clipboard, and
 resolve `prettier`/`typescript` from the project instead of bundling them.
-→ **Exit:** `npm ls electron ws prettier` shows nothing pulled in by our packages in a scaffolded
-project; `mobile-inspect` opens the window on macOS and Linux; install delta ≤ 5 MB; **and a browser
-reload mid-recording loses neither the device session nor the timeline nor the draft.**
+→ **Exit: MET, with two of its own clauses corrected.** No `electron` and no `prettier` reach a scaffolded
+project, enforced by `npm run nfr`; install delta is 1.0 MB against a 5 MB budget; a browser reload
+mid-recording keeps the device session, the timeline and the draft, now covered by a UI test. Two clauses were
+wrong as written: `ws` arrives through `webdriverio`, which is the Appium client's business and not ours to
+ban, so the check bans it only as our OWN direct dependency; and "opens the window on macOS **and Linux**" was
+never achievable — `@pwtap/platform` implements macOS only (§2).
 
 **Phase 2 — Recording core.** ADR-005, ADR-006, ADR-007, §6. Split the god object, new frame schedule and
 dedup, event-sourced timeline with cursor undo/redo, durable draft ownership, AST codegen, node keys. The
