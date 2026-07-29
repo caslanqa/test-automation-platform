@@ -34,7 +34,7 @@ import {
 import { resolveAppSource } from './appSource.js';
 import { insertStatementIntoTest, loadProjectTypeScript } from './ast.js';
 import { generateTestSource, statementForAction, type GeneratedTarget } from './codegen.js';
-import { DeviceSession } from './deviceSession.js';
+import { DeviceSession, type CaptureTiming } from './deviceSession.js';
 import { Draft } from './draft.js';
 import type { ClientMessage, RecorderEvent } from './protocol.js';
 import { Recorder } from './recorder.js';
@@ -75,15 +75,20 @@ export class RecorderSession {
    * (see `registry.ts`), which makes the recording engine untestable without installing a real plugin and
    * attaching a real device. Injecting a fake driver map exercises this whole class in CI instead.
    */
+  /**
+   * @param timing Capture/settle delays, overridable so a load test can drive hundreds of interactions
+   *   without spending the real settle delay on each one. Production always uses the defaults.
+   */
   constructor(
     projectRoot: string,
     send: (event: RecorderEvent) => void,
     drivers?: Map<string, MobileInspectorDriver>,
+    timing?: Partial<CaptureTiming>,
   ) {
     this.projectRoot = projectRoot;
     this.send = send;
     this.drivers = drivers;
-    this.device = new DeviceSession(send);
+    this.device = new DeviceSession(send, timing);
     this.runner = new TestRunner(projectRoot, send);
     this.writer = new TestWriter(projectRoot, send);
   }

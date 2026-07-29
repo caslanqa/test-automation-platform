@@ -726,13 +726,20 @@ dedup, event-sourced timeline with cursor undo/redo, durable draft ownership, AS
 capability gates and the §9 accessibility items landed here too, since both are UI work on the same
 components: the save dialog browses real directories, refused actions are disabled with the driver's own
 reason, and the ADR-010 path confinement is shared by save and browse.
-→ **Exit:** a scripted 200-interaction run against the fake driver (below) drops zero actions; the §11
-latency and idle-CPU budgets are met on a real device; `run` never clears the draft.
+→ **Exit: MET.** A scripted 200-interaction run against the fake driver drops zero actions — asserted for
+identical taps, for a mixed script of every recordable kind, and for undo/redo across a hundred steps, with
+the frame schedule running underneath so most interactions arrive against a frame that has already moved. The
+§11 latency and idle-CPU budgets are measured above (idle CPU 0.17 % Maestro / 1.56 % Appium against a 5 %
+budget). `run` never clears the draft.
 
 **Phase 3 — Quality, security, docs.** ADR-009, the remaining ADR-010 items, the test strategy below, and
 READMEs for `@pwtap/mobile-core` and `@pwtap/mobile-inspector` (neither had one).
-→ **Exit:** CI green on `tsc -b`, `eslint`, and the test suite; the NFR checks run in CI; a device-gated
-job exists and can be dispatched.
+→ **Exit: MET, with the device matrix verified by hand.** CI is green on `tsc -b`, `eslint`, the suite and the
+NFR checks. All four combinations — Android × {Maestro, Appium} and iOS × {Maestro, Appium} — were driven
+end-to-end on real devices: connect, record, reload mid-session, record again, save, run. `device.yml` runs the
+same matrix nightly; two defects in it were found and fixed rather than left to a green-looking run — the
+Android job was on a Linux runner `@pwtap/platform` cannot support at all, and the iOS job never booted a
+simulator, so the test skipped and the gate was vacuous.
 
 ### Test strategy
 
