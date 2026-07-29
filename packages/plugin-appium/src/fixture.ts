@@ -15,6 +15,7 @@ import {
   startAndroidRecording,
   startSimRecording,
 } from '@pwtap/platform';
+import { skipWithReason } from './skip.js';
 
 import { resolveAppArtifact } from './core/appArtifact.js';
 import {
@@ -257,8 +258,8 @@ export const test = base.extend<AppiumOptions & AppiumFixtures>({
           onBooted: recordBootedDevice, // record framework-booted devices so a teardown stops them
         });
         if (!acquired) {
-          testInfo.skip(
-            true,
+          skipWithReason(
+            testInfo,
             `[appium] no ${platform} device available — name one via the appium option to auto-boot ` +
               'it, create one with Android Studio / Xcode, or boot a device manually. See docs/APPIUM_TESTING.md',
           );

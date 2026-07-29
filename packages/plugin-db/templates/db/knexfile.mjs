@@ -25,11 +25,12 @@ const CLIENT = {
   'better-sqlite3': 'better-sqlite3',
 };
 
-const client = CLIENT[(process.env.DB_CLIENT ?? 'pg').toLowerCase()] ?? 'pg';
+// `||` for the same reason as the example spec: DB_CLIENT ships empty, and `??` does not fall back on ''.
+const client = CLIENT[(process.env.DB_CLIENT || 'pg').toLowerCase()] ?? 'pg';
 
 export default {
   client,
-  connection: process.env.DB_CONNECTION_STRING ?? '',
+  connection: process.env.DB_CONNECTION_STRING || '',
   useNullAsDefault: client.includes('sqlite'),
   migrations: { directory: './migrations', extension: 'ts' },
   seeds: { directory: './seeds' },

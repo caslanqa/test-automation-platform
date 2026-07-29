@@ -24,11 +24,34 @@ const DEFAULT_TIMEOUT_MS = 5_000;
 export async function createMongoConnection(
   options: MongoConnectionOptions,
 ): Promise<MongoConnectionResult> {
+  // `create` writes both keys in empty for a user to fill, and `new MongoClient('')` throws a MongoParseError —
+  // which used to happen OUTSIDE the try below, so an unconfigured MongoDB FAILED the test that this whole
+  // return-a-reason contract exists to skip. Measured on a scaffolded project before it was checked here.
+  if (options.connection.trim() === '') {
+    return {
+      reason:
+        'no MongoDB connection configured \u2014 set `mongoDb.connection` (MONGO_CONNECTION_STRING in a scaffolded project)',
+    };
+  }
+  if (options.database.trim() === '') {
+    return {
+      reason:
+        'no MongoDB database configured \u2014 set `mongoDb.database` (MONGO_DATABASE in a scaffolded project)',
+    };
+  }
   const timeout = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const client = new MongoClient(options.connection, {
-    serverSelectionTimeoutMS: timeout,
-    connectTimeoutMS: timeout,
-  });
+  let client: MongoClient;
+  try {
+    // Inside the try because the constructor parses the URI, and a malformed one must be a reason like any other.
+    client = new MongoClient(options.connection, {
+      serverSelectionTimeoutMS: timeout,
+      connectTimeoutMS: timeout,
+    });
+  } catch (error) {
+    return {
+      reason: `MongoDB rejected the connection string \`${options.connection}\`: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
   try {
     await client.connect();
     const mongo = client.db(options.database);

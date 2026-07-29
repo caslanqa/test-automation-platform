@@ -12,8 +12,8 @@ import {
 const DIR = new URL('./migrations-mongo/', import.meta.url).pathname;
 
 const opened = await createMongoConnection({
-  connection: process.env.MONGO_CONNECTION_STRING ?? '',
-  database: process.env.MONGO_DATABASE ?? '',
+  connection: process.env.MONGO_CONNECTION_STRING || '',
+  database: process.env.MONGO_DATABASE || '',
 });
 if ('reason' in opened) {
   console.error(`[db] ${opened.reason}`);

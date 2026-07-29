@@ -41,7 +41,8 @@
         "release",
         "maestro",
         "appium",
-        "db"
+        "db",
+        "perf"
       ]
     ],
     "scope-case": [2, "always", "lower-case"],

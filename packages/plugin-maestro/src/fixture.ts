@@ -16,6 +16,7 @@ import {
   startAndroidRecording,
   startSimRecording,
 } from '@pwtap/platform';
+import { skipWithReason } from './skip.js';
 
 import { ensureAppInstalled } from './core/appInstaller.js';
 import { maestroError } from './core/maestroError.js';
@@ -289,8 +290,8 @@ export const test = base.extend<MobileOptions & MobileFixtures>({
           onBooted: recordBootedDevice, // record framework-booted devices so globalTeardown stops them
         });
         if (!device) {
-          testInfo.skip(
-            true,
+          skipWithReason(
+            testInfo,
             `[mobile] no ${platform} device available — name one via the mobile option to auto-boot it, ` +
               'create one with `npm run mobile:create-device`, or boot a device manually. See docs/MOBILE_TESTING.md',
           );
