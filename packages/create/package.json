@@ -1,7 +1,7 @@
 {
   "name": "@pwtap/create",
-  "version": "0.4.2",
-  "description": "Scaffold a Playwright Test Automation Platform project \u2014 UI + API core with opt-in plugins (npm init @pwtap)",
+  "version": "0.5.0",
+  "description": "Scaffold a Playwright Test Automation Platform project — UI + API core with opt-in plugins (npm init @pwtap)",
   "type": "module",
   "license": "MIT",
   "repository": {
