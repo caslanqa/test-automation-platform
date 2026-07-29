@@ -18,3 +18,7 @@ ships a small runner (files with `up(db)`/`down(db)`, applied in filename order,
 `_pwtap_migrations`) instead of taking a third dependency.
 
 `@pwtap/create` gains the registry entry, which is the part that actually makes `create-pwtap add db` offer it.
+
+Every SQL dialect is verified against a real engine, not just Postgres: `resetSqlDatabase` emits different SQL
+for each and `discoverTables` reads a different catalog, so "Knex uses one code path" was true of the query
+builder and false of the part this plugin wrote. All four pass, and each skips when its engine is absent.
