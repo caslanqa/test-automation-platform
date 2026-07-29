@@ -1,148 +1,120 @@
-M6 — @pwtap/plugin-db
+# M6 — `@pwtap/plugin-db`
 
-     ▎ Not: Bu dosyanın altındaki eski M5 (@pwtap/plugin-appium) planı TAMAMLANDI, canlı doğrulandı ve
-     ▎ feat/appium-plugin-integration branch'inde (henüz commit edilmemiş, commit mesajı kullanıcıya
-     ▎ verildi). Aşağısı yeni istenen milestone'un planı: veritabanı testleri için geniş kapsamlı bir
-     ▎ plugin — PostgreSQL, MySQL, MariaDB, SQLite (Knex üzerinden) ve MongoDB (resmi sürücü üzerinden);
-     ▎ query+assertion, seed/reset, ve migration testi kapsıyor (kullanıcının seçimi: "hepsi").
+Database testing: query + assertion, seed/reset, and migration verification, across PostgreSQL, MySQL,
+MariaDB and SQLite (through Knex) plus MongoDB (through the official driver).
 
-     Context (neden)
+## Why
 
-     Mevcut platformda test türleri (UI, API, Maestro/Appium mobil) hep dış bir sistemle konuşan
-     fixture'lar olarak modellenmiş — ama hiçbiri veritabanına doğrudan bağlanıp sorgu/assert yapmıyor.
-     Gerçek dünyada en yaygın DB test ihtiyacı: bir API/UI aksiyonundan sonra "veritabanında doğru kayıt
-     oluştu mu" diye doğrulamak. Kullanıcı bunu genişleterek üç yeteneği birden istedi: (1) doğrudan
-     query+assertion, (2) test izolasyonu için seed/reset, (3) migration (up/down) doğrulaması — ve tüm
-     büyük motorları: PostgreSQL, MySQL, MariaDB, MongoDB.
+Every test type the platform has — UI, API, Maestro/Appium — is a fixture that talks to an external system,
+and none of them opens a database. The most common real need is the one after an action: _did the right row
+appear?_ This milestone covers that, plus the two things that make it repeatable — resetting state between
+tests, and proving migrations apply and roll back.
 
-     Kesinleşen tasarım kararları
+## Decisions
 
-     1. İki bağımsız fixture ailesi, tek "evrensel" API değil. SQL ailesi (Postgres/MySQL/MariaDB/
-     SQLite) ile MongoDB kökten farklı veri modelleri (ilişkisel vs döküman) — yapay bir ortak katman
-     leaky abstraction olurdu (Appium'da "raw driver, curated facade yok" kararının aynısı, burada da
-     geçerli). Bunun yerine:
-       - SQL: option db (test.use({ db: { client: 'pg'|'mysql'|'mariadb'|'sqlite3', connection } }))
-     → fixture sql = ham Knex instance'ı, hiç sarmalama yok. Knex zaten
-     çağrılabilir bir query builder (sql('users').where({id}).first()), MariaDB mysql/mysql2
-     client'ıyla wire-uyumlu bağlanır.
-       - MongoDB: option mongoDb (test.use({ mongoDb: { connection, database } })) → fixture
-     mongo = ham Db instance'ı (resmi mongodb sürücüsünün client.db(name)'i), yine sarmalama
-     yok (mongo.collection('users').find({...}).toArray()).
-       - Appium'daki "option adı ile fixture adı çakışmasın" dersi burada baştan uygulanıyor: db≠sql,
-     mongoDb≠mongo — dört isim de birbirinden ve diğer plugin'lerden (mobile/maestro/appium/device)
-     ayrık, aynı barrel'da hepsi birlikte sorunsuz mergeTests edilebilir.
-     2. Bağlantı yaşam döngüsü: worker-scoped fixture (Playwright'ın kendi { scope: 'worker' } özelliği),
-     cihaz-tarzı per-test lock DEĞİL. Mobil cihazlar münhasır kaynak (aynı anda tek test), DB
-     bağlantıları ise havuzlanabilir (Knex/MongoDB sürücüsü zaten kendi connection pool'unu yönetir) —
-     bu yüzden worker başına BİR Knex/MongoClient instance'ı kurulur, o worker'ın tüm testleri paylaşır,
-     worker bittiğinde Playwright'ın kendisi otomatik teardown eder. Maestro/Appium'daki gibi ayrı bir
-     *-teardown project'i GEREKMİYOR — bu native Playwright mekanizması zaten yeterli ve daha basit.
-     3. Bağlanamıyorsa SKIP, asla fail değil (aynı "cihaz yoksa skip" felsefesi). İlk bağlantıda bir
-     ping (SELECT 1 / MongoDB db.command({ ping: 1 })) atılır; başarısızsa testInfo.skip(...).
-     4. Migration: SQL tarafı Knex'in KENDİ migration sistemini birebir kullanır (yeni kod yok, sadece
-     wiring) — knexfile.ts + db/migrations/*.ts (exports.up/exports.down), npm script'leri
-     (db:migrate:latest, db:migrate:rollback, db:migrate:make) Knex CLI'a delege eder. MongoDB
-     tarafı için küçük, öz bir migration runner yazılır (üçüncü bir bağımlılık — migrate-mongo vb. —
-     eklemeden): db/migrations-mongo/*.ts dosyaları aynı up(db)/down(db) imzasıyla, uygulanmış
-     migration'lar bir _migrations koleksiyonunda (name, appliedAt) izlenir — iki motor arasında
-     aynı yazım deneyimi (dosya kongvansiyonu), farklı motor (Knex'in kendi sistemi vs bizim küçük
-     runner'ımız).
-     5. Reset yardımcıları, ince ve motor-bazlı: resetDatabase(sql, { tables? }) — Postgres/MySQL/
-     MariaDB için TRUNCATE ... RESTART IDENTITY CASCADE / SET FOREIGN_KEY_CHECKS=0; TRUNCATE; SET...=1,
-     SQLite için DELETE FROM (TRUNCATE desteklemiyor). resetDatabase(mongo, { collections? }) — her
-     koleksiyonda deleteMany({}), ya da parametresiz çağrıda tüm koleksiyonları temizler.
-     6. Manifest şekli maestro/appium'dan FARKLI, ai-judge'a daha yakın: env-gated bir Playwright
-     project YOK. DB fixture'ları asıl kullanım şekliyle (bir API/UI testinin İÇİNDE "DB'de doğru
-     kayıt var mı" diye bakmak) mevcut api/chromium projelerine bağımlı — ayrı bir db project'i
-     bunu zorlaştırırdı. sql/mongo fixture'ları barrel'a mergeTests ile eklenir, HER test dosyasında
-     kullanılabilir (ai-judge'ın expectAi gibi). Bağımsız "sadece DB" test dosyaları da (ör. migration
-     doğrulaması) aynı barrel'ı kullanarak tests/db/*.ts altında yazılabilir — ayrı project/gate şart
-     değil, sadece connection yoksa/erişilemezse testInfo.skip() zaten koruyor.
-     7. Bağımlılıklar: knex + mongodb düz dependencies (appium'un webdriverio'yu düz dependency
-     yapması gibi). Gerçek SQL sürücüleri (pg, mysql2, better-sqlite3) peer dependency + optional: true — kullanıcı sadece kullandığı
-     motorun paketini kurar.
+1. **Two independent fixture families, not one universal API.** Relational and document models differ at the
+   root; a common layer over both would leak. Same call as Appium's "raw driver, no curated facade".
+   - SQL: option `db` (`test.use({ db: { client: 'pg' | 'mysql' | 'mariadb' | 'sqlite3', connection } })`) →
+     fixture `sql` is a raw Knex instance. Knex is already a callable query builder
+     (`sql('users').where({ id }).first()`), and MariaDB connects wire-compatibly through `mysql2`.
+   - MongoDB: option `mongoDb` (`test.use({ mongoDb: { connection, database } })`) → fixture `mongo` is a raw
+     `Db` instance (`mongo.collection('users').find({ … }).toArray()`).
+   - The Appium lesson — never name an option the same as its fixture — is applied up front: `db` ≠ `sql`,
+     `mongoDb` ≠ `mongo`, and all four differ from every other plugin's names, so one barrel merges them all.
 
-     Uygulama adımları
+2. **Connections are worker-scoped, not per-test locked.** A device is exclusive; a database connection is
+   pooled, and Knex and MongoClient each manage their own pool. So one instance per worker, shared by that
+   worker's tests, torn down by Playwright itself — no `*-teardown` project, unlike Maestro and Appium.
 
-     Adım 1 — packages/plugin-db paketini iskele et. package.json: exports haritası ., ./manifest,
-     ./ensure (M4/M5'te öğrenilen zorunlu desen). dependencies: { knex, mongodb },
-     peerDependencies: { pg, mysql2, better-sqlite3 (hepsi ^opsiyonel aralık), "@playwright/test": ">=1.61.0" },
-     peerDependenciesMeta: { pg: {optional:true}, mysql2: {optional:true}, "better-sqlite3": {optional:true} }.
-     tsconfig.json maestro/appium'unkini birebir yansıtır (references: [{path:"../platform"}] GEREKMEZ —
-     bu plugin @pwtap/platform'a bağımlı değil, cihaz/OS seam'i kullanmıyor). Root tsconfig.json'a referans.
+   **Two consequences the implementation must respect** (verified against Playwright's fixture docs):
+   - A worker-scoped fixture may only depend on worker-scoped things, so the `db` and `mongoDb` options must
+     be declared `{ option: true, scope: 'worker' }` as well. A worker option can be set in the config or at
+     the top level of a file, **not** inside `describe`.
+   - Two files that set different `db` values run in **different workers**, one connection each. That is the
+     price of pooling per worker and it is the right default; a suite that wants one connection should use one
+     value.
 
-     Adım 2 — src/core/sqlConnection.ts — createSqlConnection(options): Knex instance'ı kurar, ilk
-     kullanımda SELECT 1 ping'i atar (bağlanamazsa null döner, fixture bunu skip'e çevirir),
-     closeSqlConnection(knex) (knex.destroy()).
+3. **Unreachable means skip, never fail** — the same philosophy as "no device, skip". A worker fixture has no
+   `testInfo`, so it cannot skip by itself; **that is why the connection and the skip are two fixtures**: the
+   worker-scoped one yields `{ instance?, reason? }` after a `SELECT 1` / `ping`, and a thin test-scoped
+   fixture (`sql` / `mongo`) either hands over the instance or calls `testInfo.skip(reason)`. Stating this
+   plainly because the first draft of this plan asked one worker fixture to do both, which cannot work.
 
-     Adım 3 — src/core/mongoConnection.ts — createMongoConnection(options): MongoClient açar +
-     db.command({ping:1}), client.db(database) döner (null bağlanamazsa), closeMongoConnection(client)
-     (client.close()).
+4. **Migrations: Knex's own system for SQL, a small runner for Mongo.**
+   - SQL is wiring only, no new code: `knexfile.ts` + `db/migrations/*.ts` (`up`/`down`), with npm scripts
+     delegating to the Knex CLI.
+   - Mongo has no equivalent and gets a small runner rather than a third dependency: files under
+     `db/migrations-mongo/` with the same `up(db)` / `down(db)` shape, applied ones tracked in a
+     `_pwtap_migrations` collection (prefixed, so it cannot collide with an application's own). Same authoring
+     experience, different engine underneath. **This is the only piece with no precedent in the repo, so it
+     carries its own unit tests:** pending detection, ordering, idempotency (a second run applies nothing), and
+     rollback undoing exactly the last migration.
 
-     Adım 4 — src/core/resetSql.ts + src/core/resetMongo.ts — Adım 5'teki reset yardımcıları,
-     motor bazlı (Knex client.config.client alanından hangi dialekt olduğunu okur).
+5. **Reset helpers are thin and engine-specific, and separately named.** `resetSqlDatabase(sql, { tables? })`
+   and `resetMongoDatabase(mongo, { collections? })` — two names rather than one overload, because a single
+   `resetDatabase` would have to sniff the argument's type at runtime, which is the artificial common layer
+   decision 1 rejects. SQL branches on the dialect Knex reports: `TRUNCATE … RESTART IDENTITY CASCADE` for
+   Postgres, `SET FOREIGN_KEY_CHECKS` around `TRUNCATE` for MySQL/MariaDB, `DELETE FROM` for SQLite, which has
+   no `TRUNCATE`. Mongo calls `deleteMany({})` per collection, or every collection when given none.
 
-     Adım 5 — src/core/mongoMigrate.ts — küçük runner: runMongoMigrations(mongo, dir) (pending
-     dosyaları _migrations koleksiyonuna göre bulur, sırayla up(db) çağırır, kaydeder) +
-     rollbackMongoMigration(mongo, dir) (son uygulanan migration'ın down(db)'ini çağırır, kaydı siler).
+6. **Seeding: Knex's own for SQL, a plain script for Mongo.** SQL seeds delegate to the Knex CLI like
+   migrations do. MongoDB has no seed framework, so a seed there is an ordinary script using the driver. Said
+   explicitly so the "same experience on both engines" expectation stops at migrations, where it holds.
 
-     Adım 6 — src/fixtureSql.ts — db option + sql fixture ({scope:'worker'}): worker başına bir
-     Knex instance'ı, ilk testte ping/skip, worker sonunda knex.destroy() (Playwright'ın worker-fixture
-     teardown'ı otomatik tetikler — ekstra kod gerekmez).
+7. **No env-gated Playwright project** — the manifest is shaped like `ai-judge`, not like the mobile plugins.
+   The fixtures are used _inside_ API and UI tests ("did the row appear?"), so a separate `db` project would
+   get in the way. They merge into the barrel and are available in every test file. Standalone DB-only files
+   (migration checks, say) work from the same barrel under `tests/db/`; no gate is needed because an
+   unreachable connection already skips.
 
-     Adım 7 — src/fixtureMongo.ts — aynı desen, mongoDb option + mongo fixture ({scope:'worker'}).
+8. **Dependencies:** `knex` and `mongodb` are plain dependencies, as `webdriverio` is for Appium. The actual
+   SQL drivers (`pg`, `mysql2`, `better-sqlite3`) are optional peers, so a user installs only the engine they
+   use. Note that `better-sqlite3` is a native module and needs a toolchain to build — worth saying in the docs,
+   since decision 1 presents SQLite as first-class.
 
-     Adım 8 — src/index.ts — iki test/expect çifti nasıl tek barrel'da birleşecek: aslında TEK
-     test objesi olmalı (base.extend ile iki fixture ailesi birlikte tanımlanır, ayrı ayrı dosyalarda
-     tanımlanan option+fixture'lar mergeTests ile DEĞİL, doğrudan aynı base.extend({...sqlFixtures, ...mongoFixtures}) çağrısında
-     birleştirilir — maestro/appium'un ayrı paketler olmasından farklı olarak
-     bu İKİSİ AYNI paketin içinde, o yüzden tek extend). Export: test, expect, resetDatabase (sql
-     overload + mongo overload), runMongoMigrations/rollbackMongoMigration.
+## Steps
 
-     Adım 9 — src/ensure.ts — advisory: knex/mongodb her zaman bundle (kontrol gerekmez); DB_CLIENT
-     env'ine göre seçili sürücü paketinin (pg/mysql2/better-sqlite3) kurulu olup olmadığını
-     require.resolve ile kontrol et; MONGO_CONNECTION_STRING set edilmişse mongodb'nin kurulu olduğunu
-     doğrula (zaten dependency, hep true — asıl kontrol gerçek bağlantı, o yüzden burada sadece env
-     eksikse ipucu ver).
+1. **Scaffold `packages/plugin-db`.** `package.json` with the `.` / `./manifest` / `./ensure` exports map
+   (the pattern M4/M5 established), `dependencies: { knex, mongodb }`, optional peers for the three drivers
+   plus `@playwright/test`, `prepack` running the shared clean. `tsconfig.json` mirrors Appium's minus the
+   `platform`/`mobile-core` references — this plugin needs neither. Add it to the root tsconfig.
+2. **`src/core/sqlConnection.ts`** — `createSqlConnection(options)` builds the Knex instance and pings with
+   `SELECT 1`, returning the instance or a reason; `closeSqlConnection(knex)`.
+3. **`src/core/mongoConnection.ts`** — the same shape over `MongoClient` and `db.command({ ping: 1 })`.
+4. **`src/core/resetSql.ts` + `src/core/resetMongo.ts`** — decision 5.
+5. **`src/core/mongoMigrate.ts`** — `runMongoMigrations(db, dir)` and `rollbackMongoMigration(db, dir)`, with
+   the tests decision 4 requires.
+6. **`src/fixtureSql.ts`** — the worker option, the worker-scoped connection, and the test-scoped `sql` that
+   skips (decisions 2 and 3).
+7. **`src/fixtureMongo.ts`** — the same shape.
+8. **`src/index.ts`** — one `base.extend({ …sqlFixtures, …mongoFixtures })`, because unlike the two mobile
+   plugins these families ship in the same package and so need no `mergeTests`. Exports `test`, `expect`, the
+   two reset helpers and the two Mongo migration functions.
+9. **`src/ensure.ts`** — advisory only: check that the driver named by `DB_CLIENT` resolves, and hint when a
+   `MONGO_CONNECTION_STRING` is set but unusable. `knex`/`mongodb` are always present, being dependencies.
+10. **`src/manifest.ts`** — `id: 'db'`, no `playwrightProject`, env keys (`DB_CLIENT`, `DB_CONNECTION_STRING`,
+    `MONGO_CONNECTION_STRING`, `MONGO_DATABASE`), `fixture.test.alias: 'dbTest'`, the migrate/seed scripts,
+    examples and docs, `ensure`.
+11. **`templates/`** — `db/knexfile.ts`, one example migration per engine, a seed, and
+    `tests/db/example.db.ts` showing both fixtures plus a reset.
+12. **Docs** — README + `docs/DB_TESTING.md`: both families, the migration/seed/reset flow, why two fixtures,
+    the worker-option consequences from decision 2, the `better-sqlite3` caveat, and that this plugin does not
+    install a database any more than the mobile plugins install a device (with a `docker compose` example as a
+    convenience, not a requirement).
+13. **`packages/create/src/registry.ts`** — a `data` category entry for `@pwtap/plugin-db`.
+14. **`.commitlintrc.json`** — add `db` to the scope enum, in the same commit, rather than discovering it at
+    commit time as happened with `appium`.
+15. **`scripts/nfr-check.mjs`** — derive the package list from the workspace instead of the hardcoded
+    `['mobile-core', 'plugin-maestro', 'plugin-appium']`, which a new plugin silently escapes.
+16. **Changesets** — verify whether a never-published package needs its own changeset to be released, rather
+    than assuming; add one for `@pwtap/create` either way.
 
-     Adım 10 — src/manifest.ts — id:'db', playwrightProject YOK (Karar 6), envKeys
-     (DB_CLIENT, DB_CONNECTION_STRING, MONGO_CONNECTION_STRING, MONGO_DATABASE), fixture.test.alias: 'dbTest', scripts (db:migrate:latest,
-     db:migrate:rollback, db:migrate:make, db:seed,
-     db:mongo:migrate, db:mongo:migrate:rollback — hepsi ince CLI/programatik wrapper'lar),
-     examples (templates/tests → tests/db, templates/db → db [knexfile.ts + migrations/ +
-     migrations-mongo/ + seeds/]), docs, ensure:'ensure'.
+## Verification
 
-     Adım 11 — templates/ — db/knexfile.ts (env'den DB_CLIENT/DB_CONNECTION_STRING okur),
-     db/migrations/0001_example.ts (basit bir users tablosu create/drop), db/migrations-mongo/ 0001_example.ts (aynı örnek, koleksiyon
-     üzerinde), db/seeds/example.ts, tests/db/example.db.ts
-     (sql+mongo fixture kullanımı + resetDatabase örneği, bağlantı yoksa skip).
-
-     Adım 12 — docs — README.md + docs/DB_TESTING.md: iki motor ailesinin fixture kullanımı,
-     migration/seed/reset akışı, "neden ayrı iki fixture" gerekçesi, gereksinimler (bir çalışan DB instance'ı
-     — bu plugin kendi DB'sini KURMAZ, maestro/appium'un cihaz kurmaması gibi; docker-compose ile lokal
-     Postgres/Mongo ayağa kaldırma örneği verilir, opsiyonel bir kolaylık notu olarak).
-
-     Adım 13 — packages/create/src/registry.ts — yeni girdi: {id:'db', package:'@pwtap/plugin-db', category:'data', description:'Database
-     testing (Postgres/MySQL/MariaDB/SQLite via Knex, MongoDB) — query assertions, seed/reset, migrations', flag:'--db',
-     defaultSelected:false, status:'stable'}.
-
-     Adım 14 — .commitlintrc.json — scope-enum'a "db" ekle (appium eklenirken yapılan hatayı
-     tekrarlamamak için, aynı commit'te).
-
-     Adım 15 — changesets — @pwtap/plugin-db yeni paket olduğu için (maestro/appium presedanına göre)
-     kendi changeset'i GEREKMEZ — @pwtap/create'e bir patch changeset (registry kaydı) yeter.
-
-     Doğrulama
-
-     - npx tsc -b + eslint temiz.
-     - M4/M5'teki gibi: taze create scaffold → tarball pack+kur → add db --no-install → barrel'da
-     sql+mongo fixture'larının merge edildiğini, DB_*/MONGO_* env enjeksiyonunu, örnek dosyaların
-     kopyalandığını doğrula → tsc --noEmit yeşil.
-     - Canlı doğrulama (önerilen, onay bekliyor): Bu makinede Docker varsa docker run ile geçici bir
-     Postgres + bir MongoDB konteyneri ayağa kaldırıp gerçek bir bağlantı+query+migration+reset döngüsünü
-     uçtan uca test et (M5'teki gibi — gerçek env'e karşı canlı doğrulama, sadece izole birim testi değil).
-     Docker yoksa (veya kullanıcı istemezse) sadece yapısal doğrulamayla (tsc/lint/scaffold) yetinilir.
-     - MariaDB/MySQL/SQLite için ayrı canlı kurulum muhtemelen zaman/karmaşıklık nedeniyle kapsam dışı
-     bırakılır — Postgres, Knex'in tüm SQL dialektleri için AYNI kod yolunu kullandığını kanıtlamaya
-     yeter (query builder + migration API dialekt-agnostik); MongoDB tamamen farklı kod yolu olduğu için
-     ayrıca doğrulanır.
+- `tsc -b`, `eslint`, and the unit tests for the Mongo runner.
+- The M4/M5 sequence: fresh scaffold → pack → install → `add db --no-install` → assert the barrel merged
+  `dbTest`, the env keys landed, the examples copied → `tsc --noEmit` green.
+- **Live, against real engines.** Docker is available on this machine (29.6.2), so a throwaway Postgres and
+  MongoDB come up and the whole loop runs against them: connect, query, migrate, roll back, reset. MySQL,
+  MariaDB and SQLite are deliberately out of scope for live runs — Knex uses one code path for every SQL
+  dialect, so Postgres proves it; MongoDB is a separate code path and is verified separately.

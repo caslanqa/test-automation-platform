@@ -1,0 +1,64 @@
+{
+  "name": "@pwtap/plugin-db",
+  "version": "1.0.0",
+  "description": "Database testing for Playwright — a raw Knex instance (Postgres/MySQL/MariaDB/SQLite) and a raw MongoDB Db, with seed/reset and migration verification",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/caslanqa/test-automation-platform.git",
+    "directory": "packages/plugin-db"
+  },
+  "engines": {
+    "node": ">=22.23"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./manifest": {
+      "types": "./dist/manifest.d.ts",
+      "default": "./dist/manifest.js"
+    },
+    "./ensure": {
+      "types": "./dist/ensure.d.ts",
+      "default": "./dist/ensure.js"
+    }
+  },
+  "files": [
+    "dist",
+    "templates",
+    "docs"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "peerDependencies": {
+    "@playwright/test": ">=1.61.0",
+    "better-sqlite3": ">=9",
+    "mysql2": ">=3",
+    "pg": ">=8"
+  },
+  "peerDependenciesMeta": {
+    "better-sqlite3": {
+      "optional": true
+    },
+    "mysql2": {
+      "optional": true
+    },
+    "pg": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "knex": "^3.1.0",
+    "mongodb": "^6.10.0"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "prepack": "node ../../scripts/clean.mjs . && npm run build"
+  }
+}

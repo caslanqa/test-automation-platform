@@ -1,13 +1,30 @@
 {
-  "//": "Solution file for the monorepo. Each publishable package is a composite project referenced here. `tsc -b` builds them in dependency order. core-template/files is NOT built here — it is template source compiled in the scaffolded client project's own tsconfig.",
+  "//": "Solution file for the monorepo. Each publishable package is a composite project referenced here. `tsc -b` builds them in dependency order. core-template/files is NOT built here \u2014 it is template source compiled in the scaffolded client project's own tsconfig.",
   "files": [],
   "references": [
-    { "path": "packages/platform" },
-    { "path": "packages/create" },
-    { "path": "packages/plugin-ai-judge" },
-    { "path": "packages/mobile-core" },
-    { "path": "packages/mobile-inspector" },
-    { "path": "packages/plugin-maestro" },
-    { "path": "packages/plugin-appium" }
+    {
+      "path": "packages/platform"
+    },
+    {
+      "path": "packages/create"
+    },
+    {
+      "path": "packages/plugin-ai-judge"
+    },
+    {
+      "path": "packages/mobile-core"
+    },
+    {
+      "path": "packages/mobile-inspector"
+    },
+    {
+      "path": "packages/plugin-maestro"
+    },
+    {
+      "path": "packages/plugin-appium"
+    },
+    {
+      "path": "packages/plugin-db"
+    }
   ]
 }

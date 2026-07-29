@@ -39,7 +39,8 @@
         "ai",
         "release",
         "maestro",
-        "appium"
+        "appium",
+        "db"
       ]
     ],
     "scope-case": [2, "always", "lower-case"],
