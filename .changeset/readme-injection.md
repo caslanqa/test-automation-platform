@@ -16,3 +16,8 @@ since a `//` line is body text in Markdown.
 The "Add a plugin later" hint after scaffolding is derived from the registry too. It read
 `<maestro|appium|ai-judge>` — hardcoded, so it silently omitted `db` the day it shipped, and would have omitted
 the next plugin as well.
+
+`remove` also names the files the plugin installed, not only the ones importing it. Removing `db` broke six
+files and the report named one: the rest imported `knex`/`mongodb`, which left with the plugin, or used a
+fixture that vanished from the barrel while importing only `@fixtures`. The manifest already declares which
+directories a plugin created, so there was nothing to guess.

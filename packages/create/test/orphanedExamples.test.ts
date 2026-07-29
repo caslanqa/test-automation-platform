@@ -62,3 +62,28 @@ test('a prose mention is not an import, so it is not reported', async () => {
 test('removing nothing reports nothing', async () => {
   assert.deepEqual(orphanedExamples(dir, []), []);
 });
+
+test('the directories a plugin installed count too, not only files importing it', async () => {
+  // An import scan found one of six files when `db` was removed: the others imported knex/mongodb, which left
+  // with the plugin, or used a fixture that vanished from the barrel while importing only `@fixtures`. The
+  // manifest already declares which directories the plugin created, so there is nothing to guess.
+  await fs.mkdir(path.join(dir, 'db/seeds'), { recursive: true });
+  await fs.writeFile(path.join(dir, 'db/seeds/example.ts'), "import type { Knex } from 'knex';\n");
+  await fs.writeFile(path.join(dir, 'db/knexfile.mjs'), 'export default {};\n');
+
+  const found = orphanedExamples(dir, ['@pwtap/plugin-db'], ['db']);
+
+  assert.deepEqual(found, ['db/knexfile.mjs', 'db/seeds/example.ts']);
+});
+
+test('an installed directory is reported even when nothing imports the package', async () => {
+  await fs.mkdir(path.join(dir, 'tests/db'), { recursive: true });
+  await fs.writeFile(
+    path.join(dir, 'tests/db/example.spec.ts'),
+    "import { test } from '@fixtures';\n",
+  );
+
+  assert.deepEqual(orphanedExamples(dir, ['@pwtap/plugin-db'], ['tests/db']), [
+    'tests/db/example.spec.ts',
+  ]);
+});
