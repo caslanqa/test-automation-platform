@@ -140,3 +140,14 @@ tests, and proving migrations apply and roll back.
   `no pg connection configured` with the value filled in — and `openSqlConnection`'s own skip message had been
   promising "or the DB_* env keys" all along with nothing behind it. The fixtures resolve the keys now; the option
   is an override that wins over them.
+- **The docs were organised by concept, not by what a reader does.** The guide opened with a fixture table and
+  buried the configuration rules inside the "unreachable means skipped" section, the package README still showed
+  the `test.use({ db: { client, connection } })` pattern that had just been removed, and neither said anything at
+  all about reporting. Both are rewritten as an ordered path — install the driver, configure, write, run, isolate,
+  migrate, read the results — closing with a table of every measured skip message and what to do about it.
+- **Open: an upgraded plugin's injected README section and copied docs do not refresh.** `applyReadme` and the
+  `docs` copy run on `create-pwtap add`, not on `npm install`, so a project that upgrades keeps whatever text it
+  was scaffolded with — the reporting project's README still described the removed `test.use` pattern. Re-running
+  `add` would refresh both, but it also re-copies the example assets, which would overwrite a user's edited
+  knexfile or migration. A `create-pwtap refresh <plugin>` that touches only the marked regions and the docs is
+  the shape this wants; not built yet.

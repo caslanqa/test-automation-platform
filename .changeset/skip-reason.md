@@ -37,3 +37,9 @@ its module scope, and a user hit the consequence: `no pg connection configured` 
 filled in inside `env/environments.json`. A module's top level is evaluated at a moment that depends on how the
 run was launched, so the read could happen before the config's `loadEnv()` reached it; a fixture body cannot. The
 example sets no option now, and an option that is set wins, with anything it omits falling back to the env.
+
+The README and `docs/DB_TESTING.md` are rewritten around what a reader actually does, in order: install the driver
+for your engine, configure the env keys, write the check inside the test that caused it, run it, keep tests
+independent under parallelism, migrate and seed, then read the results — including what each of the four scaffolded
+reporters records for a skip, and a table of every measured skip message with the fix. Both had also gone stale:
+each still showed the `test.use({ db: { client, connection } })` pattern this release removes.
