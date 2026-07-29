@@ -29,3 +29,9 @@ capturing frames through `adb` instead of the driver (181 → 130 ms, but a seco
 the layer that has already produced two field defects, for ~8 % of click→screen), and driving Maestro's own
 daemon the way Studio does (~420 ms per tap, but an interface Maestro neither documents nor exposes a port
 flag for, so we would own every break — while Appium is one option away at 194 ms).
+
+**A recorded drag now carries how far the finger travelled.** §9 required it and the UI never did: every drag
+collapsed into a direction-only full-screen swipe, so a short flick and a long pull recorded identically and
+the generated test scrolled a different amount than the user had. It sends the measured fraction of the swept
+axis now — possible only because `SwipeOptions.distance`, dead in both adapters until this round, is honoured.
+The start point is still not carried, and §9 says so rather than claiming the item is closed.
