@@ -25,6 +25,7 @@ import type {
 } from '@pwtap/mobile-core';
 import {
   ACTION_DEFAULTS,
+  deviceUnavailableMessage,
   discoverMobileDevices,
   readImageSize,
   resolveTargetPoint,
@@ -440,7 +441,7 @@ class MaestroInspectorDriver implements MobileInspectorDriver {
       });
       if (!acquired) {
         throw new Error(
-          `[maestro-inspector] no ${options.platform} device available to connect the inspector to`,
+          await deviceUnavailableMessage('maestro', options.platform, options.device),
         );
       }
       const outputDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pwtap-mobile-inspector-'));

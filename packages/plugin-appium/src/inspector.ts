@@ -26,7 +26,12 @@ import type {
   MobileTarget,
   ScreenFrame,
 } from '@pwtap/mobile-core';
-import { ACTION_DEFAULTS, discoverMobileDevices, readImageSize } from '@pwtap/mobile-core';
+import {
+  ACTION_DEFAULTS,
+  deviceUnavailableMessage,
+  discoverMobileDevices,
+  readImageSize,
+} from '@pwtap/mobile-core';
 import type { DiscoveredDevice, MobilePlatform } from '@pwtap/platform';
 import {
   acquireDevice,
@@ -643,9 +648,7 @@ class AppiumInspectorDriver implements MobileInspectorDriver {
         onBooted: recordBootedDevice,
       });
       if (!acquired) {
-        throw new Error(
-          `[appium-inspector] no ${options.platform} device available to connect the inspector to`,
-        );
+        throw new Error(await deviceUnavailableMessage('appium', options.platform, options.device));
       }
       server = await ensureAppiumServer(0);
       // A local artifact installs (and launches) via the `app` capability — Appium handles install

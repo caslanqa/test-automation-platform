@@ -156,6 +156,13 @@ export function ConnectionDrawer({
 
         <div className="field">
           App id (package / bundle)
+          {/* Users read this as "the only app I may touch" and got stuck trying to record a journey that
+              starts on the home screen. It is neither a restriction nor optional: it is what the recorded
+              test launches, and Maestro needs one for every command. */}
+          <span className="muted field-hint">
+            Launched on connect and pinned in the test. You can still tap anything on screen — press
+            Home and tap your way in to record from the launcher.
+          </span>
           <input
             value={appId}
             onChange={e => setAppId(e.target.value)}
