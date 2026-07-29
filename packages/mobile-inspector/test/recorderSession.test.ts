@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 
 import type { ClientMessage, ServerMessage } from '../src/service/protocol.js';
 import { RecorderSession } from '../src/service/recorderSession.js';
@@ -34,6 +34,16 @@ interface Harness {
   logs: () => string[];
 }
 
+/**
+ * Every session built here, closed at the end of the file. `close()` is idempotent, so the explicit close
+ * each test ends with still stands — this only covers the case where an assertion throws first, which used
+ * to leave a connected session polling in the background and perturb the tests that followed.
+ */
+const built: RecorderSession[] = [];
+after(async () => {
+  await Promise.all(built.map(session => session.close()));
+});
+
 /** A temp project with a stubbed Playwright CLI, plus a session wired to the fake driver. */
 function harness(options?: Parameters<typeof fakeDriverMap>[0]): Harness {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pwtap-recorder-'));
@@ -48,6 +58,7 @@ function harness(options?: Parameters<typeof fakeDriverMap>[0]): Harness {
   const { map, driver } = fakeDriverMap(options);
   const events: ServerMessage[] = [];
   const session = new RecorderSession(dir, message => events.push(message), map);
+  built.push(session);
 
   return {
     session,
@@ -122,6 +133,9 @@ test('the generated header carries driver, platform, stable device name and appI
 
 test('appId and appSource reach the driver instead of being dropped', async () => {
   const h = harness();
+  fs.mkdirSync(path.join(h.dir, 'build'), { recursive: true });
+  fs.writeFileSync(path.join(h.dir, 'build/app.apk'), 'artifact');
+
   await h.send({
     type: 'connect',
     driver: 'fake',
@@ -129,7 +143,31 @@ test('appId and appSource reach the driver instead of being dropped', async () =
   });
 
   assert.equal(h.driver.connects.at(-1)?.appId, 'com.example.app');
-  assert.equal(h.driver.connects.at(-1)?.appSource, './build/app.apk');
+  assert.equal(
+    h.driver.connects.at(-1)?.appSource,
+    path.join(h.dir, 'build/app.apk'),
+    'the adapter gets an absolute path so it never has to guess the base directory',
+  );
+  assert.match(
+    h.code(),
+    /appSource: "\.\/build\/app\.apk"/,
+    'the generated test keeps the path as typed — an absolute one would only work on this machine',
+  );
+
+  await h.session.close();
+});
+
+test('an app artifact that does not exist is refused instead of reaching the driver', async () => {
+  const h = harness();
+
+  await h.send({
+    type: 'connect',
+    driver: 'fake',
+    options: { platform: 'android', appSource: './build/missing.apk' },
+  });
+
+  assert.match(h.last('error')?.message ?? '', /not found/);
+  assert.deepEqual(h.driver.connects, [], 'ADR-010: validate before an installer sees it');
 
   await h.session.close();
 });

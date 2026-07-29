@@ -1,0 +1,97 @@
+name: Device
+
+# The device-gated matrix from architecture.md §12: Android × {Maestro, Appium} and iOS × {Maestro, Appium}
+# record → generate → save. Deliberately not on push — it boots emulators and takes minutes, so it runs
+# nightly and on demand. Every job is opt-in via PWTAP_DEVICE=1 (the tests skip without it), so a missing
+# CLI or an unavailable device shows as a skip rather than a red build for the wrong reason.
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    # The emulator needs KVM, which only the Linux runners have.
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        driver: [maestro, appium]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - run: npm ci
+      - run: npm run build
+
+      - name: Install Maestro CLI
+        if: matrix.driver == 'maestro'
+        run: |
+          curl -fsSL https://get.maestro.mobile.dev | bash
+          echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      # Boots an AVD and runs the command inside it. The device test targets the Settings app, so nothing
+      # has to be built or installed first.
+      - name: Record against an Android emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          profile: pixel_6
+          avd-name: Pixel_6_API_34
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+          script: >-
+            PWTAP_DEVICE=1
+            PWTAP_DEVICE_DRIVER=${{ matrix.driver }}
+            PWTAP_DEVICE_PLATFORM=android
+            npm run test:device
+
+  ios:
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        driver: [maestro, appium]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run build
+
+      - name: Install Maestro CLI
+        if: matrix.driver == 'maestro'
+        run: |
+          curl -fsSL https://get.maestro.mobile.dev | bash
+          echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
+
+      # `xcrun simctl` is preinstalled on the macOS runners; the adapters boot the simulator themselves,
+      # so this only reports what is available when a run needs diagnosing.
+      - name: List available simulators
+        run: xcrun simctl list devices available
+
+      - name: Record against an iOS simulator
+        env:
+          PWTAP_DEVICE: '1'
+          PWTAP_DEVICE_DRIVER: ${{ matrix.driver }}
+          PWTAP_DEVICE_PLATFORM: ios
+        run: npm run test:device

@@ -264,11 +264,17 @@ code, crashing module load on a missing named export. That shim treats a version
 problem. Instead:
 
 - `@pwtap/mobile-core` exports a `MOBILE_CORE_CONTRACT` integer, bumped on every breaking change to
-  `MobileInspectorDriver` / `DriverSession` / the action IR.
-- Each adapter exports the contract version it was built against; the registry refuses to load an adapter
-  whose version it does not support and reports which package to upgrade.
-- Adapters and core keep exact-range peer requirements in `package.json`, so npm surfaces the mismatch at
-  install time. The runtime shim is deleted once the contract check lands.
+  `MobileInspectorDriver` / `DriverSession` / the action IR, plus `MIN_ADAPTER_CONTRACT` for the oldest
+  adapter it still accepts.
+- Each adapter exports the contract version it was built against **as a literal** — importing the constant
+  would make it agree with whatever core is installed, which is the mismatch being checked. The `AdapterContract`
+  type is the exact current value, so bumping the contract breaks each adapter's build until a human reviews it.
+- The registry skips an adapter it does not accept and reports which package to upgrade, through an
+  `onProblem` reporter: the inspector logs it to the UI, and the fixture folds it into `DriverNotFoundError`
+  so "no driver found" is never the whole story when the adapter is installed but unloadable.
+- One bad adapter must not disable the others: discovery continues past it.
+- The runtime shim is deleted. `@pwtap/platform` is a direct dependency with a caret range, so npm resolves
+  a version that has the exports — probing each import at load time treated versioning as a runtime problem.
 
 ### ADR-010 — Trust boundary and security posture
 
@@ -606,7 +612,9 @@ Changes from today:
 
 ## 11. Non-functional requirements
 
-Measured, not aspirational. Each row is a test or a CI check in §12's Phase 3.
+Measured, not aspirational. The deterministic rows — dependency footprint and published size — are enforced
+by `npm run nfr` in CI; the frame, log and poll bounds are unit-tested; the latency and idle-CPU rows need a
+device and belong to `device.yml`.
 
 | Budget                                                                | Target                                                                                           |
 | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
@@ -653,10 +661,10 @@ reason, and the ADR-010 path confinement is shared by save and browse.
 → **Exit:** a scripted 200-interaction run against the fake driver (below) drops zero actions; the §11
 latency and idle-CPU budgets are met on a real device; `run` never clears the draft.
 
-**Phase 3 — Quality, security, docs.** ADR-009, the remaining ADR-010 items (`appSource` validation), the
-test strategy below, README and user docs (the package currently has none, and `package.json.files` lists
-`templates`/`docs` that do not exist).
-→ **Exit:** CI green on `tsc -b`, `eslint`, and the test suite; the NFR checks run in CI.
+**Phase 3 — Quality, security, docs.** ADR-009, the remaining ADR-010 items, the test strategy below, and
+READMEs for `@pwtap/mobile-core` and `@pwtap/mobile-inspector` (neither had one).
+→ **Exit:** CI green on `tsc -b`, `eslint`, and the test suite; the NFR checks run in CI; a device-gated
+job exists and can be dispatched.
 
 ### Test strategy
 

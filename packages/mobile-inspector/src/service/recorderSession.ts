@@ -30,6 +30,7 @@ import {
   resolveSimUdid,
   resolveStableDeviceName,
 } from '@pwtap/mobile-core';
+import { resolveAppSource } from './appSource.js';
 import { insertStatementIntoTest, loadProjectTypeScript } from './ast.js';
 import { generateTestSource, statementForAction, type GeneratedTarget } from './codegen.js';
 import { DeviceSession } from './deviceSession.js';
@@ -81,7 +82,9 @@ export class RecorderSession {
   }
 
   private async driverMap(): Promise<Map<string, MobileInspectorDriver>> {
-    this.drivers ??= await discoverDriverMap(this.projectRoot);
+    this.drivers ??= await discoverDriverMap(this.projectRoot, message =>
+      this.send({ type: 'log', level: 'error', message }),
+    );
     return this.drivers;
   }
 
@@ -243,10 +246,21 @@ export class RecorderSession {
       this.send({ type: 'error', message: `driver "${driverId}" is not installed` });
       return;
     }
+    // The browser chooses `appSource`, and it ends up at an installer, so it is validated here rather
+    // than forwarded on trust (ADR-010). The normalised absolute path is what the adapter receives.
+    let connectOptions = options;
+    if (options.appSource) {
+      const resolved = await resolveAppSource(options.appSource, this.projectRoot);
+      if ('error' in resolved) {
+        this.send({ type: 'error', message: resolved.error });
+        return;
+      }
+      connectOptions = { ...options, appSource: resolved.appSource };
+    }
     await this.disconnect(); // one live device per launch — replace, don't stack
     this.send({ type: 'connecting' });
     try {
-      const device = await this.device.connect(driver, options);
+      const device = await this.device.connect(driver, connectOptions);
       // Which handle is durable depends on the platform and on whether the name is ambiguous, so the shared
       // resolver decides (ADR-003) and a warning is surfaced when the pin is not durable.
       const stable = resolveStableDeviceName(device, await this.knownDevices(driver));
@@ -258,6 +272,8 @@ export class RecorderSession {
         platform: device.platform,
         device: stable.device,
         appId: options.appId,
+        // The value as the user typed it, not the absolute path the driver got: the generated test is
+        // committed and replayed on other machines, so a relative artifact path must stay relative.
         appSource: options.appSource,
       };
       this.recorder.clear();
