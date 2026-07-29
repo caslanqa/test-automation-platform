@@ -11,6 +11,8 @@ import { pathToFileURL } from 'node:url';
 
 import type { DriverTestBinding, TestFileEntry } from '@pwtap/mobile-core';
 
+import { loadProjectTypeScript, mergeIntoExistingTest } from './ast.js';
+import { resolveInsideProject } from './paths.js';
 import type { RecorderEvent } from './protocol.js';
 
 const SKIP_DIRS = new Set([
@@ -67,8 +69,8 @@ export class TestWriter {
       this.emit({ type: 'error', message: resolved.error });
       return;
     }
-    const target = path.resolve(this.projectRoot, resolved.relativePath);
-    if (!target.startsWith(this.projectRoot + path.sep)) {
+    const target = await resolveInsideProject(this.projectRoot, resolved.relativePath);
+    if (!target) {
       this.emit({ type: 'error', message: 'save location must be inside the project' });
       return;
     }
@@ -94,7 +96,7 @@ export class TestWriter {
 
     const body =
       request.mode === 'append'
-        ? mergeIntoExistingTest(await fs.readFile(target, 'utf8'), request.source, request.testName)
+        ? await this.merge(await fs.readFile(target, 'utf8'), request.source, request.testName)
         : request.source;
 
     const formatted = await this.format(body, target);
@@ -143,6 +145,54 @@ export class TestWriter {
     await walk(this.projectRoot);
     files.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
     this.emit({ type: 'testFiles', files });
+  }
+
+  /**
+   * Append through the project's TypeScript so imports merge and the body is placed by structure, not by a
+   * search for the last `});`. Without TypeScript the test is appended verbatim and the user is told, which
+   * is honest about the imports they may need to reconcile.
+   */
+  /**
+   * Subdirectories of a project-relative path, so the save dialog can offer a location instead of asking the
+   * user to type one blind. Confined to the project and filtered the same way the file scan is.
+   */
+  async listDirs(relative = ''): Promise<void> {
+    const requested = await resolveInsideProject(this.projectRoot, relative);
+    if (!requested) {
+      this.emit({ type: 'error', message: 'location must be inside the project' });
+      return;
+    }
+    let entries: string[] = [];
+    try {
+      entries = (await fs.readdir(requested, { withFileTypes: true }))
+        .filter(entry => entry.isDirectory() && !entry.name.startsWith('.'))
+        .map(entry => entry.name)
+        .filter(name => !SKIP_DIRS.has(name))
+        .sort((a, b) => a.localeCompare(b));
+    } catch {
+      this.emit({ type: 'error', message: `cannot read ${relative || '.'}` });
+      return;
+    }
+    // Relative to the REAL root: on macOS `/tmp` is a link to `/private/tmp`, so measuring the
+    // confined (real) path against an unresolved root would produce a `../…` path the UI cannot use.
+    const root = await fs.realpath(this.projectRoot).catch(() => this.projectRoot);
+    const listed = path.relative(root, requested).split(path.sep).join('/');
+    this.emit({ type: 'dirs', path: listed, entries });
+  }
+
+  private async merge(existing: string, generated: string, testName: string): Promise<string> {
+    const ts = await loadProjectTypeScript(this.projectRoot);
+    if (!ts) {
+      this.emit({
+        type: 'log',
+        level: 'warn',
+        message:
+          'typescript is not installed in this project, so the test was appended without merging ' +
+          'imports — check the top of the file',
+      });
+      return `${existing.trimEnd()}\n\n${generated.trimEnd()}\n`;
+    }
+    return mergeIntoExistingTest(ts, existing, generated, testName);
   }
 
   private async format(body: string, target: string): Promise<string> {
@@ -218,35 +268,4 @@ async function loadProjectPrettier(projectRoot: string): Promise<ProjectPrettier
   } catch {
     return undefined;
   }
-}
-
-/**
- * Merge a generated test into an existing file for `append` mode. Concatenating whole files would duplicate
- * the `@fixtures` import and let the appended `test.use()` clobber the target's own config for every test
- * after it, so the body is wrapped in its own `test.describe` — which is what scopes `test.use()` in
- * Playwright. ADR-005 replaces this string handling with a real AST.
- */
-function mergeIntoExistingTest(existingContent: string, source: string, testName: string): string {
-  const lines = source.split('\n');
-  let splitIndex = 0;
-  while (
-    splitIndex < lines.length &&
-    (lines[splitIndex].startsWith('import ') || lines[splitIndex].trim() === '')
-  ) {
-    splitIndex += 1;
-  }
-  const importLines = lines.slice(0, splitIndex).filter(line => line.trim() !== '');
-  const body = lines.slice(splitIndex).join('\n').trim();
-  const indented = body
-    .split('\n')
-    .map(line => (line.trim() ? `  ${line}` : line))
-    .join('\n');
-  const block = `test.describe(${JSON.stringify(testName)}, () => {\n${indented}\n});\n`;
-
-  const hasFixturesImport =
-    existingContent.includes(`from '@fixtures'`) || existingContent.includes(`from "@fixtures"`);
-  const header =
-    importLines.length > 0 && !hasFixturesImport ? `${importLines.join('\n')}\n\n` : '';
-
-  return `${header}${existingContent.trimEnd()}\n\n${block}`;
 }

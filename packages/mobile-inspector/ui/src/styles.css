@@ -200,6 +200,15 @@ body {
   border-top: 1px solid #3c3c3c;
 }
 
+/* These controls drop their border and background, so the UA focus ring is the only thing that shows
+   keyboard focus — made explicit here because the locator list is navigated with the arrow keys. */
+.app-row:focus-visible,
+.locator-candidate:focus-visible,
+.tab:focus-visible {
+  outline: 2px solid #75beff;
+  outline-offset: -2px;
+}
+
 .app-list {
   border: 1px solid #3c3c3c;
   border-radius: 4px;
@@ -572,22 +581,20 @@ body {
   color: #ffdf8a;
 }
 
-/* ---------- modal ---------- */
-.modal-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 50;
-}
-.modal {
+/* ---------- modal ----------
+   A native <dialog>: the UA supplies centering, the backdrop, the focus trap and Escape. */
+dialog.modal {
   background: #252526;
+  color: #ddd;
   border: 1px solid #555;
   border-radius: 6px;
   padding: 16px;
   min-width: 320px;
+}
+dialog.modal::backdrop {
+  background: rgba(0, 0, 0, 0.5);
+}
+.modal-body {
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -616,6 +623,9 @@ body {
 }
 .save-file-list {
   max-height: 160px;
+}
+.dir-list {
+  max-height: 120px;
 }
 .save-preview {
   font-size: 11px;

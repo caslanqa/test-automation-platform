@@ -66,6 +66,8 @@ export type ClientMessage =
   | { type: 'editCode'; source: string; revision: number }
   /** Enumerate existing recorded test files under the project, for the "append" save picker. */
   | { type: 'listTestFiles' }
+  /** Enumerate subdirectories of a project-relative path, for the save dialog's location picker. */
+  | { type: 'listDirs'; path?: string }
   /**
    * Save the authoritative source. `mode: 'new'` writes `targetPath` (project-relative) and refuses to
    * overwrite an existing file; `mode: 'append'` requires `targetPath` to already exist and merges the
@@ -107,6 +109,8 @@ export type ServerMessage =
   | { type: 'code'; source: string; revision: number }
   /** Response to `listTestFiles`. */
   | { type: 'testFiles'; files: TestFileEntry[] }
+  /** Response to `listDirs`: `path` is the directory listed, `entries` its subdirectory names. */
+  | { type: 'dirs'; path: string; entries: string[] }
   | { type: 'saved'; path: string }
   /** Streamed stdout/stderr chunk from a running test. */
   | { type: 'runOutput'; stream: 'stdout' | 'stderr'; chunk: string }
@@ -144,6 +148,12 @@ export function parseClientMessage(raw: unknown): ClientMessage | null {
     case 'redo':
     case 'listTestFiles':
       return { type: msg.type };
+    case 'listDirs': {
+      const value = (raw as { path?: unknown }).path;
+      return typeof value === 'string' || value === undefined
+        ? { type: 'listDirs', path: value }
+        : null;
+    }
     case 'listDevices': {
       const driver = (raw as { driver?: unknown }).driver;
       return typeof driver === 'string' ? { type: 'listDevices', driver } : null;

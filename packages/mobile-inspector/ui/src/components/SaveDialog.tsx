@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import type { TestFileEntry } from '../protocol';
 
@@ -11,6 +11,10 @@ export interface SaveResult {
 }
 
 interface SaveDialogProps {
+  /** The directory currently listed, and its subdirectories (server-provided, project-confined). */
+  dirs: { path: string; entries: string[] };
+  /** Ask the service to list a project-relative directory. */
+  browse: (path: string) => void;
   /** Existing recorded test files under the project (refreshed by the parent via `listTestFiles`). */
   testFiles: TestFileEntry[];
   /**
@@ -27,11 +31,20 @@ interface SaveDialogProps {
  * Modal for writing the recorded/edited test to disk. Two modes:
  * - "New file": pick a folder (defaults to the project's `tests/` dir) + a file name; refuses to
  *   overwrite an existing file (enforced server-side too).
- * - "Append to existing file": pick one of the project's existing `*.mobile.ts` files (from an
- *   in-app list or a native file browser) — the recorded test is merged into it, never overwriting
- *   the file's existing content.
+ * - "Append to existing file": pick one of the project's existing recorded test files — the recorded
+ *   test is merged into it, never overwriting the file's existing content.
+ *
+ * Rendered as a native `<dialog>` opened with `showModal()`, which supplies the focus trap, Escape
+ * dismissal and focus restoration that a `<div>` overlay has to reimplement by hand.
  */
-export function SaveDialog({ testFiles, extension, onCancel, onConfirm }: SaveDialogProps) {
+export function SaveDialog({
+  testFiles,
+  dirs,
+  browse,
+  extension,
+  onCancel,
+  onConfirm,
+}: SaveDialogProps) {
   const [mode, setMode] = useState<SaveMode>('new');
   const [testName, setTestName] = useState('recorded flow');
 
@@ -42,6 +55,13 @@ export function SaveDialog({ testFiles, extension, onCancel, onConfirm }: SaveDi
   // "Append" mode state.
   const [filter, setFilter] = useState('');
   const [selectedFile, setSelectedFile] = useState('');
+  const dialogRef = useRef<HTMLDialogElement>(null);
+
+  // The component is mounted only while the dialog is open, so opening it on mount is the whole
+  // lifecycle. `showModal()` (not the `open` attribute) is what makes the rest of the page inert.
+  useEffect(() => {
+    dialogRef.current?.showModal();
+  }, []);
 
   useEffect(() => {
     if (mode === 'append' && !selectedFile && testFiles.length > 0) {
@@ -79,9 +99,20 @@ export function SaveDialog({ testFiles, extension, onCancel, onConfirm }: SaveDi
   }
 
   return (
-    <div className="modal-backdrop" onClick={onCancel}>
-      <div className="modal modal-save" onClick={e => e.stopPropagation()}>
-        <h3>Save test</h3>
+    <dialog
+      ref={dialogRef}
+      className="modal modal-save"
+      aria-labelledby="save-dialog-title"
+      // `cancel` is Escape; a click whose target is the dialog itself landed on the backdrop.
+      onCancel={onCancel}
+      onClick={event => {
+        if (event.target === dialogRef.current) {
+          onCancel();
+        }
+      }}
+    >
+      <div className="modal-body">
+        <h3 id="save-dialog-title">Save test</h3>
 
         <div className="tabs save-mode-tabs">
           <button
@@ -109,6 +140,38 @@ export function SaveDialog({ testFiles, extension, onCancel, onConfirm }: SaveDi
               Location
               <input value={location} onChange={e => setLocation(e.target.value)} />
             </label>
+            <div className="field">
+              Browse ({dirs.path || 'project root'})
+              <div className="app-list dir-list">
+                {dirs.path !== '' && (
+                  <button
+                    className="app-row"
+                    onClick={() => browse(parentOf(dirs.path))}
+                    title="up one level"
+                  >
+                    <span className="app-name">../</span>
+                  </button>
+                )}
+                {dirs.entries.map(name => {
+                  const next = dirs.path ? `${dirs.path}/${name}` : name;
+                  return (
+                    <button
+                      key={next}
+                      className={`app-row${location === next ? ' active' : ''}`}
+                      onClick={() => {
+                        setLocation(next);
+                        browse(next);
+                      }}
+                    >
+                      <span className="app-name">{name}/</span>
+                    </button>
+                  );
+                })}
+                {dirs.entries.length === 0 && (
+                  <div className="muted app-empty">no subdirectories here</div>
+                )}
+              </div>
+            </div>
             <label className="field">
               File name
               <input value={fileName} onChange={e => setFileName(e.target.value)} />
@@ -158,6 +221,12 @@ export function SaveDialog({ testFiles, extension, onCancel, onConfirm }: SaveDi
           </button>
         </div>
       </div>
-    </div>
+    </dialog>
   );
+}
+
+/** One level up from a project-relative path; `''` is the project root. */
+function parentOf(dir: string): string {
+  const cut = dir.lastIndexOf('/');
+  return cut > 0 ? dir.slice(0, cut) : '';
 }

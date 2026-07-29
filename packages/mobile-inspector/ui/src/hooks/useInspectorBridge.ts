@@ -61,6 +61,8 @@ export interface InspectorState {
   lastResult: { action: MobileAction; result: ActionResult } | null;
   /** Existing recorded test files under the project, for the save dialog's "append" picker. */
   testFiles: TestFileEntry[];
+  /** The directory the save dialog is browsing, and its subdirectories. */
+  dirs: { path: string; entries: string[] };
 }
 
 const INITIAL_STATE: InspectorState = {
@@ -83,6 +85,7 @@ const INITIAL_STATE: InspectorState = {
   runExitCode: undefined,
   lastResult: null,
   testFiles: [],
+  dirs: { path: '', entries: [] },
 };
 
 /** Append to a bounded list, dropping the oldest entries. */
@@ -220,6 +223,8 @@ function applyServerMessage(
           : s;
       case 'testFiles':
         return { ...s, testFiles: message.files };
+      case 'dirs':
+        return { ...s, dirs: { path: message.path, entries: message.entries } };
       case 'saved':
         return {
           ...s,

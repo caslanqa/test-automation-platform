@@ -22,8 +22,11 @@ import type {
 } from '@pwtap/mobile-core';
 
 /** A minimal but valid PNG header — `readImageSize` only reads `IHDR`, and nothing decodes the pixels. */
-export function pngOfSize(width: number, height: number): Buffer {
-  const buf = Buffer.alloc(24);
+export function pngOfSize(width: number, height: number, variant = 0): Buffer {
+  const buf = Buffer.alloc(24 + (variant > 0 ? 1 : 0));
+  if (variant > 0) {
+    buf.writeUInt8(variant & 0xff, 24);
+  }
   Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(buf, 0);
   buf.writeUInt32BE(13, 8);
   buf.write('IHDR', 12, 'ascii');
@@ -136,7 +139,9 @@ export class FakeDriverSession implements DriverSession {
     if (this.failCapture) {
       throw new Error(this.failCapture);
     }
-    const image = pngOfSize(SCREEN_WIDTH, SCREEN_HEIGHT);
+    // Bytes vary with the screen, so frame dedup and the post-action settle are exercisable: a fake whose
+    // screenshot never changes makes every capture look identical no matter what the device did.
+    const image = pngOfSize(SCREEN_WIDTH, SCREEN_HEIGHT, this.screenIndex);
     return {
       frameId: this.frameCounter++,
       imageBase64: image.toString('base64'),

@@ -25,7 +25,7 @@
     "prepare": "husky",
     "release": "changeset publish",
     "smoke": "node scripts/smoke-scaffold.mjs",
-    "test": "node --import ./scripts/test-hooks.mjs --test \"packages/*/test/**/*.test.ts\"",
+    "test": "node --import ./scripts/test-hooks.mjs --test-timeout=30000 --test \"packages/*/test/**/*.test.ts\"",
     "typecheck:tests": "tsc -p tsconfig.tests.json",
     "typecheck:ui": "npm run typecheck:ui --workspace=@pwtap/mobile-inspector",
     "version-packages": "changeset version"
