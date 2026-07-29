@@ -86,7 +86,11 @@ A blanket reset is right in exactly one situation: a suite that already runs ser
 
 ## Migrations
 
-**SQL is Knex's own system**, wired up and nothing more:
+**SQL is Knex's own system**, wired up and nothing more. The knexfile is `.mjs` while the migrations it loads
+are `.ts` — deliberately: Knex's CLI hunts for a TypeScript loader when the _knexfile_ has a `.ts` extension and
+prints six `Failed to load external module ts-node/register` lines before succeeding anyway on Node ≥ 22.6,
+which strips types natively. The migrations load either way, so the `.ts` extension bought nothing but output
+that reads like a stack of failures.
 
 ```bash
 npm run db:migrate:make add_orders   # writes db/migrations/<timestamp>_add_orders.ts

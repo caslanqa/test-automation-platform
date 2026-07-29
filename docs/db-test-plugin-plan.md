@@ -114,6 +114,22 @@ tests, and proving migrations apply and roll back.
 - `tsc -b`, `eslint`, and the unit tests for the Mongo runner.
 - The M4/M5 sequence: fresh scaffold → pack → install → `add db --no-install` → assert the barrel merged
   `dbTest`, the env keys landed, the examples copied → `tsc --noEmit` green.
+  **What the live run settled, beyond passing:**
+
+- The scaffolded example matched no Playwright project. The core scaffold collects `.spec.ts`/`.test.ts` and the
+  `api` project `.api.ts`, so an `example.db.ts` was never run by anything — decision 7 removed the project
+  without checking what would then collect the file. It is `example.db.spec.ts` now, which the browser project
+  picks up at no cost, since Playwright starts a browser only for a test that asks for `page`.
+- **Worker-scoped connections pool connections, not data.** The example passed on one worker and failed on two:
+  a blanket reset in one worker empties the table for every other worker, mid-test. Decision 2 accounted for the
+  connection and not for the shared state. The example now tags its rows with the worker index and clears only
+  those, and `DB_TESTING.md` carries the three ways out with their trade-offs.
+- The knexfile ships as `.mjs`, not `.ts`. Knex's CLI hunts for a TypeScript loader when the knexfile itself is
+  `.ts`, printing six `Failed to load external module` lines before succeeding anyway on Node ≥ 22.6. The `.ts`
+  migrations load either way, so the extension bought only output that reads like failure.
+- `resetSqlDatabase` now explains a named table that does not exist ("run your migrations first") instead of
+  surfacing a raw driver error behind a pg-protocol stack trace.
+
 - **Live, against real engines.** Docker is available on this machine (29.6.2), so a throwaway Postgres and
   MongoDB come up and the whole loop runs against them: connect, query, migrate, roll back, reset. MySQL,
   MariaDB and SQLite are deliberately out of scope for live runs — Knex uses one code path for every SQL

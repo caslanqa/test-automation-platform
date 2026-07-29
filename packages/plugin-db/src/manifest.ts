@@ -16,10 +16,10 @@ export const manifest = {
   devDependencies: {},
   scripts: {
     // Knex's own CLI, pointed at the scaffolded knexfile — the SQL side is wiring, not new code.
-    'db:migrate:latest': 'knex --knexfile db/knexfile.ts migrate:latest',
-    'db:migrate:rollback': 'knex --knexfile db/knexfile.ts migrate:rollback',
-    'db:migrate:make': 'knex --knexfile db/knexfile.ts migrate:make',
-    'db:seed': 'knex --knexfile db/knexfile.ts seed:run',
+    'db:migrate:latest': 'knex --knexfile db/knexfile.mjs migrate:latest',
+    'db:migrate:rollback': 'knex --knexfile db/knexfile.mjs migrate:rollback',
+    'db:migrate:make': 'knex --knexfile db/knexfile.mjs migrate:make',
+    'db:seed': 'knex --knexfile db/knexfile.mjs seed:run',
     // MongoDB has no CLI of its own, so these run the small runner this package ships.
     'db:mongo:migrate': 'node --experimental-strip-types db/mongo-migrate.ts up',
     'db:mongo:migrate:rollback': 'node --experimental-strip-types db/mongo-migrate.ts down',
