@@ -8,6 +8,7 @@ import { applyFixture, removeFixture } from './injectors/fixturesBarrel.js';
 import { orphanedExamples } from './injectors/orphanedExamples.js';
 import { mergePluginPackageJson, removePluginPackageJson } from './injectors/packageJson.js';
 import { applyProject, removeProject } from './injectors/pwConfig.js';
+import { applyReadme, removeReadme } from './injectors/readme.js';
 import { fixtureList, loadPluginManifest, type PluginManifest } from './manifest.js';
 import { findKnownPlugin, KNOWN_PLUGINS } from './registry.js';
 import { ensureDir, exists, readJson, writeJson, writeText } from './util/fs.js';
@@ -27,6 +28,7 @@ function injectManifest(clientDir: string, m: PluginManifest, testsDir: string):
   mergePluginEnv(clientDir, m);
   copyExamples(clientDir, m, testsDir);
   copyDocs(clientDir, m);
+  applyReadme(clientDir, m);
 
   if (applyFixture(clientDir, m) === false) {
     const sources = fixtureList(m)
@@ -345,14 +347,18 @@ export async function removePlugins({
 }: RemoveOptions): Promise<void> {
   const packages = toPackages(pluginIds);
   const keepShared = await sharedFixturesToKeep(clientDir, packages);
+  /** Where each removed plugin put its examples — its own footprint, declared rather than guessed. */
+  const installedDirs: string[] = [];
   for (const pkg of packages) {
     const m = await loadPluginManifest(clientDir, pkg);
     if (!m) {
       log.warn(`Could not load manifest for ${pkg} — skipping (already removed?).`);
       continue;
     }
+    installedDirs.push(...(m.examples ?? []).map(example => example.dest));
     removeFixture(clientDir, m, keepShared);
     removeProject(clientDir, m);
+    removeReadme(clientDir, m);
     removePluginEnv(clientDir, m);
     removePluginPackageJson(clientDir, m);
     log.done(`Removed ${pkg}`);
@@ -361,11 +367,13 @@ export async function removePlugins({
     await run('npm', ['uninstall', ...packages], { cwd: clientDir });
   }
   // The plugin's example tests are left on disk on purpose — a user may have built their suite on them —
-  // but a file importing a package that is gone stops the project compiling, so say which ones and why.
-  const orphaned = orphanedExamples(clientDir, packages);
+  // but the files it installed, and anything importing it, stop the project compiling — so name them. An import
+  // scan alone found one of six when `db` was removed: the rest imported knex/mongodb, which left with the
+  // plugin, or used a fixture that vanished from the barrel while importing only `@fixtures`.
+  const orphaned = orphanedExamples(clientDir, packages, installedDirs);
   if (orphaned.length > 0) {
     log.warn(
-      `${orphaned.length} file(s) still import ${packages.join(', ')} and will not compile:\n${orphaned
+      `${orphaned.length} file(s) belong to ${packages.join(', ')} and most will no longer compile:\n${orphaned
         .map(file => `    ${file}`)
         .join(
           '\n',

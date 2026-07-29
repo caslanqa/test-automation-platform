@@ -861,8 +861,24 @@ key, so installing either plugin — or both — merges it into `@fixtures` a si
    running (fail loudly, or launch anyway and lose the point); and whether Appium — which already attaches
    to whatever is foregrounded when given no app id — is made to agree, since two drivers disagreeing about
    what `launch: false` means is worse than not having it.
-4. **VS Code webview host:** the protocol is designed for it (§10); whether it becomes a product
-   commitment is undecided.
+4. **VS Code webview host — deferred, recorded as an improvement.** Hosting the inspector inside VS Code
+   instead of its own Chromium window: recording where the test is written, next to the file it lands in. The
+   protocol is already built for it — §10's message shapes are transport-neutral, and `RecorderSession.dispatch`
+   takes "a validated command, whatever host delivered it", so a webview would speak them unchanged over
+   `postMessage` instead of SSE + POST. **Costs nothing to leave alone:** nothing has to be built to keep that
+   true, so deferring accrues no debt.
+
+   Deferred because it is a product commitment, not a fix, and three costs land with it: a second distribution
+   channel (Marketplace, its own release cadence, tracking extension-API breakage — the kind of weight removing
+   Electron was meant to shed, ADR-001); two transports alive at once in the UI, when the single one it has
+   today already produced two field defects; and the extension host's own lifecycle to reconcile with ADR-011's
+   session-per-launch. The gain is real but narrow: staying in the editor.
+
+   **Recommendation: not now**, on sequencing rather than taste — the inspector met its first real user one
+   round ago and that round found two defects, so doubling the surface is premature. If editor integration is
+   wanted sooner, there is a far smaller step that needs no extension at all: open the saved file in the
+   system editor after a save.
+
 5. **Capturing frames through `adb` instead of the driver.** Measured on Android: the Maestro adapter's
    `captureScreen()` costs 181 ms against 130 ms for `adb exec-out screencap` — the whole difference is the MCP
    round trip, since writing and re-reading the PNG is free. That is ~50 ms twice per interaction.

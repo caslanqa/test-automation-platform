@@ -41,6 +41,16 @@ export const KNOWN_PLUGINS: KnownPlugin[] = [
     status: 'stable',
   },
   {
+    id: 'db',
+    package: '@pwtap/plugin-db',
+    category: 'data',
+    description:
+      'Database testing (Postgres/MySQL/MariaDB/SQLite via Knex, MongoDB) — query assertions, seed/reset, migrations',
+    flag: '--db',
+    defaultSelected: false,
+    status: 'stable',
+  },
+  {
     id: 'ai-judge',
     package: '@pwtap/plugin-ai-judge',
     category: 'ai',

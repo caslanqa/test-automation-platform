@@ -15,9 +15,21 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-/** Every package this repo publishes, plus which ones a test loads at runtime. */
-const RUNTIME_PACKAGES = ['mobile-core', 'plugin-maestro', 'plugin-appium'];
-const ALL_PACKAGES = [...RUNTIME_PACKAGES, 'mobile-inspector'];
+/**
+ * Discovered, not listed. The list used to be hardcoded, so `plugin-db` — a package with two new runtime
+ * dependencies — would have escaped the footprint check without anyone noticing, and so would the plugin after
+ * it. A package counts as runtime unless it is a dev tool a test never loads.
+ */
+const DEV_ONLY_PACKAGES = new Set(['create', 'mobile-inspector']);
+const ALL_PACKAGES = fs
+  .readdirSync(path.join(ROOT, 'packages'), { withFileTypes: true })
+  .filter(
+    entry =>
+      entry.isDirectory() && fs.existsSync(path.join(ROOT, 'packages', entry.name, 'package.json')),
+  )
+  .map(entry => entry.name)
+  .sort();
+const RUNTIME_PACKAGES = ALL_PACKAGES.filter(pkg => !DEV_ONLY_PACKAGES.has(pkg));
 /**
  * `electron` is banned transitively: it was 296 MB in every client install and nothing in the build
  * complained. The rest are banned only as OUR OWN direct dependencies (ADR-013/ADR-014) — a third-party
