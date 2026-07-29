@@ -1,7 +1,7 @@
 {
   "name": "@pwtap/plugin-ai-judge",
   "version": "0.1.2",
-  "description": "AI/LLM judge matchers for Playwright — toPassRubric/toScoreAtLeast/toMatchImage over Ollama, OpenAI-compatible endpoints (OpenAI/OpenRouter/NVIDIA/Groq/…), and native Claude",
+  "description": "AI/LLM judge matchers for Playwright \u2014 toPassRubric/toScoreAtLeast/toMatchImage over Ollama, OpenAI-compatible endpoints (OpenAI/OpenRouter/NVIDIA/Groq/\u2026), and native Claude",
   "type": "module",
   "license": "MIT",
   "repository": {
@@ -36,7 +36,7 @@
   },
   "scripts": {
     "build": "tsc -b",
-    "prepack": "npm run build"
+    "prepack": "node ../../scripts/clean.mjs . && npm run build"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.112.5"

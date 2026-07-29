@@ -5,6 +5,7 @@ import path from 'node:path';
 import { copyDocs, copyExamples } from './injectors/assets.js';
 import { mergePluginEnv, removePluginEnv } from './injectors/envJson.js';
 import { applyFixture, removeFixture } from './injectors/fixturesBarrel.js';
+import { orphanedExamples } from './injectors/orphanedExamples.js';
 import { mergePluginPackageJson, removePluginPackageJson } from './injectors/packageJson.js';
 import { applyProject, removeProject } from './injectors/pwConfig.js';
 import { fixtureList, loadPluginManifest, type PluginManifest } from './manifest.js';
@@ -358,5 +359,17 @@ export async function removePlugins({
   }
   if (uninstall && packages.length > 0) {
     await run('npm', ['uninstall', ...packages], { cwd: clientDir });
+  }
+  // The plugin's example tests are left on disk on purpose — a user may have built their suite on them —
+  // but a file importing a package that is gone stops the project compiling, so say which ones and why.
+  const orphaned = orphanedExamples(clientDir, packages);
+  if (orphaned.length > 0) {
+    log.warn(
+      `${orphaned.length} file(s) still import ${packages.join(', ')} and will not compile:\n${orphaned
+        .map(file => `    ${file}`)
+        .join(
+          '\n',
+        )}\n  They were left in place in case you edited them — delete or move them when you are done.`,
+    );
   }
 }

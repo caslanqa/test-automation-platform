@@ -42,7 +42,7 @@
     "build": "tsc -b",
     "build:ui": "vite build",
     "typecheck:ui": "tsc -p ui/tsconfig.json --noEmit",
-    "prepack": "npm run build && npm run build:ui"
+    "prepack": "node ../../scripts/clean.mjs . && npm run build && npm run build:ui"
   },
   "devDependencies": {
     "@codemirror/lang-javascript": "^6.2.5",

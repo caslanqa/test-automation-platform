@@ -16,7 +16,26 @@ import { startInspectorService } from '../dist/service/server.js';
 
 const projectRoot = path.resolve(process.argv[2] ?? process.cwd());
 
+// Installed before anything that can leave state behind. Starting the service and launching the browser
+// each take a moment, and a Ctrl-C in either gap must tear the launch down rather than kill the process
+// where it stands — which is how a run used to leave its device lock and temp files on disk.
 let service;
+let window;
+let stopping = false;
+const stop = async () => {
+  if (stopping) {
+    return;
+  }
+  stopping = true;
+  await window?.close().catch(() => undefined);
+  await service?.close().catch(() => undefined);
+  process.exit(0);
+};
+
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.on(signal, () => void stop());
+}
+
 try {
   service = await startInspectorService({ projectRoot });
 } catch (error) {
@@ -27,24 +46,15 @@ try {
 
 console.log(`\n  Mobile Inspector for ${projectRoot}\n\n  ${service.url}\n`);
 
-const window = await openInspectorWindow(service.url, reason => {
-  console.warn(`  Could not open a browser window: ${reason}\n`);
-});
-
-let stopping = false;
-const stop = async () => {
-  if (stopping) {
-    return;
-  }
-  stopping = true;
-  await window?.close();
-  await service.close();
-  process.exit(0);
-};
-
-for (const signal of ['SIGINT', 'SIGTERM']) {
-  process.on(signal, () => void stop());
-}
+// `onLaunched` hands over a closable window the moment the browser exists, before it is navigated: a
+// signal inside that window used to leave an orphaned Chromium because there was nothing to close yet.
+window = await openInspectorWindow(
+  service.url,
+  reason => console.warn(`  Could not open a browser window: ${reason}\n`),
+  opened => {
+    window = opened;
+  },
+);
 
 if (window) {
   // The window is the session: closing it ends the launch.
