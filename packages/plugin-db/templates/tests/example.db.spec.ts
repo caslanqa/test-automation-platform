@@ -20,14 +20,17 @@
 // the package: the barrel merges test objects and matchers, not arbitrary exports.
 import { expect, test } from '@fixtures';
 
+// `||`, not `??`: these keys are written into env/environments.json as EMPTY STRINGS for you to fill in, and
+// `??` falls back only on null/undefined — so `?? 'pg'` never fired in the one case it existed for, and an empty
+// client reached Knex as a missing one. An unfilled key means "not configured", which skips with a reason.
 test.use({
   db: {
-    client: (process.env.DB_CLIENT as 'pg') ?? 'pg',
-    connection: process.env.DB_CONNECTION_STRING ?? '',
+    client: (process.env.DB_CLIENT || 'pg') as 'pg',
+    connection: process.env.DB_CONNECTION_STRING || '',
   },
   mongoDb: {
-    connection: process.env.MONGO_CONNECTION_STRING ?? '',
-    database: process.env.MONGO_DATABASE ?? '',
+    connection: process.env.MONGO_CONNECTION_STRING || '',
+    database: process.env.MONGO_DATABASE || '',
   },
 });
 

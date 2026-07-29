@@ -49,9 +49,17 @@ the same call the mobile plugins make for an absent device: a missing environmen
 The reason is printed next to the skip, so a run does not just show an unexplained gap:
 
 ```
-  ↷ skipped — [db] could not reach the pg database: connect ECONNREFUSED 127.0.0.1:5432
+  ↷ skipped — [db] the pg driver is not installed — run `npm i -D pg`
   -  1 tests/db/example.db.spec.ts:20:1 › a row appears after the action
 ```
+
+That is the first one a fresh project sees, since the drivers are optional peers. Once the driver is in, an
+absent server reads `could not reach the pg database: connect ECONNREFUSED 127.0.0.1:5432`.
+
+**Unconfigured counts as unreachable.** `create` writes the four env keys in empty for you to fill, so an empty
+client, connection or database is a skip with the key named — never a failure, and never the driver's own words
+for it. If you copy the option out of the example, keep the `||`: `??` falls back only on null and undefined, so
+`process.env.DB_CLIENT ?? 'pg'` hands an empty string straight through.
 
 It is also recorded as a `skip` annotation, which is where the HTML and JSON reports read it from. The line
 exists because those reports are the _only_ place Playwright puts it — `list` and `line` print the dash and the

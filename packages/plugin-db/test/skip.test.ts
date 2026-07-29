@@ -34,3 +34,28 @@ test('the reason reaches both the terminal and the annotation', () => {
     },
   ]);
 });
+
+test('a driver that answers with a paragraph still gets one line, and the report keeps the rest', () => {
+  // Verbatim from a scaffolded project with no `pg` installed: Knex's message plus its require stack.
+  const sprawling = [
+    'could not create a pg connection: Knex: run',
+    '$ npm install pg --save',
+    "Cannot find module 'pg'",
+    'Require stack:',
+    '- /project/node_modules/knex/lib/dialects/postgres/index.js',
+  ].join('\n');
+  const printed: string[] = [];
+  const recorded: string[] = [];
+  const original = console.info;
+  console.info = (line: string): void => void printed.push(line);
+  try {
+    skipWithReason({ skip: (_c, description) => void recorded.push(description) }, sprawling);
+  } finally {
+    console.info = original;
+  }
+
+  assert.equal(printed.length, 1);
+  assert.ok(!printed[0]?.includes('\n'), 'the terminal line must not carry the require stack');
+  assert.match(printed[0] ?? '', /could not create a pg connection.*full reason in the report/);
+  assert.deepEqual(recorded, [sprawling], 'the report still gets every line');
+});

@@ -15,6 +15,19 @@ export function skipWithReason(
   testInfo: { skip(condition: boolean, description: string): void },
   reason: string,
 ): void {
-  console.info(`  \u21B7 skipped \u2014 ${reason}`);
+  console.info(`  \u21B7 skipped \u2014 ${oneLine(reason)}`);
   testInfo.skip(true, reason);
+}
+
+/**
+ * Keep the console to a single line; the annotation still carries the whole reason.
+ *
+ * A driver decides what its own errors look like, and some are paragraphs — Knex answers a missing `pg` with a
+ * six-line require stack. Printed verbatim that buries the skip it was meant to explain, so the terminal gets
+ * the first line and the report keeps the rest.
+ */
+function oneLine(reason: string): string {
+  const first = reason.split('\n')[0]?.trim() ?? reason;
+  const truncated = first.length > 200 ? `${first.slice(0, 199)}\u2026` : first;
+  return truncated === reason.trim() ? truncated : `${truncated} (full reason in the report)`;
 }
