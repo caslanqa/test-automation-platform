@@ -46,3 +46,25 @@ function readJpegSize(buf: Buffer): { width: number; height: number } | undefine
 export function readImageSize(buf: Buffer): { width: number; height: number } | undefined {
   return readPngSize(buf) ?? readJpegSize(buf);
 }
+
+/**
+ * The interaction coordinate space to report for a capture, with orientation resolved against the image.
+ *
+ * A driver reads that space once — it costs a device round trip — while the screen can rotate underneath it,
+ * so after a rotation the two disagree about which axis is the longer one and every click lands transposed.
+ * Both adapters need exactly this reconciliation, so it lives here beside the header readers rather than
+ * twice. Returns `undefined` when the driver could not determine a space at all, which the caller reports as
+ * "the image size is the coordinate space".
+ *
+ * @example orientCoordinateSpace({ width: 2400, height: 1080 }, { width: 1080, height: 2400 })
+ */
+export function orientCoordinateSpace(
+  image: { width: number; height: number },
+  coordinate: { width: number; height: number } | undefined,
+): { width: number; height: number } | undefined {
+  if (!coordinate) {
+    return undefined;
+  }
+  const sameOrientation = image.width > image.height === coordinate.width > coordinate.height;
+  return sameOrientation ? coordinate : { width: coordinate.height, height: coordinate.width };
+}

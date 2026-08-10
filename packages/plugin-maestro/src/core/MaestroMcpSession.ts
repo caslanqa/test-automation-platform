@@ -17,8 +17,35 @@ const DEFAULT_VISIBLE_TIMEOUT_MS = 2_000;
 /** Cap for evidence-capture tool calls (screenshot/hierarchy) — best-effort, must not hang a run. */
 const CAPTURE_TIMEOUT_MS = 30_000;
 
+/**
+ * Bound on Maestro's own animation wait. A screen that never stops moving — a spinner, a video, a blinking
+ * caret — must not be able to stall every command for Maestro's default wait, and this is a settle after an
+ * interaction, not an assertion: it is worth a fraction of a second, not five.
+ */
+const SETTLE_TIMEOUT_MS = 500;
+
 /** Cardinal directions for `scroll`/`swipe`, matching Maestro's enum. */
 export type MaestroDirection = 'UP' | 'DOWN' | 'LEFT' | 'RIGHT';
+
+/** Per-command modifiers shared by the interaction commands. */
+export interface CommandOptions {
+  /**
+   * Return only once the screen has stopped moving, as part of the SAME command.
+   *
+   * Maestro runs every command as its own flow and charges roughly 420 ms for the privilege, so a caller
+   * that wants "tap, then let the screen settle" pays that twice if it asks separately — and if it sleeps
+   * instead, it pays a fixed delay whether the screen was still moving or had finished instantly. Appending
+   * `waitForAnimationToEnd` to the command itself costs neither.
+   */
+  settle?: boolean;
+}
+
+/** Append Maestro's own animation wait to `commandYaml` so both travel in one `run` call. */
+function withSettle(commandYaml: string, options?: CommandOptions): string {
+  return options?.settle
+    ? `${commandYaml}\n- waitForAnimationToEnd: ${json({ timeout: SETTLE_TIMEOUT_MS })}`
+    : commandYaml;
+}
 
 /**
  * When to capture a device screenshot + view hierarchy (Playwright's `screenshot` for native mobile):
@@ -161,23 +188,55 @@ export class MaestroMcpSession {
   // ----- interactions -----
 
   /** Tap an element. */
-  async tapOn(selector: MaestroSelector): Promise<void> {
+  async tapOn(selector: MaestroSelector, options?: CommandOptions): Promise<void> {
     return this.hooks.step(`tapOn ${label(selector)}`, () =>
-      this.runCommand(`- tapOn: ${json(selector)}`),
+      this.runCommand(withSettle(`- tapOn: ${json(selector)}`, options)),
+    );
+  }
+
+  /**
+   * Tap a field and type into it as ONE command.
+   *
+   * Maestro has no "fill this field" primitive, so this is a tap followed by an `inputText` — and sending
+   * them as two `run` calls paid Maestro's per-flow overhead twice for one recorded action.
+   */
+  async fillOn(selector: MaestroSelector, text: string, options?: CommandOptions): Promise<void> {
+    return this.hooks.step(`fill ${label(selector)} with "${truncate(text)}"`, () =>
+      this.runCommand(
+        withSettle(`- tapOn: ${json(selector)}\n- inputText: ${json(text)}`, options),
+      ),
     );
   }
 
   /** Double-tap an element. */
-  async doubleTapOn(selector: MaestroSelector): Promise<void> {
+  async doubleTapOn(selector: MaestroSelector, options?: CommandOptions): Promise<void> {
     return this.hooks.step(`doubleTapOn ${label(selector)}`, () =>
-      this.runCommand(`- doubleTapOn: ${json(selector)}`),
+      this.runCommand(withSettle(`- doubleTapOn: ${json(selector)}`, options)),
+    );
+  }
+
+  /**
+   * Focus a field and erase from it as ONE command.
+   *
+   * {@link eraseText} acts on whatever is focused and takes no selector, so erasing a *named* field is a tap
+   * plus an erase — two `run` calls, and two helpings of Maestro's per-call overhead, unless they are sent
+   * together. Same shape as {@link fillOn}, for the same reason.
+   */
+  async eraseTextIn(
+    selector: MaestroSelector,
+    charactersToErase?: number,
+    options?: CommandOptions,
+  ): Promise<void> {
+    const erase = charactersToErase == null ? '- eraseText' : `- eraseText: ${charactersToErase}`;
+    return this.hooks.step(`eraseText in ${label(selector)}`, () =>
+      this.runCommand(withSettle(`- tapOn: ${json(selector)}\n${erase}`, options)),
     );
   }
 
   /** Long-press an element. */
-  async longPressOn(selector: MaestroSelector): Promise<void> {
+  async longPressOn(selector: MaestroSelector, options?: CommandOptions): Promise<void> {
     return this.hooks.step(`longPressOn ${label(selector)}`, () =>
-      this.runCommand(`- longPressOn: ${json(selector)}`),
+      this.runCommand(withSettle(`- longPressOn: ${json(selector)}`, options)),
     );
   }
 
@@ -198,13 +257,15 @@ export class MaestroMcpSession {
   }
 
   /** Press the system Back button (Android) / equivalent. */
-  async back(): Promise<void> {
-    return this.hooks.step('back', () => this.runCommand('- back'));
+  async back(options?: CommandOptions): Promise<void> {
+    return this.hooks.step('back', () => this.runCommand(withSettle('- back', options)));
   }
 
   /** Press a hardware/system key (e.g. `Enter`, `Home`, `Back`, `Backspace`). */
-  async pressKey(key: string): Promise<void> {
-    return this.hooks.step(`pressKey ${key}`, () => this.runCommand(`- pressKey: ${json(key)}`));
+  async pressKey(key: string, options?: CommandOptions): Promise<void> {
+    return this.hooks.step(`pressKey ${key}`, () =>
+      this.runCommand(withSettle(`- pressKey: ${json(key)}`, options)),
+    );
   }
 
   /** Hide the on-screen keyboard. */
@@ -220,22 +281,31 @@ export class MaestroMcpSession {
   /** Scroll (default down) until an element is visible, then stop. */
   async scrollUntilVisible(
     selector: MaestroSelector,
-    options?: { direction?: MaestroDirection },
+    options?: { direction?: MaestroDirection; timeout?: number },
   ): Promise<void> {
-    const body = compact({ element: selector, direction: options?.direction });
+    const body = compact({
+      element: selector,
+      direction: options?.direction,
+      timeout: options?.timeout,
+    });
     return this.hooks.step(`scrollUntilVisible ${label(selector)}`, () =>
       this.runCommand(`- scrollUntilVisible: ${json(body)}`),
     );
   }
 
   /** Swipe by direction, or between two `x%,y%` points. */
-  async swipe(options: {
-    direction?: MaestroDirection;
-    start?: string;
-    end?: string;
-    duration?: number;
-  }): Promise<void> {
-    return this.hooks.step('swipe', () => this.runCommand(`- swipe: ${json(compact(options))}`));
+  async swipe(
+    options: {
+      direction?: MaestroDirection;
+      start?: string;
+      end?: string;
+      duration?: number;
+    },
+    command?: CommandOptions,
+  ): Promise<void> {
+    return this.hooks.step('swipe', () =>
+      this.runCommand(withSettle(`- swipe: ${json(compact(options))}`, command)),
+    );
   }
 
   /** Wait for on-screen animations to settle. */
@@ -339,6 +409,29 @@ export class MaestroMcpSession {
       }
       return file;
     });
+  }
+
+  /**
+   * The current screen as base64 image bytes — no file written, no report attachment, no report step.
+   *
+   * {@link takeScreenshot} exists for *evidence*: it writes `<name>.jpg` into the output directory and
+   * attaches it, which is what a failing command needs. A live viewport needs neither, and it captures on
+   * every action and every idle poll — routing those through the file path wrote a screenshot per frame
+   * (hundreds of files in a ten-minute session, against a §11 budget of three) and paid a decode, a disk
+   * write and a disk read for bytes the MCP response already handed over as base64.
+   */
+  async screenshotBytes(): Promise<string> {
+    const client = await this.ensureClient();
+    const result = await client.callTool(
+      'take_screenshot',
+      { device_id: this.device.id },
+      CAPTURE_TIMEOUT_MS,
+    );
+    const image = result.content.find(part => part.type === 'image' && part.data);
+    if (result.isError || !image?.data) {
+      throw maestroError('[maestro] take_screenshot returned no image');
+    }
+    return image.data;
   }
 
   // ----- internals -----

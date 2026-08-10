@@ -324,7 +324,7 @@ test('a reattached client starts its own command ordering, so a reload can still
   await connect(service);
   await first.waitFor('frame');
   await command(service, { type: 'tapAt', ...LOGIN_BUTTON, frameId: 0 });
-  await first.waitFor('timeline', t => t.actions.length === 1);
+  await first.waitFor('timeline', t => t.entries.length === 1);
   first.close();
   await new Promise(resolve => setTimeout(resolve, 50));
 
@@ -333,8 +333,8 @@ test('a reattached client starts its own command ordering, so a reload can still
   const response = await command(service, { type: 'tapAt', ...LOGIN_BUTTON, frameId: 0 }, 1);
 
   assert.equal(response.status, 202, 'a reloaded page must not have its commands refused');
-  const timeline = await second.waitFor('timeline', t => t.actions.length === 2);
-  assert.equal(timeline.actions.length, 2, 'the recording continues rather than stalling');
+  const timeline = await second.waitFor('timeline', t => t.entries.length === 2);
+  assert.equal(timeline.entries.length, 2, 'the recording continues rather than stalling');
   second.close();
 });
 
@@ -356,7 +356,7 @@ test('losing the event stream does NOT end the recording — reattaching resyncs
   await connect(service);
   await first.waitFor('frame');
   await command(service, { type: 'tapAt', ...LOGIN_BUTTON, frameId: 0 });
-  await first.waitFor('timeline', t => t.actions.length === 1);
+  await first.waitFor('timeline', t => t.entries.length === 1);
 
   // Exactly what pressing F5 does.
   first.close();
@@ -366,7 +366,7 @@ test('losing the event stream does NOT end the recording — reattaching resyncs
 
   assert.equal(service.driver.session?.closed, false, 'the device session must survive a reload');
   assert.equal((await second.waitFor('connected')).device.name, 'Pixel_7_API_34');
-  assert.equal((await second.waitFor('timeline')).actions.length, 1, 'the recording must survive');
+  assert.equal((await second.waitFor('timeline')).entries.length, 1, 'the recording must survive');
   assert.match((await second.waitFor('code')).source, /mobileApp\.tap/);
   assert.equal(
     second.messages.filter(m => m.type === 'connected').length,

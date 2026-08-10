@@ -235,13 +235,27 @@ The current model gates every interaction on `frameId === lastFrameId` while a 1
 - **Capture schedule:** on connect; after every action; on explicit refresh. Idle polling happens only
   when the driver declares `liveFrames` and the session is idle, at an adaptive interval of
   `clamp(2 × p50(captureDuration), 750 ms, 5 s)`, with ×2 exponential backoff up to 30 s on consecutive
-  failures, reset on success.
-- **Post-action settle:** capture starts `250 ms` after the action returns, and if that frame differs
-  from the pre-action frame the engine captures **once more** after another 250 ms and keeps the later
-  one. This is deliberately not a fixed long sleep: most actions settle immediately, and the ones that
-  animate need a second look, not a slower first look.
+  failures, reset on success. An idle tick captures the **frame only**; the hierarchy is read only when the
+  frame's bytes changed, because a tree cannot have moved while the pixels did not — and on Maestro that
+  second round trip is ~110 ms of the device's attention per tick that the user's next interaction has to
+  queue behind.
+- **Post-action settle:** one capture immediately (the action has already happened, so whatever moved is on
+  screen now), then it depends on the driver. A driver that reports `ActionResult.settled` waited for the
+  animation itself — Maestro sends `waitForAnimationToEnd` inside the same command, which costs nothing
+  because its overhead is per _call_, not per line — so one hierarchy read finishes the job. A driver that
+  does not gets a `250 ms` sleep and a second capture, and a third only if those two settled captures still
+  differ. Comparing against the _pre-settle_ frame instead made the third look unconditional: a tap always
+  looks different a beat later. The hierarchy is read **once, last**; reading it mid-animation and again at
+  the end bought a tree that was stale before it arrived and paid for it twice.
 - **Dedup:** identical frames MUST NOT be re-sent; the server sends `frameUnchanged { frameId }` instead
-  of a second multi-megabyte payload.
+  of a second multi-megabyte payload. The same holds for the hierarchy: an unchanged tree is not re-sent at
+  all, because the client rebuilds its whole accessibility view from one, which on a deep native tree is
+  continuous main-thread work while the device sits idle.
+- **Captures never round-trip through the filesystem.** Both adapters wrote each frame into a temp directory
+  and read it straight back to produce the base64 the contract already had in hand — and neither emptied the
+  directory, so a ten-minute session at one frame per 750 ms left hundreds of screenshots on disk against a
+  §11 budget of three. `screenshot`/`aiAssert` and failure evidence still write files, because a file is
+  what those are for.
 - **Transport:** frame _bytes_ never travel inside a JSON message. The `frame` event carries only
   metadata (id, dimensions, coordinate space, orientation) and the image is fetched from
   `GET /frame/<frameId>` by an `<img src>` (ADR-013) — no base64, which would inflate every payload by a
@@ -478,33 +492,40 @@ separate Appium/Maestro review.
 
 Required fields per action — the validation table the trust boundary implements:
 
-| Action                                                                          | Required                           | Optional                                                                    |
-| ------------------------------------------------------------------------------- | ---------------------------------- | --------------------------------------------------------------------------- |
-| `tap`, `longPress`, `waitFor`, `assertVisible`, `assertNotVisible`, `isVisible` | `locator` (≥1 strategy set)        | `options.durationMs` / `options.timeoutMs`                                  |
-| `fill`                                                                          | `locator`, `value: string`         | —                                                                           |
-| `swipe`, `scroll`                                                               | `direction ∈ {up,down,left,right}` | `options.distance ∈ [0,1]`, `options.durationMs`, `options.within` (scroll) |
-| `drag`                                                                          | `from`, `to` (locator or `{x,y}`)  | —                                                                           |
-| `pinch`                                                                         | `scale: number > 0`                | `options.durationMs`                                                        |
-| `pressKey`                                                                      | `key: string`                      | —                                                                           |
-| `back`                                                                          | —                                  | —                                                                           |
-| `screenshot`                                                                    | —                                  | `name`                                                                      |
-| `aiAssert`                                                                      | `rubric: string`                   | `name`                                                                      |
+| Action                                                                                       | Required                           | Optional                                                                    |
+| -------------------------------------------------------------------------------------------- | ---------------------------------- | --------------------------------------------------------------------------- |
+| `tap`, `doubleTap`, `longPress`, `waitFor`, `assertVisible`, `assertNotVisible`, `isVisible` | `locator` (≥1 strategy set)        | `options.durationMs` / `options.timeoutMs`                                  |
+| `fill`                                                                                       | `locator`, `value: string`         | —                                                                           |
+| `eraseText`                                                                                  | `locator`                          | `options.characters` (positive integer; omit to clear the field)            |
+| `hideKeyboard`                                                                               | —                                  | —                                                                           |
+| `scrollUntilVisible`                                                                         | `locator`                          | `options.direction`, `options.timeoutMs`                                    |
+| `swipe`, `scroll`                                                                            | `direction ∈ {up,down,left,right}` | `options.distance ∈ [0,1]`, `options.durationMs`, `options.within` (scroll) |
+| `drag`                                                                                       | `from`, `to` (locator or `{x,y}`)  | —                                                                           |
+| `pinch`                                                                                      | `scale: number > 0`                | `options.durationMs`                                                        |
+| `pressKey`                                                                                   | `key: string`                      | —                                                                           |
+| `back`                                                                                       | —                                  | —                                                                           |
+| `screenshot`                                                                                 | —                                  | `name`                                                                      |
+| `aiAssert`                                                                                   | `rubric: string`                   | `name`                                                                      |
 
 Capabilities, per driver and platform. The UI MUST consult this via `DriverCapabilities` and disable
 unsupported actions **with the reason shown**, never silently downgrade them:
 
-| Action                                       | Maestro                                                                                                                                                                                                                                                                     | Appium Android   | Appium iOS                               |
-| -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- | ---------------------------------------- |
-| tap / fill / longPress / swipe / waitFor     | ✅                                                                                                                                                                                                                                                                          | ✅               | ✅                                       |
-| scroll                                       | ✅ direction honoured (a directional swipe, since bare `scroll()` only ever scrolls down); `within` **refused** with a clear error — Maestro's swipe has no element target, and pretending otherwise would generate a test that only appears to scroll the chosen container | ✅               | ✅                                       |
-| drag                                         | ✅ (percent-point swipe)                                                                                                                                                                                                                                                    | ✅               | ✅                                       |
-| pinch                                        | ❌ no primitive                                                                                                                                                                                                                                                             | ✅               | ✅ (needs a target element)              |
-| pressKey                                     | ✅                                                                                                                                                                                                                                                                          | ✅ (keycode map) | ⚠️ `home`/`volume*` only                 |
-| back                                         | ✅                                                                                                                                                                                                                                                                          | ✅               | ❌ no hardware back                      |
-| isVisible / assertVisible / assertNotVisible | ✅                                                                                                                                                                                                                                                                          | ✅               | ✅                                       |
-| screenshot                                   | ✅ (JPEG)                                                                                                                                                                                                                                                                   | ✅ (PNG)         | ✅ (PNG, Retina pixels ≠ logical points) |
-| aiAssert                                     | ✅ capture only                                                                                                                                                                                                                                                             | ✅ capture only  | ✅ capture only                          |
-| hierarchy / liveFrames                       | ✅ / ✅                                                                                                                                                                                                                                                                     | ✅ / ✅          | ✅ / ✅                                  |
+| Action                                       | Maestro                                                                                                                                                                                                                                                                     | Appium Android                                                                                                                                             | Appium iOS                               |
+| -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| tap / fill / longPress / swipe / waitFor     | ✅                                                                                                                                                                                                                                                                          | ✅                                                                                                                                                         | ✅                                       |
+| doubleTap                                    | ✅ `doubleTapOn`                                                                                                                                                                                                                                                            | ✅ `mobile: doubleClickGesture`                                                                                                                            | ✅ `mobile: doubleTap`                   |
+| eraseText                                    | ✅ tap + `eraseText` in one call; `characters` honoured                                                                                                                                                                                                                     | ✅ `clearValue`, or n backspaces for a partial erase                                                                                                       | ✅ same                                  |
+| hideKeyboard                                 | ✅ `hideKeyboard`                                                                                                                                                                                                                                                           | ✅ `mobile: hideKeyboard`                                                                                                                                  | ✅ `mobile: hideKeyboard`                |
+| scrollUntilVisible                           | ✅ its own primitive, stops as soon as the element is visible                                                                                                                                                                                                               | ✅ bounded look-then-scroll loop (no primitive exists; `UiScrollable` only accepts a `UiSelector` and `mobile: scroll`'s predicate form needs a container) | ✅ same                                  |
+| scroll                                       | ✅ direction honoured (a directional swipe, since bare `scroll()` only ever scrolls down); `within` **refused** with a clear error — Maestro's swipe has no element target, and pretending otherwise would generate a test that only appears to scroll the chosen container | ✅                                                                                                                                                         | ✅                                       |
+| drag                                         | ✅ (percent-point swipe)                                                                                                                                                                                                                                                    | ✅                                                                                                                                                         | ✅                                       |
+| pinch                                        | ❌ no primitive                                                                                                                                                                                                                                                             | ✅                                                                                                                                                         | ✅ (needs a target element)              |
+| pressKey                                     | ✅                                                                                                                                                                                                                                                                          | ✅ (keycode map)                                                                                                                                           | ⚠️ `home`/`volume*` only                 |
+| back                                         | ✅                                                                                                                                                                                                                                                                          | ✅                                                                                                                                                         | ❌ no hardware back                      |
+| isVisible / assertVisible / assertNotVisible | ✅                                                                                                                                                                                                                                                                          | ✅                                                                                                                                                         | ✅                                       |
+| screenshot                                   | ✅ (JPEG)                                                                                                                                                                                                                                                                   | ✅ (PNG)                                                                                                                                                   | ✅ (PNG, Retina pixels ≠ logical points) |
+| aiAssert                                     | ✅ capture only                                                                                                                                                                                                                                                             | ✅ capture only                                                                                                                                            | ✅ capture only                          |
+| hierarchy / liveFrames                       | ✅ / ✅                                                                                                                                                                                                                                                                     | ✅ / ✅                                                                                                                                                    | ✅ / ✅                                  |
 
 Two consequences worth stating explicitly: coordinate-only locators reach the adapters **routinely** (the
 hit-test misses whenever the tree is stale or the tap lands in dead space), so every adapter MUST
@@ -560,9 +581,16 @@ Ranking stays deterministic and explainable: accessibility id (92) > resource id
 coordinate (12), −25 and a warning when a candidate is not unique, coordinates always last and always
 flagged. On top of today's engine:
 
-- **Uniqueness scope.** Uniqueness is evaluated against the whole tree today, which discards perfectly
-  good locators inside a repeated list row. The engine SHOULD additionally offer a parent-scoped
-  candidate (nearest ancestor with a stable id) when a global match is ambiguous.
+- **Uniqueness scope.** Uniqueness is evaluated against the whole tree, which used to discard perfectly good
+  locators inside a repeated list row: every attribute of the row was non-unique, so the only candidate that
+  survived was a raw coordinate. **Done, as an ordinal rather than a parent scope.** `MobileLocator.index`
+  selects among the matches, which both drivers express natively (Maestro's `index`, WebdriverIO's match
+  list), and the engine offers it as an extra candidate at `base − 10` — below anything genuinely unique,
+  above the coordinate it replaces — with a warning that it is position-dependent. A parent-scoped candidate
+  was the other option and is **not** taken: expressing "inside the ancestor with this id" needs Maestro's
+  `childOf`/`containsChild` or an Appium XPath, neither of which the other driver has, so a recording made
+  with one would only replay under that one — the thing §3 exists to prevent. `native` remains for anyone who
+  wants that trade deliberately.
 - **Hit-test policy** (already correct, stated so it is not "simplified" away): prefer the smallest
   containing node that _has_ a stable locator over the smallest containing node overall — native trees
   bury anonymous implementation children inside actionable parents.
@@ -658,6 +686,33 @@ the right shape and is kept. Required changes beyond the state-model fixes above
   focus trap, `Escape` to dismiss, and focus restored to the invoking element.
 - **In-app pickers** replace native dialogs (ADR-001): project-confined directory browsing and the
   existing-test list across every driver extension (§8), both server-driven.
+- **Recording is an explicit act, driving the device is not.** A plain click on the viewport performs the
+  interaction and records nothing; ⌘/Ctrl + click records it. The reason is that the viewport is also how the
+  user _reaches_ the screen they came to record, so recording every click handed them a test whose first half
+  was the trip there, to be deleted by hand. A **Record** toggle inverts the default (and is the
+  keyboard-reachable equivalent of the modifier, which is mouse-only — WCAG 2.1.1); holding the modifier
+  always means "do the other thing this once". The locator menu is exempt: choosing a locator from a list
+  _is_ the explicit act. Recording nothing also skips codegen, the draft update and the strategy check, so
+  navigation is cheaper than recording as well as quieter.
+- **Device-level steps need a surface of their own.** `back` and `pressKey` are in the IR and supported by
+  both drivers, and neither the screen nor an element context menu can express "press Home" — so they were
+  unreachable from the UI entirely. A small toolbar under the viewport carries them, under the same record
+  gate.
+- **The element panel shows what the driver sees.** The ranked candidates answer "how do I address this";
+  the node's own attributes (class, text, a11y id, resource id, package, bounds, enabled) answer "is it even
+  the thing I meant", which a score cannot. They arrived with every hit-test already and were discarded.
+- **The editor completes from the device.** `mobileApp`'s methods, and locator literals built from the live
+  hierarchy. This is the completion a generic TypeScript editor cannot offer, and the alternative — reading an
+  id off the tree panel and typing it back — is exactly where a typo becomes a locator that silently never
+  matches.
+- **The timeline is walkable.** Each recorded step remembers the frame the screen showed once it had run, so
+  clicking a step shows that screen. A pinned step is **read-only**: the coordinates on a past screen do not
+  address the live one. Retention is bounded (§11) and a step whose frame has aged out says so rather than
+  rendering blank.
+- **The accessibility tree comes up three levels deep.** Every node used to start expanded, so a native
+  screen rendered several hundred rows — mostly anonymous layout containers — and paid for all of them on
+  every update. A collapsed branch shows its child count, and a filtered tree expands fully, since its rows
+  are the matches.
 
 ---
 
@@ -670,19 +725,24 @@ alias to the single source.
 
 Changes from today:
 
-| Message                   | Change                                                                            |
-| ------------------------- | --------------------------------------------------------------------------------- |
-| `isVisible`               | new **action kind** (carried by `perform`/`record`, not a message of its own)     |
-| every client command      | gains a monotonic `seq`; the server rejects out-of-order arrivals (ADR-013)       |
-| every server event        | gains a monotonic id so `EventSource` can resume from `Last-Event-ID`             |
-| `frame` (server)          | carries metadata + id only; the image bytes move to `GET /frame/<frameId>`        |
-| `frameUnchanged` (server) | new — dedup signal; the id simply repeats and the browser reuses its cached image |
-| `actionResult` (server)   | gains `matchedBy` (which locator/node the server actually acted on)               |
-| `hierarchy` (server)      | nodes gain `path` + `key` (ADR-007)                                               |
-| `listDirs` / `dirs`       | new — project-confined directory browsing for the in-app picker                   |
-| `draftState` (server)     | new — explicit `generated` / `user-owned` + divergence flag                       |
-| `tapAt` / `inspectAt`     | `frameId` becomes advisory (diagnostics), never a rejection reason                |
-| `disconnected` (server)   | MUST NOT imply clearing draft/timeline on the client                              |
+| Message                   | Change                                                                             |
+| ------------------------- | ---------------------------------------------------------------------------------- |
+| `isVisible`               | new **action kind** (carried by `perform`/`record`, not a message of its own)      |
+| every client command      | gains a monotonic `seq`; the server rejects out-of-order arrivals (ADR-013)        |
+| every server event        | gains a monotonic id so `EventSource` can resume from `Last-Event-ID`              |
+| `frame` (server)          | carries metadata + id only; the image bytes move to `GET /frame/<frameId>`         |
+| `frameUnchanged` (server) | new — dedup signal; the id simply repeats and the browser reuses its cached image  |
+| `actionResult` (server)   | gains `matchedBy` (which locator/node the server actually acted on)                |
+| `hierarchy` (server)      | nodes gain `path` + `key` (ADR-007)                                                |
+| `listDirs` / `dirs`       | new — project-confined directory browsing for the in-app picker                    |
+| `draftState` (server)     | new — explicit `generated` / `user-owned` + divergence flag                        |
+| `tapAt` / `inspectAt`     | `frameId` becomes advisory (diagnostics), never a rejection reason                 |
+| `disconnected` (server)   | MUST NOT imply clearing draft/timeline on the client                               |
+| `tapAt` / `perform`       | gain optional `record` — drive the device without writing a step down (§9)         |
+| `timeline` (server)       | carries `TimelineEntry[]` (id + action + the frame the step produced), not actions |
+| `connectProgress`         | new (server) — which stage of a connect is running, so a slow boot is not a hang   |
+| `connected` (server)      | gains `warnings` — e.g. a device handle that will not survive a reboot             |
+| `connect` (client)        | every option type-checked, not just `platform`; unknown fields dropped (ADR-010)   |
 
 ---
 
@@ -692,19 +752,47 @@ Measured, not aspirational. The deterministic rows — dependency footprint and 
 by `npm run nfr` in CI; the frame, log and poll bounds are unit-tested; the latency and idle-CPU rows need a
 device and belong to `device.yml`.
 
-**Measured on an Android emulator (Pixel 9 API 36, host: M-series macOS), p50 of 3–5 samples:**
+**Measured on an Android emulator, host M-series macOS, p50 of 5 samples.** The first column is the original
+measurement (Pixel 9 API 36); the second is after the capture-schedule work (`pixel9`, a different image, so
+the driver-floor rows are not exactly comparable — the interaction rows are what this changed).
 
-| Phase                      | Maestro | Appium |
-| -------------------------- | ------- | ------ |
-| `inspectHierarchy`         | 107 ms  | 22 ms  |
-| `captureScreen`            | 182 ms  | 130 ms |
-| `perform` a tap            | 1258 ms | 75 ms  |
-| **click → code on screen** | 3 ms    | 45 ms  |
-| **click → screen moves**   | 1510 ms | 194 ms |
+| Phase                      | Maestro before | Maestro after | Appium before | Appium after |
+| -------------------------- | -------------- | ------------- | ------------- | ------------ |
+| `inspectHierarchy`         | 107 ms         | 79 ms         | 22 ms         | 19 ms        |
+| `captureScreen`            | 182 ms         | 169 ms        | 130 ms        | 120 ms       |
+| **click → code on screen** | 3 ms           | 73 ms         | 45 ms         | 21 ms        |
+| **click → screen moves**   | 1510 ms        | 896 ms        | 194 ms        | 282 ms       |
 
-The tap itself is the whole story, and it belongs to the driver: Maestro runs each command as its own flow
-over MCP and charges ~1.3 s for it, which no change on our side removes. Appium's 75 ms is why it feels live.
-Both meet the frame budget; the code budget is met because the recording no longer waits for either.
+The tap itself still belongs to the driver: Maestro runs each command as its own flow over MCP and charges
+~420 ms for the privilege, which no change on this side removes. What changed is everything around it — the
+settle is one look when the driver reports `settled`, the post-action hierarchy is read once instead of twice,
+and Maestro carries `waitForAnimationToEnd` inside the same call — and on Maestro that is **1510 ms → 896 ms**
+for the thing a user actually waits for.
+
+Two rows need reading carefully rather than at face value:
+
+- **`click → code` rose on Maestro (3 → 73 ms) because the measurement got harder, not the code slower.** The
+  harness now replays the _same_ frame id for all five samples, so every one takes the stale-frame branch and
+  re-reads the hierarchy first (79 ms on Maestro) before hit-testing. That is the worst case for this budget,
+  and 73 ms still meets the ≤100 ms it sets; a click against a current frame is the 3 ms case and unchanged.
+- **`click → screen moves` on Appium (194 → 282 ms) is the same stale-frame read plus emulator variance**, not
+  a regression in the schedule: Appium reports no `settled`, so its settle is the ADR-006 two-look schedule
+  either way, and the change removed a hierarchy read from it rather than adding one.
+
+Refresh the numbers with:
+
+```bash
+PWTAP_DEVICE=1 npm run test:device                          # maestro / android
+PWTAP_DEVICE=1 PWTAP_DEVICE_DRIVER=appium npm run test:device
+```
+
+which prints a `[device] <driver>/<platform> p50 — …` line per run (see `inspector.device.test.ts`).
+
+**Frames on disk, measured the same way.** Five Appium captures through the old path left five PNGs in the
+temp directory and 1.8 MB of base64 per frame; the same five through the new one leave none. The file round
+trip was never the _latency_ problem — `takeScreenshot()` and `saveScreenshot()` + `readFile` measure 488 ms
+and 485 ms p50 on the same device, i.e. indistinguishable next to the driver's own screenshot call. It was an
+unbounded write of ~1 MB per poll tick against a §11 budget of three files.
 
 | Budget                                                                | Target                                                                                           |
 | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
@@ -715,7 +803,8 @@ Both meet the frame budget; the code budget is met because the recording no long
 | tap → updated frame, p50                                              | ≤ 1.5 s Appium · ≤ 3 s Maestro                                                                   |
 | Idle CPU, connected and untouched                                     | < 5 % of one core                                                                                |
 | Idle poll interval                                                    | adaptive, ≥ 750 ms, ≤ 5 s; ≤ 30 s while failing                                                  |
-| Retained screenshot files per session                                 | ≤ 3 (ring); temp dir removed on close                                                            |
+| Retained screenshot files per session                                 | ≤ 3 (ring); temp dir removed on close. Live frames write no file at all                          |
+| Retained step frames (memory)                                         | ≤ 50 (~7 MB); the oldest step loses its screen and the UI says so                                |
 | Frame payload                                                         | ≤ 2 MB of image bytes served from `/frame/<id>`; never base64; identical frames never re-fetched |
 | Duplicated tooling                                                    | none — nothing bundled that `core-template/manifest.json` already gives the project              |
 | Client memory                                                         | logs ≤ 2 000 entries, run output ≤ 5 000 lines / 2 MB                                            |
@@ -884,9 +973,25 @@ key, so installing either plugin — or both — merges it into `@fixtures` a si
    round trip, since writing and re-reading the PNG is free. That is ~50 ms twice per interaction.
    **Recommendation: do not**, for now: it adds a second capture path, Android-only, to the layer that has
    already produced two field defects, for about 8 % of click→screen. Revisit if the frame budget tightens.
+   (The "writing and re-reading the PNG is free" clause is what made this look like the only lever left. It
+   was measured against the MCP round trip and it is true per frame; what it missed is that nothing ever
+   deleted those files — see ADR-006. The file is gone now, which does not change this recommendation.)
 6. **Maestro Studio's local interface.** Maestro through MCP costs ~420 ms per tap over the device floor,
    because MCP's only interaction tool is `run` — a flow executor, so every tap is a one-line test run — and
    its parameters expose no wait to trim (§11). Studio avoids this by driving Maestro's own daemon instead,
    which is why it feels instant. Reaching that would mean integrating with a local interface Maestro does not
    document and does not expose a port flag for, so we would own every break. **Recommendation: do not**,
    while Appium is one option away at 194 ms click→screen; revisit if Maestro publishes the surface.
+
+   **Re-checked against Maestro 2.6.1** (`tools/list` over `maestro mcp`, and `maestro studio --help`), because
+   this is the one recommendation that a Maestro release could overturn on its own. It has not:
+   `maestro studio` still takes no port or host flag, and the MCP server still exposes `list_devices`,
+   `take_screenshot`, `run`, `inspect_screen`, `cheat_sheet`, `open_maestro_viewer` and the cloud tools —
+   `run` remains the only way to interact, and its parameters (`yaml` / `files` / `dir` / `include_tags` /
+   `exclude_tags` / `env`) still expose no wait to trim.
+
+   What the re-check _did_ find is that `run`'s `yaml` takes a **multi-line flow**, and the overhead is charged
+   per call rather than per line. Two things follow, both taken: `fill` is one call (tap + `inputText`) instead
+   of two, and a screen-changing command carries `waitForAnimationToEnd` in the same call, which is what lets
+   the recorder settle in one look instead of three (ADR-006). Neither reduces the per-tap floor; both remove a
+   whole floor's worth of calls from the interactions that needed more than one.

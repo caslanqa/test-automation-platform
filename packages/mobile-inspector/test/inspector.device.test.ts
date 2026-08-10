@@ -41,6 +41,85 @@ const APP_ID =
   process.env.PWTAP_DEVICE_APP ??
   (PLATFORM === 'android' ? 'com.android.settings' : 'com.apple.Preferences');
 
+/** How many samples each measured phase takes. Odd, so the median is a real sample. */
+const SAMPLES = 5;
+
+const median = (values: number[]): number =>
+  [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
+
+/**
+ * Time the phases the §11 budget names, on this device with this driver.
+ *
+ * Deliberately not assertions: the numbers depend on the host, the emulator and what the app is doing, so a
+ * threshold here would either be so loose it proves nothing or so tight it fails for reasons no one changed.
+ * Printed instead, and read back into the table by whoever changed the schedule.
+ *
+ * `click → code` and `click → screen moves` are measured from the same interaction: the first is when the
+ * timeline event lands (the recording must not wait for the device), the second is when the frame after it
+ * does (it must).
+ */
+async function measure(
+  session: RecorderSession,
+  events: ServerMessage[],
+  centre: { x: number; y: number },
+  frameId: number,
+): Promise<Record<string, number>> {
+  const refresh: number[] = [];
+  const hierarchy: number[] = [];
+  for (let i = 0; i < SAMPLES; i += 1) {
+    let started = Date.now();
+    await session.dispatch({ type: 'refreshFrame' });
+    refresh.push(Date.now() - started);
+    started = Date.now();
+    await session.dispatch({ type: 'refreshHierarchy' });
+    hierarchy.push(Date.now() - started);
+  }
+
+  const code: number[] = [];
+  const screen: number[] = [];
+  for (let i = 0; i < SAMPLES; i += 1) {
+    const mark = events.length;
+    const started = Date.now();
+    let codeAt: number | undefined;
+    let screenAt: number | undefined;
+    let finished = false;
+    // NOT awaited yet, and that is the whole point: the two budgets this loop exists for are supposed to be
+    // far apart — the code must arrive without waiting for the device, the frame cannot — and awaiting the
+    // dispatch first collapses both into "how long the dispatch took", which is how a first version of this
+    // reported the same number twice.
+    const dispatch = session
+      .dispatch({ type: 'tapAt', ...centre, frameId, record: true })
+      .then(() => {
+        finished = true;
+      });
+    for (;;) {
+      const since = events.slice(mark);
+      codeAt ??= since.some(e => e.type === 'code') ? Date.now() : undefined;
+      screenAt ??= since.some(e => e.type === 'frame' || e.type === 'frameUnchanged')
+        ? Date.now()
+        : undefined;
+      if ((codeAt !== undefined && screenAt !== undefined) || finished) {
+        break;
+      }
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
+    await dispatch;
+    if (codeAt !== undefined) {
+      code.push(codeAt - started);
+    }
+    if (screenAt !== undefined) {
+      screen.push(screenAt - started);
+    }
+  }
+
+  return {
+    captureScreen: median(refresh),
+    inspectHierarchy: median(hierarchy),
+    'click → code': median(code),
+    'click → screen moves': median(screen),
+  };
+}
+
 /** How stable a node's best identifier is — the order the locator engine itself prefers. */
 function identifierRank(node: MobileNode): number {
   if (node.accessibilityId) {
@@ -178,12 +257,12 @@ test(`${DRIVER_ID} adapter on a real device: record a tap and generate a runnabl
       true,
       `the driver refused a tap on a hit-tested element:\n${diagnose()}`,
     );
-    assert.equal(last('timeline')?.actions.length, 1, `the tap was not recorded:\n${diagnose()}`);
+    assert.equal(last('timeline')?.entries.length, 1, `the tap was not recorded:\n${diagnose()}`);
     // The recorded locator must be an identifier, not a coordinate: this is the round trip that matters —
     // the engine chose a locator, handed it back to the driver, and the driver resolved it on a real
     // screen. (Asserting the exact element would be wrong: hit-testing an element's centre may legitimately
     // land on a smaller identified child, which is the locator engine working as designed.)
-    const recorded = last('timeline')?.actions[0];
+    const recorded = last('timeline')?.entries[0]?.action;
     assert.ok(recorded?.kind === 'tap', `unexpected recorded action: ${JSON.stringify(recorded)}`);
     assert.equal(
       recorded.locator.point,
@@ -219,6 +298,16 @@ test(`${DRIVER_ID} adapter on a real device: record a tap and generate a runnabl
 
     // eslint-disable-next-line no-console
     console.log(`\n[device] ${DRIVER_ID} on ${candidate.name} generated:\n${code}`);
+
+    // 7. The §11 latency table, measured rather than asserted. These numbers are the only evidence that a
+    //    change to the capture schedule or to an adapter's round trips actually did what it claimed, and
+    //    they belong to a real device — which is why the table in architecture.md is filled in from here.
+    const samples = await measure(session, events, centre, frame.frameId);
+    const summary = Object.entries(samples)
+      .map(([phase, ms]) => `${phase}: ${ms} ms`)
+      .join(' · ');
+    // eslint-disable-next-line no-console
+    console.log(`[device] ${DRIVER_ID}/${PLATFORM} p50 — ${summary}`);
   } finally {
     await session.close();
     fs.rmSync(projectRoot, { recursive: true, force: true });

@@ -25,8 +25,10 @@ import type {
 } from '@pwtap/mobile-core';
 import {
   ACTION_DEFAULTS,
+  DeviceUnavailableError,
   deviceUnavailableMessage,
   discoverMobileDevices,
+  orientCoordinateSpace,
   readImageSize,
   resolveTargetPoint,
 } from '@pwtap/mobile-core';
@@ -43,7 +45,11 @@ import {
 } from '@pwtap/platform';
 
 import { ensureAppInstalled } from './core/appInstaller.js';
-import type { MaestroDirection, McpSessionHooks } from './core/MaestroMcpSession.js';
+import type {
+  CommandOptions,
+  MaestroDirection,
+  McpSessionHooks,
+} from './core/MaestroMcpSession.js';
 import { MaestroMcpSession } from './core/MaestroMcpSession.js';
 import type { MaestroNode, MaestroScreen, MaestroSelector } from './core/types.js';
 
@@ -52,10 +58,14 @@ const CAPABILITIES: DriverCapabilities = {
   liveFrames: true,
   gestures: {
     tap: true,
+    doubleTap: true,
     fill: true,
+    eraseText: true,
+    hideKeyboard: true,
     longPress: true,
     swipe: true,
     scroll: true,
+    scrollUntilVisible: true,
     drag: true,
     pinch: false, // Maestro has no pinch primitive
     pressKey: true,
@@ -84,26 +94,68 @@ function inspectorHooks(outputDir: string): McpSessionHooks {
   };
 }
 
+/** Regex metacharacters, plus `$`, which Maestro also reads as the start of a variable reference. */
+const MAESTRO_PATTERN_SPECIALS = /[\\^$.|?*+()[\]{}]/g;
+
+/**
+ * Escape a literal string for Maestro's `text`/`id` selectors, which are **regular expressions**
+ * (full-string, case-insensitive) rather than literals.
+ *
+ * `MobileLocator.text` is the element's visible text and `resourceId` is its id — both literals by contract.
+ * Passed through unescaped, any UI string containing regex syntax silently stops matching the element it was
+ * recorded from: `Wi-Fi (2.4 GHz)`, `$150 in Cash`, `Storage [internal]`, `Continue?` are all ordinary
+ * labels and all invalid-or-wrong as patterns. `MobileLocator.native` is deliberately NOT escaped — that is
+ * the hand-authored escape hatch, and a caller reaching for it is authoring a Maestro selector on purpose.
+ *
+ * @example escapeMaestroPattern('Wi-Fi (2.4 GHz)') // 'Wi-Fi \\(2\\.4 GHz\\)'
+ */
+export function escapeMaestroPattern(value: string): string {
+  return value.replace(MAESTRO_PATTERN_SPECIALS, '\\$&');
+}
+
 /** Translate a driver-neutral locator into a Maestro selector. */
-function toMaestroSelector(locator: MobileLocator): MaestroSelector {
+export function toMaestroSelector(locator: MobileLocator): MaestroSelector {
   if (locator.native !== undefined) {
     return locator.native as MaestroSelector;
   }
+  // Maestro's own `index`, which counts matches the same 0-based way the IR does.
+  const index = locator.index === undefined ? {} : { index: locator.index };
   if (locator.accessibilityId !== undefined) {
     // Maestro matches accessibility text via `text`, not a separate key (see core/types.ts).
-    return { text: locator.accessibilityId };
+    return { text: escapeMaestroPattern(locator.accessibilityId), ...index };
   }
   if (locator.resourceId !== undefined) {
-    return { id: locator.resourceId };
+    return { id: escapeMaestroPattern(locator.resourceId), ...index };
   }
   if (locator.text !== undefined) {
-    return { text: locator.text };
+    return { text: escapeMaestroPattern(locator.text), ...index };
   }
   throw new Error(
     '[maestro-inspector] locator has no accessibilityId/resourceId/text/native strategy Maestro ' +
       `can use: ${JSON.stringify(locator)}`,
   );
 }
+
+/** Passed to every command below that should return with the screen at rest. */
+const SETTLE: CommandOptions = { settle: true };
+
+/**
+ * Actions whose Maestro command is sent together with `waitForAnimationToEnd`, and which therefore return
+ * with the screen already at rest. Kept beside the `execute` switch that passes {@link SETTLE}; the two must
+ * agree, because claiming `settled` without waiting would make the recorder capture mid-animation.
+ */
+const SETTLES_ON_DEVICE = new Set<MobileAction['kind']>([
+  'tap',
+  'doubleTap',
+  'fill',
+  'eraseText',
+  'longPress',
+  'swipe',
+  'scroll',
+  'drag',
+  'pressKey',
+  'back',
+]);
 
 const DIRECTION_MAP: Record<MobileDirection, MaestroDirection> = {
   up: 'UP',
@@ -230,6 +282,8 @@ class MaestroDriverSession implements DriverSession {
   /** The app this session is scoped to — the one requested, or the one adopted from the foreground. */
   readonly appId: string;
   private readonly coordinateSize: { width: number; height: number } | undefined;
+  /** Temp directory this session's evidence screenshots go to; removed on close so nothing accumulates. */
+  private readonly outputDir: string;
   /**
    * The coordinate space of the most recent capture, orientation already resolved. Kept so converting a
    * point locator into Maestro's `x%,y%` does not need a fresh screenshot — the inspector captures on every
@@ -244,35 +298,32 @@ class MaestroDriverSession implements DriverSession {
     coordinateSize: { width: number; height: number } | undefined,
     release: () => void,
     appId: string,
+    outputDir: string,
   ) {
     this.maestro = maestro;
     this.device = device;
     this.coordinateSize = coordinateSize;
     this.releaseLock = release;
     this.appId = appId;
+    this.outputDir = outputDir;
   }
 
   async captureScreen(): Promise<ScreenFrame> {
-    const name = `inspector-frame-${this.frameCounter}`;
-    const filePath = await this.maestro.takeScreenshot(name);
-    const buf = await fs.readFile(filePath);
-    const size = readImageSize(buf) ?? { width: 0, height: 0 };
-    const imageLandscape = size.width > size.height;
-    const coordinatesLandscape =
-      this.coordinateSize !== undefined && this.coordinateSize.width > this.coordinateSize.height;
-    const coordinateSize =
-      this.coordinateSize && imageLandscape !== coordinatesLandscape
-        ? { width: this.coordinateSize.height, height: this.coordinateSize.width }
-        : this.coordinateSize;
+    const imageBase64 = await this.maestro.screenshotBytes();
+    // ponytail: one base64 decode remains, and only to read the image header. `ScreenFrame` carries the
+    // image as base64 by contract, so passing the Buffer straight through would be an adapter-contract
+    // bump (ADR-009) for a few hundred microseconds.
+    const size = readImageSize(Buffer.from(imageBase64, 'base64')) ?? { width: 0, height: 0 };
+    const coordinateSize = orientCoordinateSpace(size, this.coordinateSize);
     this.lastCoordinateSpace = coordinateSize ?? { width: size.width, height: size.height };
     return {
       frameId: this.frameCounter++,
-      imageBase64: buf.toString('base64'),
+      imageBase64,
       width: size.width,
       height: size.height,
       coordinateWidth: coordinateSize?.width,
       coordinateHeight: coordinateSize?.height,
-      orientation: imageLandscape ? 'landscape' : 'portrait',
+      orientation: size.width > size.height ? 'landscape' : 'portrait',
       capturedAt: Date.now(),
     };
   }
@@ -300,7 +351,14 @@ class MaestroDriverSession implements DriverSession {
     const start = Date.now();
     try {
       const value = await this.execute(action);
-      return { ok: true, value, durationMs: Date.now() - start };
+      // The commands below carry `waitForAnimationToEnd` in the same `run` call, so the caller is spared
+      // its own sleep-and-look-again cycle (see `ActionResult.settled`).
+      return {
+        ok: true,
+        value,
+        durationMs: Date.now() - start,
+        settled: SETTLES_ON_DEVICE.has(action.kind),
+      };
     } catch (error) {
       return {
         ok: false,
@@ -313,11 +371,37 @@ class MaestroDriverSession implements DriverSession {
   private async execute(action: MobileAction): Promise<unknown> {
     switch (action.kind) {
       case 'tap':
-        return this.maestro.tapOn(await this.resolveSelector(action.locator));
+        return this.maestro.tapOn(await this.resolveSelector(action.locator), SETTLE);
+      case 'doubleTap':
+        return this.maestro.doubleTapOn(await this.resolveSelector(action.locator), SETTLE);
+      case 'eraseText':
+        // Maestro's `eraseText` acts on the FOCUSED field and takes no selector, so the field is tapped
+        // first — both lines in one call, the same way `fill` does it.
+        return this.maestro.eraseTextIn(
+          await this.resolveSelector(action.locator),
+          action.options?.characters,
+          SETTLE,
+        );
+      case 'hideKeyboard':
+        return this.maestro.hideKeyboard();
+      case 'scrollUntilVisible':
+        // Maestro's own command, which stops as soon as the element is visible. `timeout` is forwarded, not
+        // dropped: a device run proved it silently ignored otherwise, and an option a driver reads as nothing
+        // is exactly what §5 forbids — the caller asked for four seconds and Maestro spent twenty.
+        return this.maestro.scrollUntilVisible(toMaestroSelector(action.locator), {
+          direction: action.options?.direction
+            ? DIRECTION_MAP[action.options.direction]
+            : undefined,
+          timeout: action.options?.timeoutMs,
+        });
       case 'fill':
-        // Maestro has no "fill a specific field" command — tap it to focus, then type.
-        await this.maestro.tapOn(await this.resolveSelector(action.locator));
-        return this.maestro.inputText(action.value);
+        // Maestro has no "fill a specific field" command — tap to focus, then type — but both lines go in
+        // ONE `run` call, because Maestro's per-flow overhead is charged per call, not per line.
+        return this.maestro.fillOn(
+          await this.resolveSelector(action.locator),
+          action.value,
+          SETTLE,
+        );
       case 'longPress':
         if (action.options?.durationMs !== undefined) {
           // Maestro's `longPressOn` takes the same properties as `tapOn` and no duration (its own cheat
@@ -328,7 +412,7 @@ class MaestroDriverSession implements DriverSession {
               '`durationMs`, or use the Appium driver',
           );
         }
-        return this.maestro.longPressOn(await this.resolveSelector(action.locator));
+        return this.maestro.longPressOn(await this.resolveSelector(action.locator), SETTLE);
       case 'swipe': {
         // A direction-only swipe has no distance in Maestro, so a requested one is expressed as start/end
         // percentage points — the same form `drag` uses. Without this, `distance` was accepted by the IR and
@@ -336,12 +420,15 @@ class MaestroDriverSession implements DriverSession {
         const distance = action.options?.distance;
         if (distance !== undefined) {
           const { start, end } = swipeSpan(action.direction, distance);
-          return this.maestro.swipe({ start, end, duration: action.options?.durationMs });
+          return this.maestro.swipe({ start, end, duration: action.options?.durationMs }, SETTLE);
         }
-        return this.maestro.swipe({
-          direction: DIRECTION_MAP[action.direction],
-          duration: action.options?.durationMs,
-        });
+        return this.maestro.swipe(
+          {
+            direction: DIRECTION_MAP[action.direction],
+            duration: action.options?.durationMs,
+          },
+          SETTLE,
+        );
       }
       case 'scroll':
         if (action.options?.within) {
@@ -354,25 +441,31 @@ class MaestroDriverSession implements DriverSession {
         }
         // Maestro's bare `scroll()` always scrolls down, so the recorded direction used to be discarded.
         // A swipe carries direction, inverted because the finger moves opposite to the content.
-        return this.maestro.swipe({
-          direction: DIRECTION_MAP[SCROLL_TO_SWIPE[action.direction]],
-        });
+        return this.maestro.swipe(
+          {
+            direction: DIRECTION_MAP[SCROLL_TO_SWIPE[action.direction]],
+          },
+          SETTLE,
+        );
       case 'drag': {
         const hierarchy = await this.inspectHierarchy();
         const frame = await this.captureScreen();
         const from = resolveTargetPoint(action.from, hierarchy);
         const to = resolveTargetPoint(action.to, hierarchy);
-        return this.maestro.swipe({
-          start: toPercentPoint(from, frame),
-          end: toPercentPoint(to, frame),
-        });
+        return this.maestro.swipe(
+          {
+            start: toPercentPoint(from, frame),
+            end: toPercentPoint(to, frame),
+          },
+          SETTLE,
+        );
       }
       case 'pinch':
         throw new Error('[maestro-inspector] pinch is not supported by the Maestro driver');
       case 'pressKey':
-        return this.maestro.pressKey(toMaestroKey(action.key));
+        return this.maestro.pressKey(toMaestroKey(action.key), SETTLE);
       case 'back':
-        return this.maestro.back();
+        return this.maestro.back(SETTLE);
       case 'waitFor': {
         const visible = await this.maestro.isVisible(toMaestroSelector(action.locator), {
           timeout: action.options?.timeoutMs ?? ACTION_DEFAULTS.waitForMs,
@@ -411,6 +504,8 @@ class MaestroDriverSession implements DriverSession {
 
   async close(): Promise<void> {
     await this.maestro.close();
+    // Best-effort: a leftover temp directory is untidy, not a failure, and it must not mask a close error.
+    await fs.rm(this.outputDir, { recursive: true, force: true }).catch(() => undefined);
     this.releaseLock?.();
     this.releaseLock = undefined;
   }
@@ -432,15 +527,19 @@ class MaestroInspectorDriver implements MobileInspectorDriver {
   }
 
   async connect(options: ConnectOptions): Promise<DriverSession> {
+    const progress = options.onProgress ?? ((): void => undefined);
     const release = await acquireDeviceLock(deviceLockKey(options.platform, options.device));
     try {
+      progress(
+        options.device ? `acquiring ${options.device}` : `acquiring an ${options.platform} device`,
+      );
       const acquired = await acquireDevice(options.platform, {
         deviceName: options.device,
         headless: options.headless ?? true,
         onBooted: recordBootedDevice,
       });
       if (!acquired) {
-        throw new Error(
+        throw new DeviceUnavailableError(
           await deviceUnavailableMessage('maestro', options.platform, options.device),
         );
       }
@@ -448,8 +547,10 @@ class MaestroInspectorDriver implements MobileInspectorDriver {
       // Maestro has no install primitive of its own — install the build first (same helper the
       // plugin's own fixture uses) so `launchApp` below can find it.
       if (options.appSource) {
+        progress(`installing ${options.appSource}`);
         await ensureAppInstalled(acquired, options.appSource);
       }
+      progress('reading the device viewport');
       const coordinateSize =
         acquired.platform === 'android'
           ? await getAndroidViewportSize(acquired.id)
@@ -460,6 +561,7 @@ class MaestroInspectorDriver implements MobileInspectorDriver {
       // looking at is the app they mean, so adopt it; if that cannot be determined, refuse here instead.
       let appId = options.appId;
       if (!appId) {
+        progress('detecting the foreground app');
         appId =
           acquired.platform === 'android' ? await foregroundAndroidApp(acquired.id) : undefined;
         if (!appId) {
@@ -476,6 +578,7 @@ class MaestroInspectorDriver implements MobileInspectorDriver {
         try {
           // Maestro initializes its device connection lazily on the first command. A freshly
           // released iOS driver can briefly report "not connected", so rebuild MCP once.
+          progress(attempt === 1 ? `launching ${appId}` : `retrying: launching ${appId}`);
           await maestro.launchApp(appId);
           return new MaestroDriverSession(
             maestro,
@@ -483,6 +586,7 @@ class MaestroInspectorDriver implements MobileInspectorDriver {
             coordinateSize,
             release,
             appId,
+            outputDir,
           );
         } catch (error) {
           await maestro.close();

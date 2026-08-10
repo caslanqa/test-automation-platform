@@ -31,9 +31,11 @@ import { test as base, expect } from '@playwright/test';
 import type { MobilePlatform } from '@pwtap/platform';
 
 import { discoverDriverMap } from './registry.js';
+import { skipWithReason } from './skip.js';
 import type {
   DriverCapabilities,
   DriverSession,
+  EraseTextOptions,
   LongPressOptions,
   MobileAction,
   MobileApp,
@@ -44,10 +46,11 @@ import type {
   MobileTarget,
   PinchOptions,
   ScrollOptions,
+  ScrollUntilOptions,
   SwipeOptions,
   WaitOptions,
 } from './types.js';
-import { DriverNotFoundError, UnsupportedActionError } from './types.js';
+import { DeviceUnavailableError, DriverNotFoundError, UnsupportedActionError } from './types.js';
 
 /**
  * Driver/device/app selection for the {@link MobileApp} facade.
@@ -176,9 +179,21 @@ function toMobileApp(
       assertSupported('tap');
       await perform({ kind: 'tap', locator });
     },
+    async doubleTap(locator: MobileLocator) {
+      assertSupported('doubleTap');
+      await perform({ kind: 'doubleTap', locator });
+    },
     async fill(locator: MobileLocator, value: string) {
       assertSupported('fill');
       await perform({ kind: 'fill', locator, value });
+    },
+    async eraseText(locator: MobileLocator, options?: EraseTextOptions) {
+      assertSupported('eraseText');
+      await perform({ kind: 'eraseText', locator, options });
+    },
+    async hideKeyboard() {
+      assertSupported('hideKeyboard');
+      await perform({ kind: 'hideKeyboard' });
     },
     async longPress(locator: MobileLocator, options?: LongPressOptions) {
       assertSupported('longPress');
@@ -191,6 +206,10 @@ function toMobileApp(
     async scroll(direction: MobileDirection, options?: ScrollOptions) {
       assertSupported('scroll');
       await perform({ kind: 'scroll', direction, options });
+    },
+    async scrollUntilVisible(locator: MobileLocator, options?: ScrollUntilOptions) {
+      assertSupported('scrollUntilVisible');
+      await perform({ kind: 'scrollUntilVisible', locator, options });
     },
     async drag(from: MobileTarget, to: MobileTarget) {
       assertSupported('drag');
@@ -236,7 +255,7 @@ export const test = base.extend<MobileInspectorOptions & MobileInspectorFixtures
   mobileTarget: [undefined, { option: true }],
 
   mobileApp: [
-    async ({ mobileTarget }, use) => {
+    async ({ mobileTarget }, use, testInfo) => {
       const driverId = resolveDriverId(mobileTarget?.driver);
       const problems: string[] = [];
       const drivers = await discoverDriverMap(undefined, message => problems.push(message));
@@ -245,15 +264,28 @@ export const test = base.extend<MobileInspectorOptions & MobileInspectorFixtures
         throw new DriverNotFoundError(driverId, problems);
       }
 
-      const session = await driver.connect({
-        platform: resolvePlatform(mobileTarget?.platform),
-        device: resolveDevice(mobileTarget?.device),
-        headless: resolveHeadless(mobileTarget?.headless),
-        // Forwarded, not dropped: a recorded flow is meaningless if the replay never launches the app it
-        // was recorded against — and Maestro's session refuses every command until an app id is set.
-        appId: mobileTarget?.appId,
-        appSource: mobileTarget?.appSource,
-      });
+      let session: DriverSession;
+      try {
+        session = await driver.connect({
+          platform: resolvePlatform(mobileTarget?.platform),
+          device: resolveDevice(mobileTarget?.device),
+          headless: resolveHeadless(mobileTarget?.headless),
+          // Forwarded, not dropped: a recorded flow is meaningless if the replay never launches the app it
+          // was recorded against — and Maestro's session refuses every command until an app id is set.
+          appId: mobileTarget?.appId,
+          appSource: mobileTarget?.appSource,
+        });
+      } catch (error) {
+        // The device this recording pins is not on this machine. That is the expected first outcome of
+        // sharing a recorded test (ADR-003) rather than a defect in it, and it is what the `maestro`/`appium`
+        // fixtures already report as a skip carrying the reason — so this fixture answers the same way
+        // instead of failing a run for a fact about the host. Every other connect failure still throws.
+        if (error instanceof DeviceUnavailableError) {
+          skipWithReason(testInfo, error.message);
+          return;
+        }
+        throw error;
+      }
       try {
         // The session's own answer when it has one: a driver's static declaration is made before the
         // platform is known, so it can only overstate what varies by platform (see DriverSession.capabilities).

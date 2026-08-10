@@ -32,6 +32,25 @@ import type {
 /** A frame as it reaches the UI: everything except the image bytes, which come from `/frame/<frameId>`. */
 export type ScreenFrameMeta = Omit<ScreenFrame, 'imageBase64'>;
 
+/**
+ * One recorded step: the action, a stable id, and the screen it produced.
+ *
+ * The timeline used to be a bare `MobileAction[]`, which made a step identifiable only by its position — so
+ * "retract the action the driver just refused" had to match by object identity, and a step could not carry
+ * anything about itself (§6 asks for stable ids). `frameId` is what makes a recording reviewable: clicking a
+ * step shows the screen as it was once that step had run, instead of asking the reader to imagine it.
+ */
+export interface TimelineEntry {
+  /** Stable for the life of the step, across undo, redo and deletions elsewhere in the log. */
+  id: number;
+  action: MobileAction;
+  /**
+   * The frame the device showed once this step settled. Absent when the step was recorded without being run
+   * (an assertion about a state the screen is not in), and when the frame has aged out of retention.
+   */
+  frameId?: number;
+}
+
 /** One entry in the driver picker — a discovered adapter, what it supports, and where its tests live. */
 export interface DriverSummary {
   id: MobileDriverId;
@@ -51,11 +70,17 @@ export type ClientMessage =
   | { type: 'disconnect' }
   | { type: 'refreshFrame' }
   | { type: 'refreshHierarchy' }
-  /** Hit-test a tap in the frame's interaction coordinate space, record + perform it. */
-  | { type: 'tapAt'; x: number; y: number; frameId: number }
+  /**
+   * Hit-test a tap in the frame's interaction coordinate space, perform it, and record it when asked.
+   *
+   * `record` is what separates driving the app from writing a test. Every click used to become a step, so
+   * finding the screen you actually wanted to record meant deleting the journey you took to get there. It
+   * defaults to `true` when absent, which is what a client that only ever records means.
+   */
+  | { type: 'tapAt'; x: number; y: number; frameId: number; record?: boolean }
   /** Hit-test WITHOUT acting — return the matched node and its ranked locator candidates. */
   | { type: 'inspectAt'; x: number; y: number; frameId: number }
-  | { type: 'perform'; action: MobileAction }
+  | { type: 'perform'; action: MobileAction; record?: boolean }
   /** Add an action to the generated flow without executing it against the current device state. */
   | { type: 'record'; action: MobileAction }
   | { type: 'removeAction'; index: number }
@@ -88,11 +113,23 @@ export type ServerMessage =
   | { type: 'devices'; driver: MobileDriverId; devices: InspectorDevice[] }
   | { type: 'apps'; driver: MobileDriverId; apps: InstalledApp[] }
   | { type: 'connecting' }
+  /**
+   * Which stage of `connect` is running now. Connecting can take a minute (boot a device, install a build,
+   * start a driver process, launch the app) and reported one word for all of it, so a slow boot and a hung
+   * driver looked the same and users restarted a session that was working.
+   */
+  | { type: 'connectProgress'; stage: string }
   | {
       type: 'connected';
       driver: MobileDriverId;
       device: InspectorDevice;
       capabilities: DriverCapabilities;
+      /**
+       * Things about this connection the user has to know to trust the recording — chiefly a device handle
+       * that will not survive a reboot, so the generated test pins something that stops matching. It used to
+       * be a `log('warn')` line in a panel nobody had open, which §6 explicitly forbids as the only response.
+       */
+      warnings?: string[];
     }
   | { type: 'disconnected' }
   /** A new frame is available; fetch the image from `GET /frame/<frameId>`. */
@@ -106,7 +143,7 @@ export type ServerMessage =
   /** Response to `inspectAt`: the matched node (if any) and its ranked locator candidates. */
   | { type: 'inspected'; node: MobileNode | null; candidates: LocatorCandidate[] }
   | { type: 'actionResult'; action: MobileAction; result: ActionResult }
-  | { type: 'timeline'; actions: MobileAction[] }
+  | { type: 'timeline'; entries: TimelineEntry[] }
   /** The current authoritative source draft and its revision (bumped on every server-side change). */
   | { type: 'code'; source: string; revision: number }
   /** Response to `listTestFiles`. */
@@ -173,18 +210,18 @@ export function parseClientMessage(raw: unknown): ClientMessage | null {
       if (typeof r.driver !== 'string' || typeof r.options !== 'object' || r.options === null) {
         return null;
       }
-      const o = r.options as { platform?: unknown };
-      if (o.platform !== 'android' && o.platform !== 'ios') {
-        return null;
-      }
-      return { type: 'connect', driver: r.driver, options: r.options as ConnectOptions };
+      const options = parseConnectOptions(r.options);
+      return options ? { type: 'connect', driver: r.driver, options } : null;
     }
     case 'tapAt': {
-      const r = raw as { x?: unknown; y?: unknown; frameId?: unknown };
+      const r = raw as { x?: unknown; y?: unknown; frameId?: unknown; record?: unknown };
       if (typeof r.x !== 'number' || typeof r.y !== 'number' || typeof r.frameId !== 'number') {
         return null;
       }
-      return { type: 'tapAt', x: r.x, y: r.y, frameId: r.frameId };
+      if (r.record !== undefined && typeof r.record !== 'boolean') {
+        return null;
+      }
+      return { type: 'tapAt', x: r.x, y: r.y, frameId: r.frameId, record: r.record };
     }
     case 'inspectAt': {
       const r = raw as { x?: unknown; y?: unknown; frameId?: unknown };
@@ -194,8 +231,11 @@ export function parseClientMessage(raw: unknown): ClientMessage | null {
       return { type: 'inspectAt', x: r.x, y: r.y, frameId: r.frameId };
     }
     case 'perform': {
-      const action = (raw as { action?: unknown }).action;
-      return isMobileAction(action) ? { type: 'perform', action } : null;
+      const { action, record } = raw as { action?: unknown; record?: unknown };
+      if (!isMobileAction(action) || (record !== undefined && typeof record !== 'boolean')) {
+        return null;
+      }
+      return { type: 'perform', action, record };
     }
     case 'record': {
       const action = (raw as { action?: unknown }).action;
@@ -246,6 +286,33 @@ export function parseClientMessage(raw: unknown): ClientMessage | null {
   }
 }
 
+/**
+ * Narrow a client's connect payload to exactly the fields {@link ConnectOptions} declares.
+ *
+ * Rebuilt field by field rather than cast: once `platform` checked out the whole object used to be forwarded
+ * on trust, so a non-string `device` reached the device resolver and a client could supply `onProgress` — a
+ * callback the *service* injects — as data, which the adapter would then try to call (ADR-010).
+ */
+function parseConnectOptions(value: object): ConnectOptions | null {
+  const options = value as Record<string, unknown>;
+  if (options.platform !== 'android' && options.platform !== 'ios') {
+    return null;
+  }
+  if (!(['device', 'appId', 'appSource'] as const).every(key => isOptionalString(options[key]))) {
+    return null;
+  }
+  if (options.headless !== undefined && typeof options.headless !== 'boolean') {
+    return null;
+  }
+  return {
+    platform: options.platform,
+    device: options.device as string | undefined,
+    appId: options.appId as string | undefined,
+    appSource: options.appSource as string | undefined,
+    headless: options.headless as boolean | undefined,
+  };
+}
+
 // ----- action payload validation -----
 //
 // The trust boundary validates an action FIELD BY FIELD, not just by its `kind`: main/the service treats
@@ -293,6 +360,14 @@ function isLocator(value: unknown): boolean {
   if (!isOptionalString(locator.label)) {
     return false;
   }
+  // `index` picks among matches rather than being a strategy of its own, so it does not count towards the
+  // "at least one strategy" rule — an index with nothing to index is not a locator.
+  if (
+    locator.index !== undefined &&
+    (!Number.isInteger(locator.index) || (locator.index as number) < 0)
+  ) {
+    return false;
+  }
   return strategies > 0;
 }
 
@@ -337,6 +412,23 @@ function isScrollOptions(value: unknown): boolean {
   return within === undefined || isLocator(within);
 }
 
+function isScrollUntilOptions(value: unknown): boolean {
+  if (!hasOptionalNumbers(value, ['timeoutMs'])) {
+    return false;
+  }
+  const direction = (value as ActionFields | undefined)?.direction;
+  return direction === undefined || isDirection(direction);
+}
+
+/** `characters` is a count of keystrokes to erase, so a fraction or a negative number is a caller bug. */
+function isCharacterCount(value: unknown): boolean {
+  if (!hasOptionalNumbers(value, ['characters'])) {
+    return false;
+  }
+  const characters = (value as ActionFields | undefined)?.characters;
+  return characters === undefined || (Number.isInteger(characters) && (characters as number) > 0);
+}
+
 /**
  * One validator per action kind. Typed as a total `Record` over the union on purpose: adding a new
  * `MobileAction` kind without teaching the trust boundary how to validate it becomes a compile error
@@ -344,10 +436,14 @@ function isScrollOptions(value: unknown): boolean {
  */
 const ACTION_VALIDATORS: Record<MobileAction['kind'], (action: ActionFields) => boolean> = {
   tap: a => isLocator(a.locator),
+  doubleTap: a => isLocator(a.locator),
   fill: a => isLocator(a.locator) && typeof a.value === 'string',
+  eraseText: a => isLocator(a.locator) && isCharacterCount(a.options),
+  hideKeyboard: () => true,
   longPress: a => isLocator(a.locator) && hasOptionalNumbers(a.options, ['durationMs']),
   swipe: a => isDirection(a.direction) && isSwipeOptions(a.options),
   scroll: a => isDirection(a.direction) && isScrollOptions(a.options),
+  scrollUntilVisible: a => isLocator(a.locator) && isScrollUntilOptions(a.options),
   drag: a => isTarget(a.from) && isTarget(a.to),
   pinch: a =>
     typeof a.scale === 'number' &&

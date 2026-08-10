@@ -45,6 +45,7 @@
     "prepack": "node ../../scripts/clean.mjs . && npm run build && npm run build:ui"
   },
   "devDependencies": {
+    "@codemirror/autocomplete": "^6.20.3",
     "@codemirror/lang-javascript": "^6.2.5",
     "@codemirror/state": "^6.7.1",
     "@codemirror/theme-one-dark": "^6.1.3",

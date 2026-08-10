@@ -183,6 +183,17 @@ export async function startInspectorService(
    * by metadata plus an id, or collapsed into `frameUnchanged` when the screen has not moved.
    */
   function emit(event: RecorderEvent): void {
+    if (event.type === 'timeline') {
+      // The recording is the retention policy: hold the frames its steps point at, drop the rest. Doing it
+      // here rather than in the engine keeps frame *bytes* the transport's business alone (ADR-013).
+      frames.retainOnly(
+        event.entries
+          .map(entry => entry.frameId)
+          .filter((frameId): frameId is number => frameId !== undefined),
+      );
+      writeEvent(event);
+      return;
+    }
     if (event.type !== 'frame') {
       writeEvent(event);
       return;

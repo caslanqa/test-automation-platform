@@ -113,13 +113,15 @@ export class RecorderSession {
 
   /**
    * The devices this driver knows about, for the name-uniqueness check in {@link resolveStableDeviceName}.
-   * Reuses whatever the device picker already fetched; falls back to asking the driver, and to an empty
-   * list if that fails — the resolver treats "unknown" as "cannot verify" and pins the unambiguous handle.
+   *
+   * Asked fresh, not read from {@link lastDevices}: the cache was filled the first time the picker listed
+   * devices and then never refreshed for the life of the launch, so a device booted after that point was
+   * invisible to the resolver — and the resolver's whole job is deciding which handle a generated test can
+   * still find days later. One discovery call against a connect that already takes seconds is not a cost.
+   * Falls back to an empty list, which the resolver reads as "cannot verify" and answers with the
+   * unambiguous handle plus a warning.
    */
   private async knownDevices(driver: MobileInspectorDriver): Promise<InspectorDevice[]> {
-    if (this.lastDevices.length > 0) {
-      return this.lastDevices;
-    }
     try {
       this.lastDevices = await driver.discoverDevices();
     } catch {
@@ -154,7 +156,7 @@ export class RecorderSession {
       events.push({ type: 'hierarchy', nodes: this.device.hierarchy });
     }
     const { source, revision } = this.draft.state;
-    events.push({ type: 'timeline', actions: this.recorder.actions });
+    events.push({ type: 'timeline', entries: this.recorder.entries });
     events.push({ type: 'code', source, revision });
     if (this.runner.running) {
       events.push({ type: 'runStatus', state: 'started' });
@@ -189,9 +191,9 @@ export class RecorderSession {
         case 'inspectAt':
           return await this.inspectAt(message.x, message.y, message.frameId);
         case 'tapAt':
-          return await this.tapAt(message.x, message.y, message.frameId);
+          return await this.tapAt(message.x, message.y, message.frameId, message.record ?? true);
         case 'perform':
-          return await this.perform(message.action);
+          return await this.perform(message.action, message.record ?? true);
         case 'record':
           return this.record(message.action);
         case 'removeAction':
@@ -272,12 +274,19 @@ export class RecorderSession {
     await this.disconnect(); // one live device per launch — replace, don't stack
     this.send({ type: 'connecting' });
     try {
-      const device = await this.device.connect(driver, connectOptions);
+      const device = await this.device.connect(driver, {
+        ...connectOptions,
+        // Injected here, never accepted from the client — the trust boundary rebuilds `ConnectOptions`
+        // field by field precisely so a callback cannot arrive as data (ADR-010).
+        onProgress: stage => this.send({ type: 'connectProgress', stage }),
+      });
       // Which handle is durable depends on the platform and on whether the name is ambiguous, so the shared
       // resolver decides (ADR-003) and a warning is surfaced when the pin is not durable.
+      const warnings: string[] = [];
       const stable = resolveStableDeviceName(device, await this.knownDevices(driver));
       if (stable.warning) {
         this.log('warn', stable.warning);
+        warnings.push(stable.warning);
       }
       this.lastTarget = {
         driver: driverId,
@@ -300,11 +309,17 @@ export class RecorderSession {
         device,
         // What the session can do on THIS platform, so the UI does not offer a button that always fails.
         capabilities: this.device.sessionCapabilities ?? driver.capabilities,
+        // Carried on the event, not only logged, so a re-attaching client sees them too (ADR-011).
+        warnings,
       };
       this.send(this.connectedSummary);
       this.sendTimelineAndCode();
     } catch (error) {
       this.send({ type: 'error', message: `connect failed: ${errorMessage(error)}` });
+      // Say the attempt is over. Only a success or a teardown ever cleared the client's "connecting" state,
+      // so a failed connect left the panel reading "Connecting…" with the button disabled — permanently,
+      // and a failed connect is the most likely outcome the moment the device list has gone stale.
+      this.send({ type: 'disconnected' });
     }
   }
 
@@ -332,13 +347,13 @@ export class RecorderSession {
    * The hierarchy is re-read here anyway, so acting on the freshest tree is both safer and honest; a
    * mismatch is worth a note, not a refusal.
    */
-  async tapAt(x: number, y: number, frameId: number): Promise<void> {
+  async tapAt(x: number, y: number, frameId: number, record = true): Promise<void> {
     if (!this.device.connected) {
       return;
     }
     const fresh = await this.hierarchyForClick(frameId, 'tapped');
     const node = fresh ? hitTest(this.device.hierarchy, x, y) : undefined;
-    const outOfApp = node && outOfAppWarning(node, this.lastTarget?.appId);
+    const outOfApp = record && node && outOfAppWarning(node, this.lastTarget?.appId);
     if (outOfApp) {
       this.log('warn', `recorded an element that ${outOfApp}`);
     }
@@ -348,7 +363,11 @@ export class RecorderSession {
     // is the whole difference between this and Maestro Studio. The locator is still proven to resolve, once
     // per strategy, below. (The locator menu is deliberately different: there the user is choosing a
     // specific locator, so that is what gets performed.)
-    await this.performAs({ kind: 'tap', locator }, { kind: 'tap', locator: { point: { x, y } } });
+    await this.performAs(
+      { kind: 'tap', locator },
+      { kind: 'tap', locator: { point: { x, y } } },
+      record,
+    );
   }
 
   /**
@@ -406,13 +425,19 @@ export class RecorderSession {
    * preference to a silent second attempt with the locator, which would hide the gap and double the latency
    * of every failure. Both shipped drivers tap points.
    */
-  private async performAs(recorded: MobileAction, executed: MobileAction): Promise<void> {
+  private async performAs(
+    recorded: MobileAction,
+    executed: MobileAction,
+    record = true,
+  ): Promise<void> {
     if (!this.device.connected) {
       this.send({ type: 'error', message: 'not connected to a device' });
       return;
     }
-    this.recorder.append(recorded);
-    this.sendTimelineAndCode(recorded);
+    const entry = record ? this.recorder.append(recorded) : undefined;
+    if (entry) {
+      this.sendTimelineAndCode(recorded);
+    }
 
     const result = await this.device.perform(executed);
     this.send({ type: 'actionResult', action: recorded, result });
@@ -421,13 +446,27 @@ export class RecorderSession {
       // changes nothing, so the sleep, the hierarchy re-read and up to two captures were pure delay — and
       // they held up whatever the user did next, since commands run one at a time.
       if (CHANGES_THE_SCREEN.has(executed.kind)) {
-        // Look again once the screen has had a moment, and once more if it is still moving (ADR-006).
-        await this.device.settle();
+        // Look again once the screen has had a moment, and once more if it is still moving — unless the
+        // driver already waited for the animation itself, in which case one look is the whole job (ADR-006).
+        await this.device.settle(result.settled === true);
+        // Remember which screen this step produced, so the timeline can be walked visually afterwards.
+        if (entry && this.device.frameId >= 0) {
+          this.recorder.stamp(entry.id, this.device.frameId);
+          this.send({ type: 'timeline', entries: this.recorder.entries });
+        }
       }
-      await this.verifyStrategies();
+      if (record) {
+        // Deliberately not awaited (ADR-006 addendum): this is a once-per-session sanity check that issues a
+        // real driver query, and awaiting it added that query's timeout to the first interaction using each
+        // strategy. It never fails a recording, so nothing downstream needs its answer — and with nothing
+        // recorded there is no locator to stand behind in the first place.
+        void this.verifyStrategies().catch(error =>
+          this.log('warn', `could not verify locator strategies: ${errorMessage(error)}`),
+        );
+      }
       return;
     }
-    if (this.recorder.retract(recorded)) {
+    if (record && this.recorder.retract(recorded)) {
       this.sendTimelineAndCode();
     }
     this.log('error', `${recorded.kind} failed: ${result.error ?? 'unknown driver error'}`);
@@ -493,9 +532,13 @@ export class RecorderSession {
    * local — so the action goes into the timeline and the code immediately and is taken back out if the
    * driver rejects it, which the failure banner already explains. Retraction is by identity, because the
    * user can undo or delete something while the device is still thinking.
+   *
+   * @param record Write it down as well as doing it. `false` is "drive the app, do not write a test" — the
+   *   default mode of the viewport, so a user can navigate to the screen they care about without the journey
+   *   there ending up in the recording.
    */
-  async perform(action: MobileAction): Promise<void> {
-    await this.performAs(action, action);
+  async perform(action: MobileAction, record = true): Promise<void> {
+    await this.performAs(action, action, record);
   }
 
   /** Record a declarative step that cannot be true in the current UI state without executing it. */
@@ -534,7 +577,7 @@ export class RecorderSession {
 
   private sendTimelineAndCode(appended?: MobileAction): void {
     const actions = this.recorder.actions;
-    this.send({ type: 'timeline', actions });
+    this.send({ type: 'timeline', entries: this.recorder.entries });
     const target = this.lastTarget;
     const regenerated = this.draft.regenerate(() =>
       // With no target (nothing connected yet) there is nothing honest to generate: guessing a driver

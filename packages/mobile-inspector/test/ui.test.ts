@@ -89,7 +89,9 @@ async function connect(page: Page): Promise<void> {
   await drivers.selectOption('fake');
   const devices = page.locator('.drawer select').nth(2);
   await devices.locator('option').nth(1).waitFor({ state: 'attached', timeout: 20_000 });
-  await devices.selectOption('emulator-5554');
+  // The AVD name, not the `adb` serial: the picker offers the handle that survives a reboot, which is also
+  // the one a generated test can still resolve days later (ADR-003).
+  await devices.selectOption('Pixel_7_API_34');
   await page.locator('.drawer-footer .btn-primary').click();
   await page.waitForSelector('.device-viewport-frame img', { timeout: 30_000 });
 }
@@ -104,14 +106,34 @@ async function waitForTimeline(page: Page, count: number): Promise<void> {
 const timeline = async (page: Page): Promise<number> =>
   Number(/\((\d+)\)/.exec(await page.locator('.bottom-tabs .tab').first().innerText())?.[1] ?? -1);
 
-/** Click the fake login button on the device image. */
-async function tapDevice(page: Page, dy = 0): Promise<void> {
-  const box = await page.locator('.device-viewport-frame img').boundingBox();
+/**
+ * Poll a condition about the SERVICE side (the fake driver), which Playwright's own waiting cannot see.
+ * Fails by name rather than hanging until the test timeout, where the reason would be lost.
+ */
+async function eventually(check: () => boolean, what: string): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (check()) {
+      return;
+    }
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  assert.fail(`timed out waiting for ${what}`);
+}
+
+/**
+ * Click the fake login button on the device image.
+ *
+ * `record` holds ⌘/Ctrl, which is what turns an interaction into a test step (§9): the viewport drives the
+ * device by default, because it is also how the user reaches the screen they came to record.
+ */
+async function tapDevice(page: Page, dy = 0, options: { record?: boolean } = {}): Promise<void> {
+  const image = page.locator('.device-viewport-frame img');
+  const box = await image.boundingBox();
   assert.ok(box, 'the device image should be laid out');
-  await page.mouse.click(
-    box.x + box.width * LOGIN_BUTTON.fx,
-    box.y + box.height * LOGIN_BUTTON.fy + dy,
-  );
+  await image.click({
+    position: { x: box.width * LOGIN_BUTTON.fx, y: box.height * LOGIN_BUTTON.fy + dy },
+    modifiers: options.record ? ['ControlOrMeta'] : [],
+  });
 }
 
 test('a reloaded page keeps recording', async t => {
@@ -122,7 +144,7 @@ test('a reloaded page keeps recording', async t => {
   }
   const page = await h.view();
   await connect(page);
-  await tapDevice(page);
+  await tapDevice(page, 0, { record: true });
   await waitForTimeline(page, 1);
 
   // Exactly what F5 does. The command sequence used to be launch-scoped, so every command from here on came
@@ -138,7 +160,7 @@ test('a reloaded page keeps recording', async t => {
   await page.waitForSelector('.device-viewport-frame img', { timeout: 30_000 });
 
   const before = await timeline(page);
-  await tapDevice(page, 30);
+  await tapDevice(page, 30, { record: true });
   await waitForTimeline(page, before + 1);
 
   assert.deepEqual(refused, [], 'a reloaded page must not have its commands refused');
@@ -146,7 +168,7 @@ test('a reloaded page keeps recording', async t => {
   await page.close();
 });
 
-test('the recorded test pins the AVD name even though the picker connects by serial', async t => {
+test('the picker connects by the durable handle, and that is what the test pins', async t => {
   const h = await harness();
   if (!h) {
     t.skip('needs a built ui-dist and an installed Chromium');
@@ -155,10 +177,15 @@ test('the recorded test pins the AVD name even though the picker connects by ser
   const page = await h.view();
   await connect(page);
 
-  // The picker sends `device.id` — the adb serial — because that is the only handle that addresses a LIVE
-  // emulator. The serial must still be resolved back to the AVD name before codegen, or the generated test
-  // fails with "no android device available" as soon as that emulator instance is gone (ADR-003).
-  assert.equal(h.driver.connects.at(-1)?.device, 'emulator-5554', 'the UI connects by serial');
+  // Discovery reports a booted emulator BY SERIAL, and the picker used to forward that — correct today, gone
+  // after a reboot, and only recoverable because the resolver mapped it back to the AVD name before codegen.
+  // The AVD name addresses a live emulator just as well, so the picker sends it and the round trip is gone.
+  // Either way the committed test must never contain the serial (ADR-003).
+  assert.equal(
+    h.driver.connects.at(-1)?.device,
+    'Pixel_7_API_34',
+    'the UI connects by the handle that survives a reboot',
+  );
   const code = await page.locator('.cm-content').innerText();
   assert.match(code, /device: "Pixel_7_API_34"/, 'codegen must pin the durable AVD name');
   assert.doesNotMatch(
@@ -181,7 +208,7 @@ test('an action the driver refuses is stated on screen, not just logged', async 
   assert.ok(session, 'connect should have handed out a session');
   session.failNextAction = 'element went away';
 
-  await tapDevice(page);
+  await tapDevice(page, 0, { record: true });
 
   // A refused action is deliberately not recorded, so without this the user sees a click that did nothing
   // and the reason lives only in a log tab they have to know to open.
@@ -190,6 +217,69 @@ test('an action the driver refuses is stated on screen, not just logged', async 
   assert.match(await banner.innerText(), /element went away/);
   assert.equal(await banner.getAttribute('role'), 'alert', 'it must be announced, not just drawn');
   assert.equal(await timeline(page), 0, 'and nothing may be recorded');
+  await page.close();
+});
+
+test('a plain click drives the device without recording; ⌘/Ctrl+click records', async t => {
+  const h = await harness();
+  if (!h) {
+    t.skip('needs a built ui-dist and an installed Chromium');
+    return;
+  }
+  const page = await h.view();
+  await connect(page);
+
+  // Reaching the screen you came to record is done with the same clicks as recording it, so recording every
+  // click meant deleting the journey afterwards. A plain click must still DRIVE the device, though — the
+  // point is not to disable it.
+  await tapDevice(page);
+  await eventually(
+    () => h.driver.session?.performed.length === 1,
+    'the plain click to reach the driver',
+  );
+  assert.equal(h.driver.session?.performed.length, 1, 'a plain click still taps the device');
+  assert.equal(await timeline(page), 0, 'and it must not become a test step');
+
+  await tapDevice(page, 0, { record: true });
+  await waitForTimeline(page, 1);
+  assert.equal(h.driver.session?.performed.length, 2, 'the recorded click taps the device too');
+
+  // The mode toggle is the keyboard-reachable equivalent: with it on, a plain click records.
+  await page.locator('.pane-left .panel-title-actions button').click();
+  await tapDevice(page, 30);
+  await waitForTimeline(page, 2);
+  await page.close();
+});
+
+test('a recorded step remembers the screen it produced', async t => {
+  const h = await harness();
+  if (!h) {
+    t.skip('needs a built ui-dist and an installed Chromium');
+    return;
+  }
+  const page = await h.view();
+  await connect(page);
+  await tapDevice(page, 0, { record: true });
+  await waitForTimeline(page, 1);
+
+  // Clicking the step shows the screen as it was once that step had run, and freezes the viewport while it
+  // does: a click translated against a screen the device has left would land on whatever now occupies it.
+  const step = page.locator('.timeline-step').first();
+  await step.click();
+  const banner = page.locator('.viewport-pinned');
+  await banner.waitFor({ timeout: 20_000 });
+  assert.match(await banner.innerText(), /step 1/);
+
+  const performedWhilePinned = h.driver.session?.performed.length ?? 0;
+  await tapDevice(page);
+  assert.equal(
+    h.driver.session?.performed.length,
+    performedWhilePinned,
+    'a pinned step is read-only — clicking it must not drive the device',
+  );
+
+  await page.locator('.timeline-toolbar .btn-primary').click();
+  assert.equal(await banner.count(), 0, 'and "back to live" releases it');
   await page.close();
 });
 

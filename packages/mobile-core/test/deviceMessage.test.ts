@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { deviceUnavailableMessage, type DeviceLister } from '../src/deviceMessage.js';
-import type { InspectorDevice } from '../src/types.js';
+import { DeviceUnavailableError, type InspectorDevice } from '../src/types.js';
 
 const lister =
   (...devices: InspectorDevice[]): DeviceLister =>
@@ -120,4 +120,17 @@ test('the environment overrides a pinned device, unlike the other options', asyn
     if (original === undefined) delete process.env.MOBILE_INSPECTOR_DEVICE;
     else process.env.MOBILE_INSPECTOR_DEVICE = original;
   }
+});
+
+test('the unavailable-device failure carries its own type, because the caller reacts differently', async () => {
+  // The `mobileApp` fixture skips on this and fails on everything else: a device that is not on this machine
+  // is a fact about the machine (a recording pins one by name, ADR-003), while a missing CLI is a defect.
+  const error = new DeviceUnavailableError(
+    await deviceUnavailableMessage('maestro', 'android', 'pixel9', NONE),
+  );
+
+  assert.ok(error instanceof DeviceUnavailableError);
+  assert.ok(error instanceof Error, 'it must still behave as an Error everywhere else');
+  assert.equal(error.name, 'DeviceUnavailableError');
+  assert.match(error.message, /pixel9/, 'and it carries the message that explains what to do');
 });

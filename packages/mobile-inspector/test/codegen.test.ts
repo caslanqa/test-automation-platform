@@ -119,3 +119,41 @@ test('an empty recording still generates a valid, runnable test file', () => {
   assert.match(source, /\/\/ Recorded actions will appear here\./);
   assert.ok(source.trimEnd().endsWith('});'));
 });
+
+test('every action kind generates a statement, including the ones added with the IR extension', () => {
+  // The switch is exhaustive by type, so a missing branch is a compile error rather than a test failure —
+  // what this pins is the shape of what it emits, since that is what has to compile inside a real test.
+  const statements = [
+    statementForAction({ kind: 'doubleTap', locator: { text: 'Row' } }),
+    statementForAction({ kind: 'eraseText', locator: { accessibilityId: 'email' } }),
+    statementForAction({
+      kind: 'eraseText',
+      locator: { accessibilityId: 'email' },
+      options: { characters: 3 },
+    }),
+    statementForAction({ kind: 'hideKeyboard' }),
+    statementForAction({ kind: 'scrollUntilVisible', locator: { text: 'Row 40' } }),
+    statementForAction({
+      kind: 'scrollUntilVisible',
+      locator: { text: 'Row 40' },
+      options: { direction: 'down' },
+    }),
+  ];
+
+  assert.deepEqual(statements, [
+    'await mobileApp.doubleTap({ text: "Row" });',
+    'await mobileApp.eraseText({ accessibilityId: "email" });',
+    'await mobileApp.eraseText({ accessibilityId: "email" }, { characters: 3 });',
+    'await mobileApp.hideKeyboard();',
+    'await mobileApp.scrollUntilVisible({ text: "Row 40" });',
+    'await mobileApp.scrollUntilVisible({ text: "Row 40" }, { direction: "down" });',
+  ]);
+});
+
+test('an ordinal is emitted last, alongside the strategy it counts', () => {
+  // `index` is not a strategy: on its own it addresses nothing, so it always accompanies one.
+  assert.equal(
+    statementForAction({ kind: 'tap', locator: { text: 'Delete', index: 1 } }),
+    'await mobileApp.tap({ text: "Delete", index: 1 });',
+  );
+});

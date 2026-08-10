@@ -95,11 +95,51 @@ test('locatorCandidates penalises a non-unique locator and says why', () => {
   const twin: MobileNode = { bounds: box(0, 0, 10, 10), text: 'Delete' };
   const hierarchy: MobileNode[] = [twin, { bounds: box(0, 20, 10, 10), text: 'Delete' }];
 
-  const [text] = locatorCandidates(twin, hierarchy).filter(c => c.strategy === 'text');
+  const [text] = locatorCandidates(twin, hierarchy).filter(
+    c => c.strategy === 'text' && c.locator.index === undefined,
+  );
 
   assert.equal(text.score, 58 - 25);
   assert.equal(text.unique, false);
   assert.match(text.warnings.join(' '), /not unique/);
+});
+
+test('a non-unique locator also gets an ordinal candidate, which is what a list row needs', () => {
+  // Every attribute of a repeated row is non-unique, and the only candidate that used to survive that was a
+  // raw coordinate — so recording "the second Delete" produced a step that broke on any layout change.
+  const second: MobileNode = { bounds: box(0, 20, 10, 10), text: 'Delete' };
+  const hierarchy: MobileNode[] = [{ bounds: box(0, 0, 10, 10), text: 'Delete' }, second];
+
+  const candidates = locatorCandidates(second, hierarchy);
+  const indexed = candidates.find(c => c.locator.index !== undefined);
+
+  assert.ok(indexed, 'a non-unique attribute must still offer a way to address one element');
+  assert.deepEqual(
+    indexed.locator,
+    { text: 'Delete', index: 1 },
+    'the ordinal of the node clicked',
+  );
+  assert.equal(indexed.unique, true, 'it selects one element by construction');
+  assert.equal(
+    indexed.score,
+    58 - 10,
+    'ranked below a genuinely unique locator, above a coordinate',
+  );
+  assert.match(indexed.warnings.join(' '), /position-dependent/);
+  assert.equal(indexed.display, '{ text: "Delete", index: 1 }');
+  // And it outranks the coordinate fallback it exists to replace.
+  assert.ok(
+    candidates.indexOf(indexed) < candidates.findIndex(c => c.strategy === 'point'),
+    'an ordinal locator must be offered before a coordinate',
+  );
+});
+
+test('a unique locator gets no ordinal candidate, because there is nothing to disambiguate', () => {
+  const node: MobileNode = { bounds: box(0, 0, 10, 10), text: 'Delete' };
+
+  const candidates = locatorCandidates(node, [node]);
+
+  assert.equal(candidates.filter(c => c.locator.index !== undefined).length, 0);
 });
 
 test('locatorCandidates warns that long text is likely dynamic or localized', () => {

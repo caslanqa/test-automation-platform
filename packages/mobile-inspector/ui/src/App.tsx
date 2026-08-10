@@ -23,12 +23,29 @@ const MIN_PANE_WIDTHS = [220, 280, 220] as const;
 /** Stable identity: a fresh `[]` each render would restart the locator menu's selection effect. */
 const NO_CANDIDATES: LocatorCandidate[] = [];
 
+/** Device-level actions with no element to right-click: hardware keys and a whole-screen capture. */
+const DEVICE_KEYS: { label: string; action: MobileAction }[] = [
+  { label: 'Back', action: { kind: 'back' } },
+  { label: 'Home', action: { kind: 'pressKey', key: 'home' } },
+  { label: 'Enter', action: { kind: 'pressKey', key: 'enter' } },
+  // The keyboard covers whatever the next step targets, and dismissing it is a real step in a replay.
+  { label: 'Hide keyboard', action: { kind: 'hideKeyboard' } },
+  { label: 'Screenshot', action: { kind: 'screenshot' } },
+];
+
 export function App() {
   const { state, send } = useInspectorBridge();
   const [drawerOpen, setDrawerOpen] = useState(true);
   const [saveOpen, setSaveOpen] = useState(false);
   const [bottomTab, setBottomTab] = useState<BottomTab>('timeline');
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  /**
+   * Whether a plain viewport interaction becomes a test step. Off by default: the panel is also how you get
+   * to the screen you want to record, and recording that trip was work the user then had to undo by hand.
+   */
+  const [recordMode, setRecordMode] = useState(false);
+  /** Which recorded step's screen the viewport is showing instead of the live device, if any. */
+  const [pinnedStepId, setPinnedStepId] = useState<number | null>(null);
   const [menuAnchor, setMenuAnchor] = useState<{ x: number; y: number } | null>(null);
   const [paneRatios, setPaneRatios] = useState<[number, number, number]>(() => {
     try {
@@ -82,6 +99,15 @@ export function App() {
   const onContextMenu = useCallback((anchor: { x: number; y: number }) => {
     setMenuAnchor(anchor);
   }, []);
+
+  const pinnedStep = state.timeline.find(entry => entry.id === pinnedStepId) ?? null;
+  // Deleting or undoing the pinned step takes its screen with it, so the viewport goes back to live rather
+  // than keeping a "Back to live" button for a step that is no longer in the recording.
+  useEffect(() => {
+    if (pinnedStepId !== null && !pinnedStep) {
+      setPinnedStepId(null);
+    }
+  }, [pinnedStepId, pinnedStep]);
 
   const running = state.runState === 'running';
   const gate = useCallback(
@@ -183,6 +209,14 @@ export function App() {
           nothing was recorded.
         </div>
       )}
+      {/* Facts about this connection that change what the saved test will do — chiefly a device handle that
+          will not survive a reboot. This used to be one `warn` line in a log tab nobody had open, which §6
+          forbids as the only answer to something the user needs to act on. */}
+      {state.connected?.warnings.map(warning => (
+        <div key={warning} className="service-banner banner-warning" role="status">
+          {warning}
+        </div>
+      ))}
       <header className="topbar">
         <div className="topbar-title">PWTAP Mobile Inspector</div>
         <button className="btn" onClick={() => setDrawerOpen(o => !o)}>
@@ -192,7 +226,9 @@ export function App() {
           {state.connected
             ? `${state.connected.driver} · ${state.connected.device.name}`
             : state.connecting
-              ? 'connecting…'
+              ? // The stage, when the driver reports one: booting a device and hanging on a driver looked
+                // identical under a single "connecting…", and users restarted sessions that were working.
+                `connecting… ${state.connectStage ?? ''}`.trim()
               : 'not connected'}
         </div>
         <div className="topbar-spacer" />
@@ -234,7 +270,28 @@ export function App() {
         }}
       >
         <section className="pane pane-left">
-          <div className="panel-title">Device</div>
+          <div className="panel-title">
+            Device
+            <div className="panel-title-actions">
+              {/* A button, not only a modifier: a modifier-click is unreachable by keyboard, and this is
+                  the difference between driving the app and writing a test (WCAG 2.1.1). */}
+              <button
+                className={`btn btn-small${recordMode ? ' btn-danger' : ''}`}
+                aria-pressed={recordMode}
+                onClick={() => setRecordMode(on => !on)}
+                title={
+                  recordMode
+                    ? 'Every interaction is recorded. Hold ⌘/Ctrl to act without recording.'
+                    : 'Interactions only drive the app. Hold ⌘/Ctrl to record one.'
+                }
+              >
+                {recordMode ? '● Recording' : 'Record'}
+              </button>
+              <span className="muted">
+                {recordMode ? '⌘/Ctrl+click: act only' : '⌘/Ctrl+click: record'}
+              </span>
+            </div>
+          </div>
           <DeviceViewport
             frame={state.frame}
             hierarchy={state.hierarchy}
@@ -242,7 +299,42 @@ export function App() {
             send={send}
             onContextMenu={onContextMenu}
             selectedKey={selectedKey}
+            recordMode={recordMode}
+            pinned={
+              pinnedStep?.frameId !== undefined
+                ? {
+                    frameId: pinnedStep.frameId,
+                    label: `step ${state.timeline.indexOf(pinnedStep) + 1}`,
+                  }
+                : null
+            }
           />
+          {/* Device-level steps, which had no way into a recording at all: `back` and `pressKey` are in the
+              IR and supported by both drivers, and the only surfaces the UI offered were the screen itself
+              and an element context menu — neither of which can express "press Home". */}
+          <div className="device-toolbar">
+            {DEVICE_KEYS.map(({ label, action }) => {
+              const { supported, reason } = gate(action.kind);
+              return (
+                <button
+                  key={label}
+                  className="btn btn-small"
+                  disabled={!supported}
+                  title={reason}
+                  onClick={event =>
+                    send({
+                      type: 'perform',
+                      action,
+                      // Same rule as the viewport: pressing Back to get somewhere is navigation, not a step.
+                      record: recordMode !== (event.metaKey || event.ctrlKey),
+                    })
+                  }
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
           <ConnectionDrawer
             open={drawerOpen}
             onClose={() => setDrawerOpen(false)}
@@ -274,7 +366,12 @@ export function App() {
         />
 
         <section className="pane pane-center">
-          <CodeEditor source={state.code} revision={state.codeRevision} send={send} />
+          <CodeEditor
+            source={state.code}
+            revision={state.codeRevision}
+            hierarchy={state.hierarchy}
+            send={send}
+          />
         </section>
 
         <div
@@ -326,7 +423,14 @@ export function App() {
           </button>
         </nav>
         <div className="bottom-body">
-          {bottomTab === 'timeline' && <Timeline actions={state.timeline} send={send} />}
+          {bottomTab === 'timeline' && (
+            <Timeline
+              entries={state.timeline}
+              pinnedStepId={pinnedStepId}
+              onPin={setPinnedStepId}
+              send={send}
+            />
+          )}
           {bottomTab === 'output' && (
             <RunOutput
               lines={state.runOutput}
@@ -341,9 +445,11 @@ export function App() {
       <LocatorMenu
         anchor={menuAnchor}
         candidates={state.inspected?.candidates ?? NO_CANDIDATES}
+        node={state.inspected?.node ?? null}
         loading={!state.inspected}
         gate={gate}
         onClose={() => setMenuAnchor(null)}
+        onReveal={setSelectedKey}
         send={send}
       />
 

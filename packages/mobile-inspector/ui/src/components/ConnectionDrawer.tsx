@@ -9,6 +9,26 @@ import type {
   MobilePlatform,
 } from '../protocol';
 
+/**
+ * The handle to connect with — and, through the recording, the one a generated test will pin.
+ *
+ * Discovery reports a *booted* Android emulator by its `adb` serial, so the picker used to send
+ * `emulator-5554`: correct today, gone after a reboot, and the resolver then had to recover the AVD name
+ * from the serial to keep the generated test durable (ADR-003). The AVD name is what `acquireDevice`
+ * matches on either way, so sending it removes the recovery step entirely. iOS keeps the UDID: simulator
+ * names are legally ambiguous, and the UDID is unambiguous by definition and stable across reboots.
+ */
+function deviceHandle(device: InspectorDevice): string {
+  return device.platform === 'android' && device.name !== device.id ? device.name : device.id;
+}
+
+function deviceLabel(device: InspectorDevice): string {
+  const handle = deviceHandle(device);
+  const suffix = device.booted ? ' ● booted' : '';
+  // Show the serial too when it is not what we are pinning, so the row still matches `adb devices` output.
+  return handle === device.id ? `${handle}${suffix}` : `${handle} (${device.id})${suffix}`;
+}
+
 interface ConnectionDrawerProps {
   open: boolean;
   onClose: () => void;
@@ -52,6 +72,10 @@ export function ConnectionDrawer({
     () => devices.filter(d => d.platform === platform),
     [devices, platform],
   );
+  const selectedDevice = useMemo(
+    () => platformDevices.find(d => deviceHandle(d) === deviceId),
+    [platformDevices, deviceId],
+  );
   const filteredApps = useMemo(() => {
     const q = appFilter.trim().toLowerCase();
     const list = apps.filter(a => a.platform === platform);
@@ -73,6 +97,25 @@ export function ConnectionDrawer({
     }
   }, [open]);
 
+  // The device list is a snapshot of another process's state, and it was taken once — when a driver was
+  // picked — so booting or killing an emulator afterwards left the picker describing a machine that no
+  // longer existed, and connecting to it failed with "device not found". Re-ask whenever the panel is
+  // opened; the Refresh button below covers the case where it is already open.
+  useEffect(() => {
+    if (open && driverId) {
+      send({ type: 'listDevices', driver: driverId });
+    }
+  }, [open, driverId, send]);
+
+  // A failed connect is the strongest evidence the list is stale, so it is also a reason to re-read it.
+  const wasConnecting = useRef(false);
+  useEffect(() => {
+    if (wasConnecting.current && !connecting && !connected && driverId) {
+      send({ type: 'listDevices', driver: driverId });
+    }
+    wasConnecting.current = connecting;
+  }, [connecting, connected, driverId, send]);
+
   // Refresh installed apps whenever the driver/platform/device selection changes.
   useEffect(() => {
     if (driverId) {
@@ -86,6 +129,16 @@ export function ConnectionDrawer({
     if (id) {
       send({ type: 'listDevices', driver: id });
     }
+  }
+
+  /**
+   * A device selected for one platform cannot mean anything on another, and the selection used to survive
+   * the switch — so picking an Android emulator and then flipping to iOS sent an `adb` serial as an iOS
+   * simulator name and failed with "device not found".
+   */
+  function onPlatformChange(next: MobilePlatform): void {
+    setPlatform(next);
+    setDeviceId('');
   }
 
   function onConnect(): void {
@@ -136,23 +189,55 @@ export function ConnectionDrawer({
 
         <label className="field">
           Platform
-          <select value={platform} onChange={e => setPlatform(e.target.value as MobilePlatform)}>
+          <select
+            value={platform}
+            onChange={e => onPlatformChange(e.target.value as MobilePlatform)}
+          >
             <option value="android">Android</option>
             <option value="ios">iOS</option>
           </select>
         </label>
 
-        <label className="field">
-          Device
-          <select value={deviceId} onChange={e => setDeviceId(e.target.value)}>
+        <div className="field">
+          <div className="field-row field-row-between">
+            <span>Device</span>
+            <button
+              className="btn btn-small"
+              onClick={() => driverId && send({ type: 'listDevices', driver: driverId })}
+              disabled={!driverId}
+              title="Re-read the devices on this machine"
+            >
+              Refresh
+            </button>
+          </div>
+          <select value={deviceId} onChange={e => setDeviceId(e.target.value)} aria-label="Device">
             <option value="">first booted…</option>
             {platformDevices.map(d => (
-              <option key={d.id} value={d.id}>
-                {d.name} {d.booted ? '● booted' : ''}
+              <option key={d.id} value={deviceHandle(d)}>
+                {deviceLabel(d)}
               </option>
             ))}
           </select>
-        </label>
+          {platformDevices.length === 0 && driverId && (
+            <span className="muted field-hint">
+              no {platform} devices found on this machine — create one in{' '}
+              {platform === 'android' ? 'Android Studio' : 'Xcode'}, then Refresh
+            </span>
+          )}
+          {selectedDevice && !selectedDevice.booted && (
+            <span className="muted field-hint">
+              not running — connecting boots it, which takes a while, and its installed apps cannot
+              be listed until it is up
+            </span>
+          )}
+          {selectedDevice?.platform === 'android' && selectedDevice.name === selectedDevice.id && (
+            <span className="warn field-hint">
+              only an adb serial is known for this emulator, and a serial does not survive a reboot
+              — the generated test will pin it and stop matching. Name the AVD in Android Studio, or
+              edit `mobileTarget.device` afterwards.
+            </span>
+          )}
+        </div>
 
         <div className="field">
           App id (package / bundle)
@@ -199,7 +284,12 @@ export function ConnectionDrawer({
             ))}
             {filteredApps.length === 0 && (
               <div className="muted app-empty">
-                {driverId ? 'no apps discovered for this device' : 'select a driver to list apps'}
+                {!driverId
+                  ? 'select a driver to list apps'
+                  : selectedDevice && !selectedDevice.booted
+                    ? 'this device is not running, so its apps cannot be listed — boot it and Refresh, or ' +
+                      'connect (which boots it) and type the app id below'
+                    : 'no apps discovered for this device'}
               </div>
             )}
           </div>

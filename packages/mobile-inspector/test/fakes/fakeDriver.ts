@@ -135,6 +135,12 @@ export class FakeDriverSession implements DriverSession {
   failNextAction: string | undefined;
   /** Set to make `captureScreen` throw, to exercise the frame-failure path. */
   failCapture: string | undefined;
+  /**
+   * Report `settled: true` from every action — what an adapter that waited for the animation itself does
+   * (Maestro sends `waitForAnimationToEnd` inside the same command). The engine then takes one look instead
+   * of sleeping and looking again, so this is the difference the settle schedule turns on.
+   */
+  settlesOnDevice = false;
   closed = false;
 
   private frameCounter = 0;
@@ -189,7 +195,7 @@ export class FakeDriverSession implements DriverSession {
     this.performed.push(action);
     this.screenIndex += 1;
     const value = action.kind === 'isVisible' ? true : undefined;
-    return { ok: true, value, durationMs: 1 };
+    return { ok: true, value, durationMs: 1, settled: this.settlesOnDevice || undefined };
   }
 
   async close(): Promise<void> {

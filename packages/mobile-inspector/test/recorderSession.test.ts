@@ -222,12 +222,69 @@ test('tapping the login button records its accessibility id, not a coordinate', 
 
   await h.send({ type: 'tapAt', ...LOGIN_BUTTON, frameId });
 
-  assert.deepEqual(h.last('timeline')?.actions, [
-    { kind: 'tap', locator: { accessibilityId: 'loginButton', label: 'loginButton' } },
-  ]);
+  assert.deepEqual(
+    h.last('timeline')?.entries.map(e => e.action),
+    [{ kind: 'tap', locator: { accessibilityId: 'loginButton', label: 'loginButton' } }],
+  );
   assert.match(h.code(), /await mobileApp\.tap\(\{ accessibilityId: "loginButton" \}\)/);
   // The tap landed on an anonymous inner view too; hit-testing must still prefer the identified parent.
   assert.doesNotMatch(h.code(), /point:/);
+
+  await h.session.close();
+});
+
+test('a tap with record off drives the device and writes nothing down', async () => {
+  // Reaching the screen worth recording takes the same clicks as recording it, so a recorder that writes
+  // down every click hands the user a test whose first half is the trip there, to be deleted by hand.
+  const h = harness();
+  await connect(h);
+  const frameId = h.last('frame')?.frame.frameId ?? 0;
+  const codeBefore = h.code();
+
+  await h.send({ type: 'tapAt', ...LOGIN_BUTTON, frameId, record: false });
+
+  assert.equal(h.driver.session?.performed.length, 1, 'the device is still driven');
+  assert.deepEqual(
+    h.last('timeline')?.entries.map(e => e.action),
+    [],
+    'but nothing is recorded',
+  );
+  assert.equal(h.code(), codeBefore, 'and the draft is untouched');
+  // The result still comes back, because a refusal has to be reportable either way.
+  assert.equal(h.last('actionResult')?.result.ok, true);
+
+  await h.session.close();
+});
+
+test('an unrecorded action that the driver refuses still says so', async () => {
+  const h = harness();
+  await connect(h);
+  const driverSession = h.driver.session;
+  assert.ok(driverSession);
+  driverSession.failNextAction = 'element went away';
+
+  await h.send({ type: 'perform', action: { kind: 'back' }, record: false });
+
+  assert.equal(h.last('actionResult')?.result.ok, false);
+  assert.match(h.logs().join('\n'), /element went away/);
+
+  await h.session.close();
+});
+
+test('a recorded step remembers the frame the screen showed afterwards', async () => {
+  const h = harness();
+  await connect(h);
+  const frameId = h.last('frame')?.frame.frameId ?? 0;
+
+  await h.send({ type: 'tapAt', ...LOGIN_BUTTON, frameId });
+
+  const entries = h.last('timeline')?.entries ?? [];
+  assert.equal(entries.length, 1);
+  assert.ok(
+    typeof entries[0].frameId === 'number',
+    'without the frame it produced, a step cannot be reviewed visually afterwards',
+  );
+  assert.ok(entries[0].id > 0, 'and it needs an identity that survives edits elsewhere in the log');
 
   await h.session.close();
 });
@@ -265,9 +322,13 @@ test('a refused action is taken back out of the timeline it was already in', asy
 
   const timelines = h.events
     .slice(mark)
-    .flatMap(e => (e.type === 'timeline' ? [e.actions.length] : []));
+    .flatMap(e => (e.type === 'timeline' ? [e.entries.length] : []));
   assert.deepEqual(timelines, [1, 0], 'recorded optimistically, then retracted');
-  assert.deepEqual(h.last('timeline')?.actions, [], 'nothing that did not happen may survive');
+  assert.deepEqual(
+    h.last('timeline')?.entries.map(e => e.action),
+    [],
+    'nothing that did not happen may survive',
+  );
   assert.match(h.logs().join('\n'), /element went away/);
 
   await h.session.close();
@@ -286,7 +347,7 @@ test('retraction removes the refused action, not whatever happens to be last', a
 
   await h.send({ type: 'perform', action: { kind: 'back' } });
 
-  const actions = h.last('timeline')?.actions ?? [];
+  const actions = h.last('timeline')?.entries.map(e => e.action) ?? [];
   assert.equal(actions.length, 1, 'only the refused action is gone');
   assert.equal(actions[0]?.kind, 'tap', 'the earlier, successful action survives');
 
@@ -311,7 +372,7 @@ test('the device is driven by coordinate while the element is what gets recorded
     'the device gets the coordinate the user clicked',
   );
   assert.deepEqual(
-    h.last('timeline')?.actions,
+    h.last('timeline')?.entries.map(e => e.action),
     [{ kind: 'tap', locator: { accessibilityId: 'loginButton', label: 'loginButton' } }],
     'the recording names the element, not the coordinate',
   );
@@ -362,7 +423,11 @@ test('a failed action is reported and NOT recorded', async () => {
   await h.send({ type: 'perform', action: { kind: 'tap', locator: { text: 'Log in' } } });
 
   assert.equal(h.last('actionResult')?.result.ok, false);
-  assert.deepEqual(h.last('timeline')?.actions, [], 'a failed action must not enter the timeline');
+  assert.deepEqual(
+    h.last('timeline')?.entries.map(e => e.action),
+    [],
+    'a failed action must not enter the timeline',
+  );
   assert.match(
     h.logs().join('\n'),
     /element went away/,
@@ -391,13 +456,13 @@ test('undo and redo move along the recorded timeline', async () => {
   const h = harness();
   await connect(h);
   await h.send({ type: 'perform', action: { kind: 'back' } });
-  assert.equal(h.last('timeline')?.actions.length, 1);
+  assert.equal(h.last('timeline')?.entries.length, 1);
 
   await h.send({ type: 'undo' });
-  assert.equal(h.last('timeline')?.actions.length, 0);
+  assert.equal(h.last('timeline')?.entries.length, 0);
 
   await h.send({ type: 'redo' });
-  assert.equal(h.last('timeline')?.actions.length, 1);
+  assert.equal(h.last('timeline')?.entries.length, 1);
 
   await h.session.close();
 });
