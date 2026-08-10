@@ -47,6 +47,14 @@ export {
   type BenchRunOptions,
 } from './core/bench.js';
 export {
+  benchesSummary,
+  benchSummary,
+  bytes,
+  ms,
+  resourcesSummary,
+  vitalsSummary,
+} from './core/report.js';
+export {
   compareResources,
   hasResourceCheck,
   totalsOf,
@@ -67,7 +75,9 @@ export {
   type VitalsVerdict,
 } from './core/vitals.js';
 export {
+  DEFAULT_SETTLE_MS,
   type Bench,
+  type CollectOptions,
   type PageBudget,
   type PageResources,
   type PerfBudget,

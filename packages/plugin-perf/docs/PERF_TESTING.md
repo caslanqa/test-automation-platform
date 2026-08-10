@@ -128,10 +128,19 @@ test('the page does not grow', async ({ page, budget }) => {
 });
 ```
 
-Counted from Playwright's own `requestfinished` event and `request.sizes()`, so these are real transfer sizes
-(response body plus response headers) on every browser, with no CDP session involved. `collect()` returns the
-totals, the per-type breakdown, and `resources` — the individual requests, if you want to assert something the
-budget does not express.
+Counted from Playwright's own request events and `request.sizes()`, so these are real transfer sizes (response body
+plus response headers) on every browser, with no CDP session involved. `collect()` returns the totals, the per-type
+breakdown, and `resources` — the individual requests, if you want to assert something the budget does not express.
+
+**`collect()` waits for the network to go quiet first**, up to 2 seconds, and that wait is the difference between a
+number and a guess. A page keeps loading after its `load` event: fonts, lazy images, a fetch a component fires on
+mount. Measured on the scaffold's own demo site, the same page read three ways — 4 requests and 181 kB at `load`,
+9 requests and 249 kB once quiet; and a route reached by clicking reported **0 requests** when read immediately
+while 6 images were still in flight. A budget built on the early number passes while the page has tripled.
+
+Pass `collect({ settleMs })` to change the wait, or `collect({ settleMs: 0 })` to read immediately. Raise it for a
+page that legitimately keeps loading longer; a page with a websocket or polling never goes quiet at all, so the wait
+expires and you measure what arrived rather than hanging. `assert()` takes the same option as its second argument.
 
 A breach names the largest offenders, largest first:
 
@@ -140,7 +149,20 @@ A breach names the largest offenders, largest first:
   - total transfer 1.72 MB exceeds the 1.50 MB budget — largest: script https://app/vendor.js (900 kB), …
 ```
 
-`reset()` forgets everything recorded so far, for a spec that measures a second navigation separately.
+`reset()` forgets everything recorded so far, which is what lets a journey measure each step on its own instead of
+watching every page look heavier than the last:
+
+```ts
+await page.goto('/');
+const landing = await budget.collect();
+
+budget.reset();
+await page.getByRole('button', { name: 'Sign in' }).click();
+const next = await budget.collect();
+
+// For a step after the first, the useful bound is usually relative — and measured, not guessed.
+expect(next.totalBytes).toBeLessThan(landing.totalBytes * 3);
+```
 
 ### `bench` — one endpoint's latency percentiles
 
@@ -180,6 +202,29 @@ loopback server it starts itself, for exactly that reason.
 ---
 
 ## 5. Read the result
+
+Every measurement is written into the run, so nothing depends on scrolling back through stdout. Two forms, because
+they answer different questions:
+
+**A one-line annotation per fixture**, shown next to the test in the HTML report and carried in the JSON reporter:
+
+```
+perf:vitals     lcp 512ms · cls 0.002 · tbt 0.0ms · ttfb 128ms · fcp 388ms · load 329ms
+perf:resources  9 requests · 249 kB (script 169 kB, font 67 kB, stylesheet 11 kB)
+perf:bench      p50 1.2ms · p97.5 3ms · p99 12ms · 850 req/s · 0.00% errors
+```
+
+Only the metrics that were actually measured appear, so a WebKit run simply has no `cls` in its line rather than a
+misleading zero. Measuring twice in one test updates the row instead of appending, so the numbers describe the test
+rather than trailing its history.
+
+**The full measurement as an attachment** — `perf-vitals.json`, `perf-resources.json`, `perf-bench.json`. These are
+written at fixture teardown, which means **also when the test failed**, and that is the run whose numbers someone
+actually needs. `perf-resources.json` lists every request with its type and transfer size, which is how "what grew"
+gets answered without re-running with the network tab open. `perf-bench.json` is an array, so a test that benchmarks
+two endpoints keeps both.
+
+Open them with `npx playwright show-report`, or read `test-results/results.json` in CI to track a trend.
 
 A breached budget **fails** and names the culprit. A budget that could not be measured **skips** with the reason —
 the same rule an absent device or an unreachable database follows here. Every skip message, and what to do:

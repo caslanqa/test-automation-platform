@@ -80,6 +80,19 @@ browsers are alive is a number about your machine. `vitals` and `budget` do not 
 
 ## 5. Read the result
 
+Every fixture writes what it measured into the run — a one-line annotation next to the test, and the full
+measurement as an attachment (`perf-vitals.json`, `perf-resources.json`, `perf-bench.json`), **including when the
+test failed**:
+
+```
+perf:vitals     lcp 512ms · cls 0.002 · ttfb 128ms · fcp 388ms
+perf:resources  9 requests · 249 kB (script 169 kB, font 67 kB, stylesheet 11 kB)
+perf:bench      p50 1.2ms · p97.5 3ms · p99 12ms · 850 req/s · 0.00% errors
+```
+
+`perf-resources.json` lists every request with its transfer size, which answers "what grew" without re-running with
+the network tab open. `npx playwright show-report` to browse, `test-results/results.json` to track a trend.
+
 A breached budget **fails** and names the culprit:
 
 ```
@@ -136,6 +149,9 @@ on schedule — which is the check that stops a run lying to you: starving the V
 - **`cls` is the worst 5-second session window**, not the sum of every shift, and excludes shifts the user caused.
   **`inp` is the worst interaction**, grouping entries by `interactionId`. Both follow the metric definitions
   rather than an approximation, and both are unit tested.
+- **`budget.collect()` waits for the network to go quiet** (2 s by default, `collect({ settleMs })` to change it).
+  A page keeps loading after `load`: measured on one real page, 4 requests and 181 kB at `load` against 9 requests
+  and 249 kB once quiet — and a clicked route read immediately reported **0 requests** with 6 images still in flight.
 - **No `web-vitals` dependency and no Lighthouse.** The page already ships the measurement; a Lighthouse score
   moves when Chrome updates, which makes it a poor CI gate.
 
