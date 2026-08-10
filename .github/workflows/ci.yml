@@ -47,6 +47,29 @@ jobs:
         run: npm test
       - name: Smoke — scaffold a core-only project and verify it builds
         run: npm run smoke
+      # Linux only, and deliberately: k6 is a Go binary running its own JavaScript engine, so the scenarios behave
+      # identically on either runner, while `brew install k6` costs minutes of macOS CI time for no extra signal.
+      # The first version of this step had no `if:` and ran the apt commands on macos-latest, where
+      # /usr/share/keyrings does not exist — the ubuntu leg passed and the macOS one failed on gpg.
+      #
+      # Uses k6's own documented apt route, so this also exercises the instructions `ensure` prints. `mkdir -p` is
+      # ours: the published snippet assumes the keyrings directory already exists.
+      - name: Install k6
+        if: runner.os == 'Linux'
+        run: |
+          sudo mkdir -p /usr/share/keyrings
+          curl -fsSL https://dl.k6.io/key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/k6-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" \
+            | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update && sudo apt-get install -y k6
+          k6 version
+      # Type-checking the k6 templates proves they compile; nothing proved they RUN. Both Phase 2 defects — VU pool
+      # sizing and gating dropped_iterations in the wrong shapes — passed every static check and only a real run
+      # found them. This runs the shipped smoke scenario against a local target, checks its thresholds genuinely
+      # gate a failing one, and checks an unset PERF_TARGET_URL aborts.
+      - name: Smoke — run the shipped k6 scenarios
+        if: runner.os == 'Linux'
+        run: npm run smoke:k6
       # The deterministic rows of the §11 budget: dependency footprint and published size. The latency
       # and idle-CPU rows need a device and live in device.yml.
       - name: NFR budgets
