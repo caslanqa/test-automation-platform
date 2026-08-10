@@ -40,3 +40,10 @@ Found while fixing it: the iOS app picker was hiding every system app. A fresh s
 and seventeen system ones, so Settings and Safari — what every mobile example and most first recordings use —
 were absent from the list, on the one platform where the app id could not be detected either. Android had
 always listed both. The picker now lists them with the user's own apps first.
+
+Also reported and fixed: **the device picker was showing simulators as UDIDs with no name in them.** The label
+was built from the handle the picker sends, and iOS sends the UDID — so every row read
+`69F9D9B8-CBAA-4D98-94CB-2B91B4EA4BD2`, leaving nothing to choose by. Every row now leads with the device's own
+name and keeps a short id after it, because simulator names repeat legally (this machine has five called
+"iPhone 17 Pro") and something has to tell them apart. Booted devices are listed first. The value the picker
+sends is unchanged, so a recording still pins the durable handle.

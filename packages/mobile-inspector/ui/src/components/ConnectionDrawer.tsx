@@ -22,11 +22,29 @@ function deviceHandle(device: InspectorDevice): string {
   return device.platform === 'android' && device.name !== device.id ? device.name : device.id;
 }
 
+/**
+ * Long enough to tell two identically named simulators apart, short enough to read in a dropdown. A UDID is
+ * 36 characters; an `adb` serial is thirteen and is worth showing whole, since it is what `adb devices` says.
+ */
+const ID_TOO_LONG_TO_SHOW = 20;
+
+/**
+ * What a row says. **The device's own name leads, always** — picking a device is the entire purpose of this
+ * list, and nobody recognises `69F9D9B8-CBAA-4D98-94CB-2B91B4EA4BD2`.
+ *
+ * This is what {@link deviceHandle} broke by accident: iOS pins the UDID, the label was built from the handle,
+ * and so every simulator row became a UUID with no name in it. The id still appears after the name, because it
+ * says something the name does not — a booted emulator's serial matches `adb devices`, and a UDID prefix is the
+ * only way to tell five simulators called "iPhone 17 Pro" apart.
+ */
 function deviceLabel(device: InspectorDevice): string {
-  const handle = deviceHandle(device);
   const suffix = device.booted ? ' ● booted' : '';
-  // Show the serial too when it is not what we are pinning, so the row still matches `adb devices` output.
-  return handle === device.id ? `${handle}${suffix}` : `${handle} (${device.id})${suffix}`;
+  const name = device.name || device.id;
+  if (name === device.id) {
+    return `${name}${suffix}`;
+  }
+  const id = device.id.length > ID_TOO_LONG_TO_SHOW ? `${device.id.slice(0, 8)}…` : device.id;
+  return `${name} (${id})${suffix}`;
 }
 
 interface ConnectionDrawerProps {
@@ -69,7 +87,12 @@ export function ConnectionDrawer({
   const driverRef = useRef<HTMLSelectElement>(null);
 
   const platformDevices = useMemo(
-    () => devices.filter(d => d.platform === platform),
+    () =>
+      devices
+        .filter(d => d.platform === platform)
+        // Booted first, then by name: it is the device the user almost certainly means, and a machine with
+        // thirty simulators across three runtimes would otherwise bury the running one mid-list.
+        .sort((a, b) => Number(b.booted) - Number(a.booted) || a.name.localeCompare(b.name)),
     [devices, platform],
   );
   const selectedDevice = useMemo(

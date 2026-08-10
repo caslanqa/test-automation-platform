@@ -171,6 +171,50 @@ test('the window authenticates with a header, so the address carries no token', 
   await context.close();
 });
 
+test('the device picker shows names, not UDIDs, and still tells same-named simulators apart', async t => {
+  const h = await harness();
+  if (!h) {
+    t.skip('needs a built ui-dist and an installed Chromium');
+    return;
+  }
+  const page = await h.view();
+  const drivers = page.locator('.drawer select').first();
+  await drivers.locator('option').nth(1).waitFor({ state: 'attached', timeout: 20_000 });
+  await drivers.selectOption('fake');
+  await page.locator('.drawer select').nth(1).selectOption('ios');
+
+  const options = page.locator('.drawer select').nth(2).locator('option');
+  await options.nth(1).waitFor({ state: 'attached', timeout: 20_000 });
+  const labels = await options.allInnerTexts();
+  const values = await options.evaluateAll(nodes =>
+    nodes.map(node => (node as { value: string }).value),
+  );
+
+  // The regression this guards: iOS pins the UDID, the label was built from that handle, and every simulator
+  // row became a UUID with no name in it — leaving nothing to pick by.
+  const simulators = labels.slice(1);
+  assert.ok(
+    simulators.every(label => label.startsWith('iPhone 16 Pro')),
+    `every row must lead with the device name; saw ${JSON.stringify(simulators)}`,
+  );
+  assert.ok(
+    !simulators.some(label => label.includes('69F9D9B8-CBAA-4D98-94CB-2B91B4EA4BD2')),
+    'a full UDID is unreadable in a dropdown, so only a prefix belongs there',
+  );
+  assert.equal(
+    new Set(simulators).size,
+    2,
+    'two same-named simulators must still be distinguishable',
+  );
+  assert.ok(simulators[0].includes('booted'), 'and the running one comes first');
+  // The value is still the durable, unambiguous handle — only the label changed.
+  assert.ok(
+    values.includes('69F9D9B8-CBAA-4D98-94CB-2B91B4EA4BD2'),
+    `the option value must stay the UDID; saw ${JSON.stringify(values)}`,
+  );
+  await page.close();
+});
+
 test('a reloaded page keeps recording', async t => {
   const h = await harness();
   if (!h) {

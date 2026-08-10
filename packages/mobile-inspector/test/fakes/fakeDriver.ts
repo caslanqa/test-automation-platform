@@ -222,6 +222,20 @@ export class FakeDriver implements MobileInspectorDriver {
     return [
       { id: 'emulator-5554', name: 'Pixel_7_API_34', platform: 'android', booted: true },
       { id: 'Pixel_9_API_35', name: 'Pixel_9_API_35', platform: 'android', booted: false },
+      // Two simulators with the same name and different UDIDs, which is legal and ordinary — this machine
+      // has five called "iPhone 17 Pro". The picker has to show the NAME and still let them be told apart.
+      {
+        id: '69F9D9B8-CBAA-4D98-94CB-2B91B4EA4BD2',
+        name: 'iPhone 16 Pro',
+        platform: 'ios',
+        booted: true,
+      },
+      {
+        id: '19CDF9E8-C074-4BC1-8B68-09E2F486022B',
+        name: 'iPhone 16 Pro',
+        platform: 'ios',
+        booted: false,
+      },
     ];
   }
 
