@@ -1,0 +1,27 @@
+{
+  // `npm run typecheck:perf`. This project exists because **k6 does not type-check anything.** It transpiles
+  // TypeScript with esbuild, which strips types and verifies none of them, and it resolves no node_modules — so
+  // without this file `perf/` would be untyped JavaScript wearing a .ts extension. That gap is the main cost of
+  // choosing k6 as the load engine; this closes it.
+  //
+  // Separate from the project's root tsconfig on purpose: these files import `k6/http` and use the `open()` and
+  // `__ENV` globals, none of which exist in the Playwright world, and they import each other with explicit `.ts`
+  // extensions because that is what k6's own resolver needs. The root tsconfig therefore excludes `perf`.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "types": ["k6"],
+
+    "noEmit": true,
+    // k6 imports name the .ts file directly; with noEmit that is legal and it keeps the source runnable as-is.
+    "allowImportingTsExtensions": true,
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+    "forceConsistentCasingInFileNames": true,
+    "strict": true,
+    "skipLibCheck": true
+  },
+  "include": ["**/*.ts"]
+}

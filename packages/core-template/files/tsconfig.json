@@ -29,5 +29,9 @@
     }
   },
   "include": ["**/*.ts"],
-  "exclude": ["node_modules", "dist", "playwright-report", "test-results", "allure-results"]
+  // `perf` is excluded because k6 load scripts live there and belong to a different runtime: they import `k6/http`
+  // and use the `open()`/`__ENV` globals, none of which exist here, and they name imports with an explicit `.ts`
+  // extension because that is what k6's own resolver needs. They are type-checked by their own project instead —
+  // `npm run typecheck:perf`, which @pwtap/plugin-perf adds. Harmless when the directory does not exist.
+  "exclude": ["node_modules", "dist", "playwright-report", "test-results", "allure-results", "perf"]
 }

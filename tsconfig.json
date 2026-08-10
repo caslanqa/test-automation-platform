@@ -25,6 +25,9 @@
     },
     {
       "path": "packages/plugin-db"
+    },
+    {
+      "path": "packages/plugin-perf"
     }
   ]
 }

@@ -1,0 +1,13 @@
+{
+  // No DOM lib, on purpose. `core/vitals.ts` holds one function that runs inside the browser, and it is typed
+  // against local structural shapes rather than DOM globals — see the comment in `harvestVitalsInPage`. Requiring
+  // `lib: ["DOM"]` would spread to every tsconfig that imports the file, including the repo's aggregate test
+  // project, where it broke an unrelated package.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "types": ["node", "@playwright/test"]
+  },
+  "include": ["src/**/*.ts"]
+}

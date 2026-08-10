@@ -51,6 +51,16 @@ export const KNOWN_PLUGINS: KnownPlugin[] = [
     status: 'stable',
   },
   {
+    id: 'perf',
+    package: '@pwtap/plugin-perf',
+    category: 'performance',
+    description:
+      'Performance testing (Core Web Vitals, resource budgets, endpoint latency percentiles) — asserted inside your suite',
+    flag: '--perf',
+    defaultSelected: false,
+    status: 'stable',
+  },
+  {
     id: 'ai-judge',
     package: '@pwtap/plugin-ai-judge',
     category: 'ai',
