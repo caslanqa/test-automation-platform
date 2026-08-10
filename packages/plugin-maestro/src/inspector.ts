@@ -279,8 +279,15 @@ class MaestroDriverSession implements DriverSession {
 
   private readonly maestro: MaestroMcpSession;
   readonly device: InspectorDevice;
-  /** The app this session is scoped to — the one requested, or the one adopted from the foreground. */
-  readonly appId: string;
+  /**
+   * The app this session is scoped to — the one requested, or the one adopted from the foreground.
+   *
+   * `undefined` when the session attached to whatever is on screen instead (Maestro's `appId: any`), which is
+   * the only thing possible on iOS without an app id. Codegen then pins no app, and the engine warns that the
+   * recording needs one before it can replay — rather than baking in `any`, which is a flow-header wildcard
+   * and not a bundle id anything could launch.
+   */
+  readonly appId: string | undefined;
   private readonly coordinateSize: { width: number; height: number } | undefined;
   /** Temp directory this session's evidence screenshots go to; removed on close so nothing accumulates. */
   private readonly outputDir: string;
@@ -297,7 +304,7 @@ class MaestroDriverSession implements DriverSession {
     device: InspectorDevice,
     coordinateSize: { width: number; height: number } | undefined,
     release: () => void,
-    appId: string,
+    appId: string | undefined,
     outputDir: string,
   ) {
     this.maestro = maestro;
@@ -555,21 +562,23 @@ class MaestroInspectorDriver implements MobileInspectorDriver {
         acquired.platform === 'android'
           ? await getAndroidViewportSize(acquired.id)
           : await getIosSimulatorViewportSize(acquired.id);
-      // Maestro scopes EVERY command to an app id and throws until one is set, so a session without one can
-      // show the screen and do nothing else — which is exactly what it used to hand back, with the internal
-      // message "call maestro.launchApp(appId) before other commands" on every interaction. What the user is
-      // looking at is the app they mean, so adopt it; if that cannot be determined, refuse here instead.
+      // Every Maestro command needs a config header naming an app, so a session without one used to be
+      // useless — the internal "call maestro.launchApp(appId) before other commands" on every interaction.
+      // Android can usually say what is in the foreground, and adopting it gives the recording an app to pin.
       let appId = options.appId;
-      if (!appId) {
+      if (!appId && acquired.platform === 'android') {
         progress('detecting the foreground app');
-        appId =
-          acquired.platform === 'android' ? await foregroundAndroidApp(acquired.id) : undefined;
-        if (!appId) {
-          throw new Error(
-            '[maestro-inspector] the Maestro driver scopes every command to one app, and no app id was ' +
-              'given or could be detected on the device — connect with an app id (e.g. com.example.app)',
-          );
-        }
+        appId = await foregroundAndroidApp(acquired.id);
+      }
+      if (!appId && !options.attachWithoutApp) {
+        // A test replaying a recording: it is supposed to pin the app it was made against, and driving
+        // whatever happens to be on screen instead would pass or fail for reasons unrelated to the test.
+        // A recorder opts out of this with `attachWithoutApp` (see `ConnectOptions`).
+        throw new Error(
+          `[maestro-inspector] every Maestro command is scoped to an app, and no app id was given${
+            acquired.platform === 'android' ? ' or detected on the device' : ''
+          } — set \`mobileTarget.appId\` (e.g. com.example.app) to the app under test`,
+        );
       }
       for (let attempt = 1; ; attempt += 1) {
         const maestro = new MaestroMcpSession(acquired, inspectorHooks(outputDir), {
@@ -578,8 +587,27 @@ class MaestroInspectorDriver implements MobileInspectorDriver {
         try {
           // Maestro initializes its device connection lazily on the first command. A freshly
           // released iOS driver can briefly report "not connected", so rebuild MCP once.
-          progress(attempt === 1 ? `launching ${appId}` : `retrying: launching ${appId}`);
-          await maestro.launchApp(appId);
+          if (appId) {
+            progress(attempt === 1 ? `launching ${appId}` : `retrying: launching ${appId}`);
+            await maestro.launchApp(appId);
+          } else {
+            // No app named and none detectable — which on iOS is *always*, since nothing there reports the
+            // frontmost app (`launchctl list` names every running one and `simctl appinfo` names none, and the
+            // view hierarchy's app label turned out not to be dependably present). Refusing here is what made
+            // "connect failed: … no app id was given or could be detected" the only possible outcome of an iOS
+            // connect without an app id. Maestro's own `appId: any` header satisfies the config section
+            // without scoping the flow, so the session attaches to whatever is on screen instead.
+            progress(
+              attempt === 1
+                ? 'attaching to whatever is on screen'
+                : 'retrying: attaching to the screen',
+            );
+            maestro.attachAnyApp();
+            // `attachAnyApp` sends nothing, and the retry above exists because Maestro connects lazily on the
+            // FIRST command — so one real read is what makes a not-yet-ready driver fail here, where it is
+            // retried, rather than on the user's first tap. The caller reads the hierarchy immediately anyway.
+            await maestro.inspectScreen();
+          }
           return new MaestroDriverSession(
             maestro,
             toInspectorDevice(acquired, true),
@@ -591,6 +619,18 @@ class MaestroInspectorDriver implements MobileInspectorDriver {
         } catch (error) {
           await maestro.close();
           const message = error instanceof Error ? error.message : String(error);
+          // A detected app id is OUR guess, not the caller's instruction, so a guess that cannot be launched
+          // must not take the whole connect down with it. The case that forced this: connecting while the
+          // device sits on the home screen detects the launcher (`com.google.android.apps.nexuslauncher`),
+          // which Maestro answers with `Unable to launch app …` — so opening the inspector on a device nobody
+          // had touched yet simply failed. An app id the caller *named* is different: getting it wrong is
+          // worth hearing about, so that one still throws.
+          if (appId !== undefined && appId !== options.appId && options.attachWithoutApp) {
+            progress(`could not launch ${appId} — attaching to whatever is on screen instead`);
+            appId = undefined;
+            attempt = 0; // the guess cost nothing; leave the not-connected retry below its full budget
+            continue;
+          }
           if (attempt >= 2 || !/not connected|failed to connect/i.test(message)) {
             throw error;
           }

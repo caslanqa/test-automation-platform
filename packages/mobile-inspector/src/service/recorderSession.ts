@@ -276,6 +276,10 @@ export class RecorderSession {
     try {
       const device = await this.device.connect(driver, {
         ...connectOptions,
+        // This is a recorder: someone taps around a live device, including screens that belong to no app they
+        // could have named in advance. A driver that needs an app id may attach to what is on screen instead
+        // of refusing — a replayed test does not pass this and keeps the refusal (see `ConnectOptions`).
+        attachWithoutApp: true,
         // Injected here, never accepted from the client — the trust boundary rebuilds `ConnectOptions`
         // field by field precisely so a callback cannot arrive as data (ADR-010).
         onProgress: stage => this.send({ type: 'connectProgress', stage }),
@@ -287,6 +291,17 @@ export class RecorderSession {
       if (stable.warning) {
         this.log('warn', stable.warning);
         warnings.push(stable.warning);
+      }
+      // A driver may attach without an app — Maestro does when none was named and none could be detected,
+      // which on iOS is every time. Recording works; replaying does not, because the generated header has no
+      // app to launch. Said once, where the user is looking, rather than discovered later on a red run.
+      const pinnedAppId = this.device.appId ?? options.appId;
+      if (!pinnedAppId) {
+        const missingApp =
+          'no app id was given and none could be detected, so this recording pins none — set one in the ' +
+          'Connection panel, or add `appId` to the generated `mobileTarget` before running the test';
+        this.log('warn', missingApp);
+        warnings.push(missingApp);
       }
       this.lastTarget = {
         driver: driverId,
@@ -650,11 +665,17 @@ export class RecorderSession {
         if (!udid && device) {
           this.log('warn', `iOS simulator "${device}" not found for app discovery`);
         } else if (udid) {
-          const raw = await listInstalledIosApps(udid);
+          // System apps included, which they were not: a fresh simulator has three user apps and seventeen
+          // system ones, so Settings and Safari — the apps every mobile example and every first recording
+          // uses — were simply missing from the picker, on the one platform where an app id cannot be
+          // detected either. Android has always listed both.
+          const raw = await listInstalledIosApps(udid, true);
           apps = raw.map(a => ({ id: a.id, name: a.name, platform, system: a.system }));
         }
       }
-      apps.sort((a, b) => a.name.localeCompare(b.name));
+      // The app under test first: a user's own build is what they came to record, and it is one row among
+      // twenty otherwise. `system` reaches the UI either way, so the picker can say which is which.
+      apps.sort((a, b) => Number(a.system) - Number(b.system) || a.name.localeCompare(b.name));
       this.send({ type: 'apps', driver: driverId, apps });
     } catch (error) {
       this.log('warn', `app discovery failed: ${errorMessage(error)}`);

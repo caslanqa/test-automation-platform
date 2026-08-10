@@ -24,6 +24,9 @@ const CAPTURE_TIMEOUT_MS = 30_000;
  */
 const SETTLE_TIMEOUT_MS = 500;
 
+/** Maestro's own wildcard config header — a flow that is not scoped to any one app. */
+const ANY_APP = 'any';
+
 /** Cardinal directions for `scroll`/`swipe`, matching Maestro's enum. */
 export type MaestroDirection = 'UP' | 'DOWN' | 'LEFT' | 'RIGHT';
 
@@ -170,8 +173,25 @@ export class MaestroMcpSession {
   // ----- app lifecycle -----
 
   /**
+   * Target whatever is on screen instead of one app, using Maestro's own `appId: any` header.
+   *
+   * Every command Maestro runs needs a config header, which is why {@link launchApp} was the only way to make
+   * a session usable — and why a caller with no app id had nothing to do but give up. `any` satisfies the
+   * header without scoping the flow: verified on a simulator, `tapOn` by point and by text, `assertVisible`,
+   * `extendedWaitUntil`, `swipe`, `waitForAnimationToEnd` and `back` all run under it. That is exactly what a
+   * recorder wants, because the user taps whatever is in front of them — including the launcher, another app
+   * and the status bar.
+   *
+   * Launches nothing, so it also does not restart the app the user is already looking at.
+   */
+  attachAnyApp(): void {
+    this.appId = ANY_APP;
+  }
+
+  /**
    * Launch the app under test and make it the target of subsequent commands. Must be called before
-   * element commands (`tapOn`, `inputText`, …), which need the app id.
+   * element commands (`tapOn`, `inputText`, …), which need the app id — unless {@link attachAnyApp} set the
+   * unscoped header instead.
    */
   async launchApp(
     appId: string,
@@ -533,7 +553,10 @@ export class MaestroMcpSession {
     timeoutMs = COMMAND_TIMEOUT_MS,
   ): Promise<McpToolResult> {
     if (!this.appId) {
-      throw maestroError('[maestro] call maestro.launchApp(appId) before other commands');
+      throw maestroError(
+        '[maestro] call maestro.launchApp(appId) — or maestro.attachAnyApp() to target whatever is on ' +
+          'screen — before other commands',
+      );
     }
     const client = await this.ensureClient();
     const flow = `appId: ${json(this.appId)}\n---\n${commandYaml}\n`;

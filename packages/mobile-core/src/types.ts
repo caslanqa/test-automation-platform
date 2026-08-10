@@ -87,12 +87,28 @@ export interface ConnectOptions {
   /**
    * Android package name / iOS bundle id of the app to launch on connect. When `appSource` is also
    * given, this is the id the installed artifact registers as (used to launch it after install).
-   * Optional for Appium (an omitted `appId` just attaches to whatever is already foregrounded, e.g.
-   * the home screen) but effectively REQUIRED for Maestro: its MCP session scopes every single
-   * command (including `tap`/`back`) to an app id and throws until `launchApp` has been called, so
-   * without this the Maestro adapter cannot perform any action at all.
+   *
+   * Optional for Appium (an omitted `appId` just attaches to whatever is already foregrounded, e.g. the home
+   * screen). For Maestro it decides what the session is *scoped* to: every Maestro command carries a config
+   * header naming an app. Omitting it is only meaningful together with {@link attachWithoutApp}; a replayed
+   * test needs one, because a test that never launches its app and taps whatever happens to be on screen is
+   * not a test.
    */
   appId?: string;
+  /**
+   * Attach to whatever is on screen when no `appId` was given, instead of refusing to connect.
+   *
+   * For a **recorder**, not for a test. The recorder's whole job is to let someone tap around a live device —
+   * including the launcher, the status bar and another app — and then write down what they did; refusing to
+   * start until they can name a bundle id made the Maestro driver unusable on iOS, where nothing reports the
+   * frontmost app (`launchctl list` names every running one, `simctl appinfo` names none, and the view
+   * hierarchy's app label is not dependably there). Maestro's own `appId: any` header satisfies the config
+   * section without scoping the flow.
+   *
+   * A test leaves this alone and gets the refusal, deliberately: the recording it replays is supposed to pin
+   * the app it was made against (ADR-003).
+   */
+  attachWithoutApp?: boolean;
   /**
    * Local build artifact path or http(s) URL (`.apk`/`.app`/`.ipa`/`.zip`-of-`.app`) to install
    * before launching. Omit when `appId` is already installed on the device. Appium installs this

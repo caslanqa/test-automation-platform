@@ -625,3 +625,22 @@ test('closing the session closes the driver session underneath it', async () => 
 
   assert.equal(driverSession?.closed, true, 'a closed window must never leak a device lock');
 });
+
+test('connecting with no app id says the recording pins none, instead of failing', async () => {
+  // Maestro needs a config header for every command, not an app id: it attaches with its own `appId: any`
+  // when none was named and none could be detected — which on iOS is every time, because nothing there
+  // reports the frontmost app. Recording then works and REPLAY does not, so that is said once, on screen.
+  const h = harness();
+
+  await h.send({ type: 'connect', driver: 'fake', options: { platform: 'ios' } });
+
+  assert.ok(h.last('connected'), 'connect must succeed without an app id');
+  const warnings = h.last('connected')?.warnings ?? [];
+  assert.ok(
+    warnings.some(warning => /pins none/.test(warning)),
+    `expected a warning about the unpinned app; saw ${JSON.stringify(warnings)}`,
+  );
+  assert.doesNotMatch(h.code(), /appId/, 'and the generated header must not invent one');
+
+  await h.session.close();
+});

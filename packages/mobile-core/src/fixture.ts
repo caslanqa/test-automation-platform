@@ -76,8 +76,10 @@ export interface MobileTargetOptions {
   device?: string;
   headless?: boolean;
   /**
-   * Android package name / iOS bundle id to launch. Effectively REQUIRED for Maestro, whose MCP session
-   * scopes every command to an app id; without it a replayed test drives nothing.
+   * Android package name / iOS bundle id to launch. REQUIRED for Maestro, whose every command is scoped to
+   * an app: the driver refuses rather than driving whatever happens to be on screen, because that would pass
+   * or fail for reasons unrelated to the test. (The inspector opts out while recording — see
+   * `ConnectOptions.attachWithoutApp` — which is a recorder's job, not a test's.)
    */
   appId?: string;
   /** Build artifact (`.apk`/`.app`/`.ipa`/`.zip`) or https URL to install before launching `appId`. */

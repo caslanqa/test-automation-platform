@@ -171,10 +171,29 @@ Decisions encoded above, each one closing a current defect:
    Maestro scopes every command — including `tap` and `back` — to one app and refuses until it is set, so a
    connection with an empty app id used to produce a session that showed the screen and failed every
    interaction with an internal message. Such a driver MUST resolve an app itself (the foreground app is what
-   the user is looking at, so it is the one they mean) and MUST refuse the connection outright when it cannot,
-   naming what to supply. Whatever it resolves MUST be reported back on the session (`DriverSession.appId`) and
-   is what codegen pins: a recording that pinned nothing would launch nothing on replay and re-record against
-   whatever happened to be open.
+   the user is looking at, so it is the one they mean). Whatever it resolves MUST be reported back on the
+   session (`DriverSession.appId`) and is what codegen pins: a test that pinned nothing would launch nothing on
+   replay and re-record against whatever happened to be open.
+
+   **Refusing when it cannot resolve one was wrong for a recorder**, and it made the Maestro driver unusable on
+   iOS: nothing there reports the frontmost app — `launchctl list` names every running one, `simctl appinfo`
+   names none, and the view hierarchy's app label is not dependably present — so `connect failed: … no app id
+was given or could be detected` was the only possible outcome of an iOS connect without one. Android was
+   little better: connecting while the device sat on the home screen detected the _launcher_, which Maestro
+   cannot launch, and failed the same way.
+
+   So the two callers are separated by `ConnectOptions.attachWithoutApp`, which only the recorder sets:
+   - **Recording** attaches to whatever is on screen instead of refusing. Maestro's own `appId: any` header
+     satisfies the config section without scoping the flow — verified on a simulator for `tapOn` by point and
+     by selector, `assertVisible`, `extendedWaitUntil`, `swipe`, `waitForAnimationToEnd` and `back`. A _detected_
+     app id that fails to launch degrades the same way, because it was a guess; an app id the caller **named**
+     still throws, because getting that wrong is worth hearing about.
+   - **Replay** keeps the refusal, with a message naming what to set. A test that never launches its app and
+     taps whatever is in front of it passes or fails for reasons that have nothing to do with the test.
+   - A session with no app pinned MUST say so where the user is recording (§9's `connected.warnings`), because
+     the recording is real and the generated test still needs an `appId` before it can run. Codegen MUST NOT
+     emit `any`: it is a flow-header wildcard, not a bundle id anything can launch.
+
 5. **Device identity.** The emitted `device` MUST be replayable days later, so it MUST NOT be an
    ephemeral handle. Android: the AVD name, never the `adb` serial — device discovery reports booted
    emulators _by serial_ (`emulator-5554`), which changes across reboots, so the recorder MUST map the
@@ -970,11 +989,16 @@ key, so installing either plugin — or both — merges it into `@fixtures` a si
    replay, so a recording that begins on the home screen replays as launch → Home → tap the icon → the app
    opens again. Correct and deterministic, but redundant, and it is not the flow a user recording a cold
    start means. A `mobileTarget.launch: false` would express it. Deferred because it changes the fixture's
-   contract and three things need deciding first: Maestro still needs an app id for every flow header, so
-   only the launch is suppressed and `appId` stays required; what a replay should do when the app is not
-   running (fail loudly, or launch anyway and lose the point); and whether Appium — which already attaches
-   to whatever is foregrounded when given no app id — is made to agree, since two drivers disagreeing about
-   what `launch: false` means is worse than not having it.
+   contract and two things still need deciding: what a replay should do when the app is not running (fail
+   loudly, or launch anyway and lose the point); and whether Appium — which already attaches to whatever is
+   foregrounded when given no app id — is made to agree, since two drivers disagreeing about what
+   `launch: false` means is worse than not having it.
+
+   One of the three original blockers is gone: "Maestro needs an app id for every flow header" turned out to be
+   "Maestro needs a _header_", and `appId: any` is a valid one (ADR-003's app-identity clause). Suppressing the
+   launch while keeping `appId` for the header is therefore expressible today; what is left is a product
+   decision, not a driver limitation.
+
 4. **VS Code webview host — deferred, recorded as an improvement.** Hosting the inspector inside VS Code
    instead of its own Chromium window: recording where the test is written, next to the file it lands in. The
    protocol is already built for it — §10's message shapes are transport-neutral, and `RecorderSession.dispatch`
