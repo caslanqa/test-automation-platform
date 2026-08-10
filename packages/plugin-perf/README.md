@@ -100,7 +100,8 @@ forever), and a real breach beats an unmeasurable metric (skipping would hide th
 ## 6. Layer 2 — load, with k6
 
 ```bash
-brew install k6           # not an npm package: k6 runs its own JS runtime, not Node
+brew install k6           # macOS. apt/dnf/winget/choco, Docker and standalone binaries all work too —
+                          # there is no npm route: k6 runs its own JS runtime, not Node
 npm run perf:smoke        # 1 VU, 20s — run this first, always
 npm run perf:load         # ramp to your expected peak, hold, ramp down
 npm run perf:stress       # past peak until something breaks
@@ -108,6 +109,10 @@ npm run perf:spike        # 5× surge, then a quiet window that must recover
 npm run perf:soak         # 30 minutes, nightly — does it leak?
 npm run typecheck:perf    # k6 strips types without checking them; this checks them
 ```
+
+`create-pwtap add perf` installs nothing, but it probes this machine for `brew`/`apt-get`/`dnf`/`yum`/`winget`/
+`choco` and prints the command that actually fits — or, finding none, the standalone binary and Docker routes. A
+hardcoded `brew install k6` is wrong on every Linux CI runner.
 
 **Name the target first.** Set `PERF_TARGET_URL` in the `environments.<env>` block you mean — not under `common`,
 because a load target belongs to one deployment. There is no fallback to `BASE_URL`/`API_BASE_URL` on purpose:

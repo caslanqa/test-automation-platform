@@ -220,11 +220,33 @@ external load tool could import them either; what the two layers share is the **
 
 ### 6.1 Install the binary
 
-```bash
-brew install k6      # macOS; see grafana.com/docs/k6 for other platforms
-```
+There is **no npm route**, and it is worth knowing why rather than searching for one: k6 runs its own JavaScript
+runtime instead of Node, so it is not installable the way `playwright` is, and the `k6` package on npm is a stub
+for editor autocomplete rather than the binary.
 
-`create-pwtap add perf` warns if it is missing, and says the Layer 1 fixtures do not need it.
+| Your machine         | Command                                                                        |
+| -------------------- | ------------------------------------------------------------------------------ |
+| macOS                | `brew install k6`                                                              |
+| Debian / Ubuntu      | add the k6 apt repository (4 commands, in the docs), `apt-get install k6`      |
+| Fedora / RHEL        | `sudo dnf install https://dl.k6.io/rpm/repo.rpm && sudo dnf install k6`        |
+| Windows              | `winget install k6 --source winget`, or `choco install k6`                     |
+| Anything, no install | `docker run --rm -i -v "$PWD:/src" -w /src grafana/k6 run perf/smoke.ts`       |
+| No package manager   | a standalone binary from [k6 releases](https://github.com/grafana/k6/releases) |
+
+Full instructions: <https://grafana.com/docs/k6/latest/set-up/install-k6/>.
+
+**`create-pwtap add perf` does not install it**, deliberately — a scaffold step that reaches for a system package
+manager, or `sudo`, is not a side effect anyone asked for. What it does is work out the command that is right for
+_your_ machine and print that: it probes for `brew` / `apt-get` / `dnf` / `yum` / `winget` / `choco` and names the
+one it found, or, when it finds none, points at the standalone binary and the Docker route. A hardcoded
+`brew install k6` would be wrong on every Linux CI runner and on any Mac without Homebrew, and an instruction that
+cannot work is worse than none — the reader assumes their machine is broken.
+
+The check runs the binary rather than only looking for it on PATH, so a shim of the wrong architecture is reported
+too. It also says that the Layer 1 fixtures do not need k6, because most of this plugin works without it.
+
+If you take the Docker route, remember the container's `localhost` is not yours: add `--network host`, or target
+`host.docker.internal`, to reach a service running on this machine.
 
 ### 6.2 Name the target — explicitly
 

@@ -36,10 +36,18 @@ why: a percentile measured while five browsers are alive is a number about your 
 
 **Layer 2 is load testing with k6**, and it runs outside the Playwright runner because a load generator inside a
 parallel worker pool measures the worker pool. `perf/` gets five shapes — smoke, load, stress, spike, soak — sharing
-one `journey()` in `perf/lib/flow.ts`, plus `perf:*` commands and `typecheck:perf`. k6 is an external binary, not an
-npm dependency (it runs its own JavaScript runtime); `ensure` names it when it is missing. Thresholds live in each
-script's own `options`, so the gate is versioned with the scenario and k6 sets the exit code itself — nothing wraps
-it to interpret output.
+one `journey()` in `perf/lib/flow.ts`, plus `perf:*` commands and `typecheck:perf`. Thresholds live in each script's
+own `options`, so the gate is versioned with the scenario and k6 sets the exit code itself — nothing wraps it to
+interpret output.
+
+k6 is an external binary rather than an npm dependency, because it runs its own JavaScript runtime and the `k6`
+package on npm is an autocomplete stub, not the binary. **`create-pwtap add perf` installs nothing** — a scaffold
+step that reaches for a system package manager, or `sudo`, is not a side effect anyone asked for — but it probes the
+machine for `brew`/`apt-get`/`dnf`/`yum`/`winget`/`choco` and prints the command that actually fits, falling back to
+the standalone binary and a Docker one-liner when it finds none. A hardcoded `brew install k6` (which this shipped
+with at first) is wrong on every Linux CI runner and on any Mac without Homebrew, and an instruction that cannot
+work is worse than none: the reader assumes their machine is broken. The check runs `k6 version` rather than only
+looking on PATH, so a shim of the wrong architecture is caught too.
 
 Three decisions in that layer are worth stating because they are easy to get backwards:
 
