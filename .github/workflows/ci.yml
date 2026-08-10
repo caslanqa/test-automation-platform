@@ -30,6 +30,11 @@ jobs:
         run: npm run typecheck:tests
       - name: Type-check inspector UI
         run: npm run typecheck:ui
+      # The k6 load scripts @pwtap/plugin-perf ships are shipped CODE, and no build covers them: they live in
+      # `templates/`, they import `k6/http`, and k6 itself strips TypeScript without checking any of it. Without
+      # this step a type error in a scenario reaches users. Same project file the scaffolded `typecheck:perf` uses.
+      - name: Type-check k6 load templates
+        run: npm run typecheck:perf-templates
       # Also produces `ui-dist`, which the NFR size check and `npm pack` both need. Nothing else built
       # the UI bundle in CI, so a vite failure would only have surfaced at publish time.
       - name: Build inspector UI
