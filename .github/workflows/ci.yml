@@ -47,6 +47,21 @@ jobs:
         run: npm test
       - name: Smoke — scaffold a core-only project and verify it builds
         run: npm run smoke
+      # k6's own documented apt route, which means this step also exercises the instructions `ensure` prints.
+      # `smoke:k6` skips silently without the binary, so installing it here is what makes the step do anything.
+      - name: Install k6
+        run: |
+          curl -fsSL https://dl.k6.io/key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/k6-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" \
+            | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update && sudo apt-get install -y k6
+          k6 version
+      # Type-checking the k6 templates proves they compile; nothing proved they RUN. Both Phase 2 defects — VU pool
+      # sizing and gating dropped_iterations in the wrong shapes — passed every static check and only a real run
+      # found them. This runs the shipped smoke scenario against a local target, checks its thresholds genuinely
+      # gate a failing one, and checks an unset PERF_TARGET_URL aborts.
+      - name: Smoke — run the shipped k6 scenarios
+        run: npm run smoke:k6
       # The deterministic rows of the §11 budget: dependency footprint and published size. The latency
       # and idle-CPU rows need a device and live in device.yml.
       - name: NFR budgets
