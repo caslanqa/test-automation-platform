@@ -260,12 +260,28 @@ function toInspectorDevice(device: DiscoveredDevice, booted: boolean): Inspector
 }
 
 /**
- * WebdriverIO's `Element.elementId` is typed `Promise<string>` on the chainable proto and `string`
- * on the resolved element depending on which overload TS picks up — accept either shape structurally
- * and `await` defensively so this adapter works regardless of which type TS infers at a call site.
+ * The raw element id a `mobile:` gesture needs — or a loud failure.
+ *
+ * WebdriverIO's `Element.elementId` is typed `Promise<string>` on the chainable proto and `string` on the
+ * resolved element depending on which overload TS picks up, so it is awaited defensively either way. The
+ * check matters more than the typing: `$()` is lazy, so a locator that matches nothing yields an element
+ * whose `elementId` is `undefined`, and the commands that go through here hand that id to `execute()` rather
+ * than calling a method on the element. `click()`/`setValue()` fail with "element wasn't found"; a gesture
+ * given `elementId: undefined` was **reported as success** — found on an iOS simulator, where `doubleTap` on a
+ * locator that matched nothing came back `ok: true` in 545 ms. Every `mobile:` gesture routes through here
+ * (doubleTap, longPress, pinch, scroll-within, drag), so one check covers all of them.
  */
-async function elementIdOf(el: { elementId: string | Promise<string> }): Promise<string> {
-  return el.elementId;
+async function elementIdOf(el: {
+  elementId: string | Promise<string>;
+  selector?: unknown;
+}): Promise<string> {
+  const elementId = await el.elementId;
+  if (!elementId) {
+    throw new Error(
+      `[appium-inspector] no element matched ${JSON.stringify(String(el.selector ?? 'the locator'))}`,
+    );
+  }
+  return elementId;
 }
 
 class AppiumDriverSession implements DriverSession {
@@ -378,6 +394,22 @@ class AppiumDriverSession implements DriverSession {
     return match;
   }
 
+  /**
+   * Send `count` backspaces to the focused field, as explicit key down/up pairs.
+   *
+   * `keys(''.repeat(n))` is the obvious form and it works on Android and fails on iOS: WebDriverAgent
+   * answers `Key Down action '' must have a closing Key Up successor`, because it reads the string as a
+   * W3C actions sequence rather than as text. Building the pairs explicitly is what both platforms accept, so
+   * the partial erase stays expressible instead of becoming an Android-only option (§5).
+   */
+  private async pressBackspaces(count: number): Promise<void> {
+    let keys = this.session.action('key');
+    for (let pressed = 0; pressed < count; pressed += 1) {
+      keys = keys.down(BACKSPACE).up(BACKSPACE);
+    }
+    await keys.perform();
+  }
+
   /** Resolve a {@link MobileTarget} to `{ x, y }` — a locator via its element rect, or a raw point. */
   private async resolvePoint(target: MobileTarget): Promise<{ x: number; y: number }> {
     if ('x' in target && 'y' in target) {
@@ -423,10 +455,10 @@ class AppiumDriverSession implements DriverSession {
         if (characters === undefined) {
           return element.clearValue();
         }
-        // `clearValue` empties the field, so a partial erase is keystrokes instead — focus first, since
-        // `keys` goes to whatever has focus rather than to an element.
+        // `clearValue` empties the field, so a partial erase is keystrokes instead — focus first, since keys
+        // go to whatever has focus rather than to an element.
         await element.click();
-        return this.session.keys(BACKSPACE.repeat(characters));
+        return this.pressBackspaces(characters);
       }
       case 'hideKeyboard':
         // The `mobile:` extension rather than WebdriverIO's `hideKeyboard()`: both UiAutomator2 and XCUITest

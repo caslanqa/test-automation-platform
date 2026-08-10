@@ -15,6 +15,10 @@ Both adapters implement all four; the two that needed care are worth stating:
 - `eraseText` clears the whole field by default and takes `characters` for a partial erase. Maestro's own
   command acts on the focused field, so the adapter taps and erases in one call; Appium's `clearValue` can
   only empty a field, so a partial erase is that many backspaces to the focused element instead of pretending.
+  The iOS run caught the obvious form of those backspaces being Android-only: `keys(''.repeat(n))` works on
+  UiAutomator2 and WebDriverAgent answers `Key Down action '' must have a closing Key Up successor`, so the
+  key down/up pairs are built explicitly. Verified by observation where the value is visible —
+  `"abcdefgh"` → `"abcde"` on Android, `"example"` → `"exam"` on iOS through Maestro.
 - `scrollUntilVisible` is a Maestro primitive and a bounded look-then-scroll loop on Appium, with the timeout
   in `ACTION_DEFAULTS` rather than invented inside the adapter. The platform-specific alternatives were both
   narrower: `UiScrollable().scrollIntoView` only accepts a `UiSelector`, so an accessibility-id locator could
