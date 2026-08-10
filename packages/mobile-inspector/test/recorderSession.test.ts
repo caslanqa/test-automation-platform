@@ -40,13 +40,22 @@ interface Harness {
  * to leave a connected session polling in the background and perturb the tests that followed.
  */
 const built: RecorderSession[] = [];
+/** The temp projects those sessions were given, deleted with them — see {@link harness}. */
+const projects: string[] = [];
 after(async () => {
   await Promise.all(built.map(session => session.close()));
+  // Each test gets a temp project with a stubbed Playwright binary and whatever it saved into it, and none
+  // of them were ever removed: a day of running this suite left 784 directories and 130 MB in the system
+  // temp dir. Deleted after the sessions close, so nothing is pulled out from under a still-running run.
+  for (const dir of projects) {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 /** A temp project with a stubbed Playwright CLI, plus a session wired to the fake driver. */
 function harness(options?: Parameters<typeof fakeDriverMap>[0]): Harness {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pwtap-recorder-'));
+  projects.push(dir);
   const bin = path.join(dir, 'node_modules', '.bin');
   fs.mkdirSync(bin, { recursive: true });
   // Stands in for the project's Playwright: echoes how it was invoked so the test can assert the argv and

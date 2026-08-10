@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 
 import { applyFixture, removeFixture } from '../src/injectors/fixturesBarrel.js';
 import type { PluginManifest } from '../src/manifest.js';
@@ -70,9 +70,18 @@ export const expect = mergeExpects(
 );
 `;
 
+/** Throwaway projects this file made, deleted at the end — none of them used to be. */
+const projects: string[] = [];
+after(() => {
+  for (const dir of projects) {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 /** A throwaway client project containing just the barrel. */
 function project(): { dir: string; barrel: () => string } {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pwtap-barrel-'));
+  projects.push(dir);
   fs.mkdirSync(path.join(dir, 'fixtures'), { recursive: true });
   const file = path.join(dir, 'fixtures', 'index.ts');
   fs.writeFileSync(file, BARREL, 'utf8');
@@ -161,6 +170,7 @@ test('a matcher-only plugin still works with the single-object form', () => {
 
 test('a barrel whose markers were deleted is reported, not half-edited', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pwtap-barrel-'));
+  projects.push(dir);
   fs.mkdirSync(path.join(dir, 'fixtures'), { recursive: true });
   const file = path.join(dir, 'fixtures', 'index.ts');
   const mangled = BARREL.replace('// pwtap:plugins:tests\n', '');

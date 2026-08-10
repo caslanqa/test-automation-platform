@@ -24,8 +24,13 @@ const LOGIN_BUTTON = { x: 200, y: 230 };
 const INTERACTIONS = 200;
 
 const built: RecorderSession[] = [];
+/** Temp projects the sessions were given, removed with them — see {@link harness}. */
+const projects: string[] = [];
 after(async () => {
   await Promise.all(built.map(session => session.close()));
+  for (const dir of projects) {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 /** A session with the real engine, the fake driver, and settle delays short enough for 200 rounds. */
@@ -36,6 +41,7 @@ function harness(): {
   timeline: () => number;
 } {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pwtap-load-'));
+  projects.push(dir);
   const { map } = fakeDriverMap();
   const events: ServerMessage[] = [];
   const session = new RecorderSession(dir, message => events.push(message), map, {
