@@ -4,7 +4,7 @@
  * This is a BUDGET check, not a load test. It runs inside a Playwright worker, so its absolute numbers are worth
  * whatever the machine and the other workers make them worth — the defaults are small on purpose, and
  * `docs/PERF_TESTING.md` says to use `--workers=1` before quoting a figure. Load lives in Layer 2, outside the
- * runner, for the reason `docs/perf-test-plugin-plan.md` §3 gives.
+ * runner, for the reason `docs/PERF_TESTING.md` §6 gives.
  *
  * @example
  * const result = await runBench({ url: 'http://localhost:3000/health', duration: 3 });
@@ -176,6 +176,22 @@ export async function runBench(
     // Nothing attempted at all is total failure, not a clean 0 % error rate.
     errorRate: totalRequests > 0 ? failed / totalRequests : 1,
   };
+}
+
+/** The fields of a {@link BenchBudget} that gate something, as opposed to configuring the run. */
+const THRESHOLD_KEYS = ['p50', 'p90', 'p97_5', 'p99', 'errorRate', 'rps'] as const;
+
+/**
+ * Does this budget gate anything?
+ *
+ * `BenchBudget` carries run parameters as well as thresholds, so "is it empty" cannot be asked of the object as a
+ * whole: `{ duration: 3 }` configures the run and checks nothing, and `bench.assert()` on it would pass while
+ * verifying nothing at all.
+ *
+ * @example hasBenchThreshold({ duration: 3, connections: 50 }); // → false
+ */
+export function hasBenchThreshold(budget: BenchBudget): boolean {
+  return THRESHOLD_KEYS.some(key => budget[key] !== undefined);
 }
 
 /** Every breached threshold, worded so the number and the budget are both visible. */

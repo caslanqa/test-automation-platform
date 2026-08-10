@@ -29,7 +29,11 @@ entries.
 
 Same contract as every other plugin: a breached budget fails and names the culprit, a budget that cannot be
 measured skips with the reason. A real breach wins over an unmeasurable metric, because skipping would hide it,
-and `assert()` with an empty budget throws instead of passing forever.
+and `assert()` with an empty budget throws instead of passing forever — which takes more than checking for
+`undefined`, because `byType` is nested: `{ byType: {} }` is a defined value that gates nothing. `hasResourceCheck`
+and `hasBenchThreshold` answer "does this budget check anything" for the two shapes where presence is not content,
+and both are exported. `byType` values are `number | undefined`, so a budget can be assembled the way the rest of
+the API allows.
 
 `bench` runs inside a Playwright worker, so the scaffolded `test:perf` script pins `--workers=1` and the docs say
 why: a percentile measured while five browsers are alive is a number about your machine.

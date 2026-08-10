@@ -10,7 +10,13 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { test } from 'node:test';
 
-import { compareBench, probeTarget, resolveBenchUrl, type BenchResult } from '../src/core/bench.js';
+import {
+  compareBench,
+  hasBenchThreshold,
+  probeTarget,
+  resolveBenchUrl,
+  type BenchResult,
+} from '../src/core/bench.js';
 
 const RESULT: BenchResult = {
   url: 'http://localhost:1/health',
@@ -86,6 +92,16 @@ test('rps is a floor, not a ceiling', () => {
 
 test('run parameters in the budget gate nothing on their own', () => {
   assert.deepEqual(compareBench(RESULT, { duration: 3, connections: 50 }), []);
+  // Which is why `bench.assert()` refuses such a budget instead of passing: it would verify nothing.
+  assert.equal(hasBenchThreshold({ duration: 3, connections: 50, amount: 100 }), false);
+  assert.equal(hasBenchThreshold({}), false);
+});
+
+test('hasBenchThreshold accepts any real threshold, including a zero one', () => {
+  assert.equal(hasBenchThreshold({ errorRate: 0 }), true);
+  assert.equal(hasBenchThreshold({ p99: 800 }), true);
+  assert.equal(hasBenchThreshold({ rps: 100 }), true);
+  assert.equal(hasBenchThreshold({ duration: 3, p50: 10 }), true);
 });
 
 test('probeTarget accepts any HTTP response, including a 404', async () => {

@@ -23,6 +23,7 @@ import type { Page, Request, TestInfo } from '@playwright/test';
 
 import {
   compareBench,
+  hasBenchThreshold,
   probeTarget,
   resolveBenchUrl,
   runBench,
@@ -32,6 +33,7 @@ import {
 } from './core/bench.js';
 import {
   compareResources,
+  hasResourceCheck,
   totalsOf,
   type ResourceBudget,
   type ResourceRecord,
@@ -118,20 +120,15 @@ function resourceBudgetOf(budget: PerfBudget): ResourceBudget {
   return { totalBytes, requests, byType };
 }
 
-/** True when nothing was budgeted — asserting an empty budget would silently pass and mean nothing. */
+/**
+ * True when nothing was budgeted — asserting an empty budget would silently pass and mean nothing.
+ *
+ * Sound for {@link VitalsBudget}, whose every field is a plain number. It is NOT sound for a budget holding a
+ * nested object or run parameters, which is why `hasResourceCheck` and `hasBenchThreshold` live in `core/` beside
+ * the comparisons they guard — and are tested there.
+ */
 function isEmptyBudget(budget: object): boolean {
   return Object.values(budget).every(value => value === undefined);
-}
-
-/**
- * `BenchBudget` carries run parameters as well as thresholds, so "is it empty" cannot be asked of the object as a
- * whole: `{ duration: 3 }` configures the run and gates nothing, and `bench.assert()` on it would pass while
- * checking nothing at all.
- */
-function hasBenchThreshold(budget: BenchBudget): boolean {
-  return (['p50', 'p90', 'p97_5', 'p99', 'errorRate', 'rps'] as const).some(
-    key => budget[key] !== undefined,
-  );
 }
 
 function fail(what: string, failures: string[]): never {
@@ -221,7 +218,7 @@ export async function provideBudget(
     },
     assert: async (budget?: ResourceBudget): Promise<PageResources> => {
       const wanted = budget ?? resourceBudgetOf(perfBudget);
-      if (isEmptyBudget(wanted)) {
+      if (!hasResourceCheck(wanted)) {
         throw new Error(
           '[perf] budget.assert() has nothing to check — set perfBudget (e.g. { totalBytes: 1_500_000 }) or pass a budget',
         );

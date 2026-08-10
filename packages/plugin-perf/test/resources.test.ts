@@ -7,7 +7,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { compareResources, totalsOf, type ResourceRecord } from '../src/core/resources.js';
+import {
+  compareResources,
+  hasResourceCheck,
+  totalsOf,
+  type ResourceRecord,
+} from '../src/core/resources.js';
 
 const RECORDS: ResourceRecord[] = [
   { url: 'https://app/index.html', resourceType: 'document', bytes: 12_000 },
@@ -68,4 +73,26 @@ test('every breached budget is reported, not just the first', () => {
 
 test('totals exactly on the budget pass', () => {
   assert.deepEqual(compareResources(RECORDS, { totalBytes: 1_252_000, requests: 4 }), []);
+});
+
+test('an explicitly undefined per-type limit is skipped, not compared against undefined', () => {
+  assert.deepEqual(compareResources(RECORDS, { byType: { script: undefined } }), []);
+  // A real limit alongside it still applies.
+  assert.equal(compareResources(RECORDS, { byType: { script: 1, image: undefined } }).length, 1);
+});
+
+// `budget.assert()` throws on a budget that checks nothing, and a nested `byType` is where "defined" stops
+// meaning "checks something". Reported by review on PR #45: `{ byType: {} }` used to pass silently.
+test('hasResourceCheck sees through an empty or all-undefined byType', () => {
+  assert.equal(hasResourceCheck({}), false);
+  assert.equal(hasResourceCheck({ byType: {} }), false);
+  assert.equal(hasResourceCheck({ byType: { script: undefined } }), false);
+  assert.equal(hasResourceCheck({ totalBytes: undefined, requests: undefined }), false);
+});
+
+test('hasResourceCheck accepts any real limit, including one nested in byType', () => {
+  assert.equal(hasResourceCheck({ totalBytes: 1 }), true);
+  assert.equal(hasResourceCheck({ requests: 0 }), true);
+  assert.equal(hasResourceCheck({ byType: { script: 0 } }), true);
+  assert.equal(hasResourceCheck({ byType: { script: undefined, image: 10 } }), true);
 });

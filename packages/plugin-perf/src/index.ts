@@ -6,9 +6,9 @@
  * assertions ABOUT the page a test already opened, so a separate project would get between the test and the thing
  * it is measuring. They merge into `@fixtures` and are available in every file.
  *
- * Load — the ramp shapes, arrival-rate models and threshold gates — is Layer 2 and does not live here. It runs
- * outside the Playwright runner as its own command, because a load generator inside the shared worker pool
- * measures the worker pool. See `docs/perf-test-plugin-plan.md` §3.
+ * Load — the ramp shapes, arrival-rate models and threshold gates — is **Layer 2**, and none of it is importable
+ * from here: it is k6 scripts, scaffolded into `perf/` and run by the k6 binary as its own command, because a load
+ * generator inside the shared worker pool measures the worker pool. `docs/PERF_TESTING.md` §6 covers it.
  *
  * @example
  * import { expect, test } from '@fixtures';
@@ -38,6 +38,7 @@ export const test = base.extend<PerfFixtures & PerfOptions>({
 
 export {
   compareBench,
+  hasBenchThreshold,
   probeTarget,
   resolveBenchUrl,
   runBench,
@@ -47,6 +48,7 @@ export {
 } from './core/bench.js';
 export {
   compareResources,
+  hasResourceCheck,
   totalsOf,
   type ResourceBudget,
   type ResourceRecord,

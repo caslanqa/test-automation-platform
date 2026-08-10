@@ -28,15 +28,39 @@ export interface ResourceTotals {
   byType: Record<string, { bytes: number; requests: number }>;
 }
 
-/** Ceilings. `byType` keys are Playwright resource types; an unlisted type is unbudgeted. */
+/**
+ * Ceilings. `byType` keys are Playwright resource types; an unlisted type is unbudgeted.
+ *
+ * `byType` values are `number | undefined` rather than `number` so a budget can be built the way the rest of this
+ * API allows — every other field is optional, so `{ script: strict ? 100_000 : undefined }` should be expressible
+ * without constructing the object conditionally. An undefined entry is skipped, exactly like an undefined
+ * `totalBytes`.
+ */
 export interface ResourceBudget {
   totalBytes?: number;
   requests?: number;
-  byType?: Record<string, number>;
+  byType?: Record<string, number | undefined>;
 }
 
 /** How many offenders a failure message names before it stops being a report and becomes a log dump. */
 const CULPRITS_SHOWN = 5;
+
+/**
+ * Does this budget actually check something?
+ *
+ * Presence is not content, because `byType` is nested: `{ byType: {} }` and `{ byType: { script: undefined } }` are
+ * both defined values that gate nothing, since the comparison below iterates entries and finds none. A caller that
+ * treats them as a real budget passes while checking nothing — the silent pass that `budget.assert()` throws to
+ * prevent. Reported by review on PR #45; lives here, with the comparison it guards, so it is testable.
+ *
+ * @example hasResourceCheck({ byType: {} }); // → false
+ */
+export function hasResourceCheck(budget: ResourceBudget): boolean {
+  if (budget.totalBytes !== undefined || budget.requests !== undefined) {
+    return true;
+  }
+  return Object.values(budget.byType ?? {}).some(limit => limit !== undefined);
+}
 
 export function totalsOf(records: ResourceRecord[]): ResourceTotals {
   const totals: ResourceTotals = { totalBytes: 0, requests: records.length, byType: {} };
@@ -78,6 +102,11 @@ export function compareResources(records: ResourceRecord[], budget: ResourceBudg
   }
 
   for (const [type, limit] of Object.entries(budget.byType ?? {})) {
+    // An explicitly undefined limit is not a budget of zero: `measured > undefined` is always false, so this would
+    // have been silently harmless, but skipping it says so rather than relying on a NaN comparison.
+    if (limit === undefined) {
+      continue;
+    }
     const measured = totals.byType[type]?.bytes ?? 0;
     if (measured > limit) {
       failures.push(
