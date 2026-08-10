@@ -136,6 +136,41 @@ async function tapDevice(page: Page, dy = 0, options: { record?: boolean } = {})
   });
 }
 
+test('the window authenticates with a header, so the address carries no token', async t => {
+  const h = await harness();
+  if (!h) {
+    t.skip('needs a built ui-dist and an installed Chromium');
+    return;
+  }
+  // Exactly what `bin/inspect.mjs` does: the token goes on the browser context, and the page is navigated to
+  // the bare origin. The whole app has to come up from that — the document, the bundle, the event stream and
+  // every frame — because none of those requests can fall back to a query token that is not there.
+  const context = await h.browser.newContext({
+    viewport: { width: 1200, height: 800 },
+    extraHTTPHeaders: { 'x-inspector-token': h.service.token },
+  });
+  const page = await context.newPage();
+  const origin = new URL(h.service.url).origin;
+  const response = await page.goto(origin, { waitUntil: 'domcontentloaded' });
+
+  assert.equal(response?.status(), 200, 'the navigation itself must be authorised by the header');
+  assert.doesNotMatch(
+    page.url(),
+    /token=/,
+    'no credential in what the window shows as its address',
+  );
+  await page.waitForSelector('.app', { timeout: 20_000 });
+  // The driver list only ever arrives over the event stream, so seeing it proves /events and /command were
+  // authorised by the header too.
+  await page
+    .locator('.drawer select')
+    .first()
+    .locator('option')
+    .nth(1)
+    .waitFor({ state: 'attached', timeout: 20_000 });
+  await context.close();
+});
+
 test('a reloaded page keeps recording', async t => {
   const h = await harness();
   if (!h) {

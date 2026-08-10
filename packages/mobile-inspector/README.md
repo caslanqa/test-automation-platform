@@ -56,7 +56,9 @@ Every element is offered as a ranked list rather than one guess, scored by how d
 
 ## Trust boundary
 
-The service binds to loopback on a random port with a per-launch token, and treats the browser as untrusted even though it is local: every command is validated field by field, file writes and directory listings are confined to the project (by path segment, and following symlinks), the artifact path is validated before it reaches an installer, and runs are argv-only `spawn` with an explicit environment. Closing the window releases the device lock, kills any run and removes the temp files; merely losing the connection does not — reload the page and the recording is still there.
+The service binds to loopback on a random port with a per-launch token, and treats the browser as untrusted even though it is local: every command is validated field by field, file writes and directory listings are confined to the project (by path segment, and following symlinks), the artifact path is validated before it reaches an installer, and runs are argv-only `spawn` with an explicit environment.
+
+The token stays out of anything that keeps it. The window carries it in an `x-inspector-token` header, so the address printed on launch has no credential in it, and the single-instance lock file holds only a port and a pid. The one place a token is still printed is when no browser could be opened and you have to paste the URL into your own — that line says so. Closing the window releases the device lock, kills any run and removes the temp files; merely losing the connection does not — reload the page and the recording is still there.
 
 ## Design
 

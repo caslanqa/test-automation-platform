@@ -14,9 +14,19 @@
  * the event stream and must cost the user nothing, so attaching is a re-sync rather than a fresh start.
  *
  * Security posture (ADR-010): loopback bind, random port, per-launch token on every request, loopback
- * `Origin` required, `HttpOnly; SameSite=Strict` cookie for the token-less asset requests the browser makes
- * on its own, and a strict CSP on the page. The client is untrusted even though it is local, so every
+ * `Origin` required, and a strict CSP on the page. The client is untrusted even though it is local, so every
  * command is re-validated with `parseClientMessage` before it can reach a driver.
+ *
+ * The token is accepted three ways, and which one a caller uses decides where the secret ends up:
+ *
+ * - **`x-inspector-token` header** — how the window this CLI opens authenticates. Playwright sets it on the
+ *   browser context, so it covers the navigation and every subresource, and the token never appears in a URL,
+ *   in printed output, in the page's own `location`, or in the browser profile.
+ * - **`?token=` query** — only to bootstrap a browser the CLI did not open, which cannot be given a header.
+ *   This is the one path that puts the token somewhere a human can read, so it is printed only when no window
+ *   could be opened (see `bin/inspect.mjs`).
+ * - **`inspector_token` cookie** — set from a matching query token so the relative `./assets/*`, `/events`
+ *   and `/frame/<id>` requests that follow a hand-opened URL keep working. `HttpOnly; SameSite=Strict`.
  */
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { createReadStream } from 'node:fs';
@@ -79,7 +89,16 @@ export interface InspectorServiceOptions {
 }
 
 export interface InspectorServiceHandle {
-  /** The URL to open, token included. */
+  /**
+   * Where the service listens, with no credential in it — this is what is safe to print, and what the window
+   * this CLI opens navigates to (it carries the token in a header instead).
+   */
+  origin: string;
+  /**
+   * The same address with the token in the query string. **Printing this puts a live credential into terminal
+   * scrollback, screenshots and any log that captures them**, so it is for the one case that has no
+   * alternative: a browser the CLI could not open, which cannot be handed a header.
+   */
   url: string;
   port: number;
   token: string;
@@ -93,7 +112,8 @@ export class InspectorAlreadyRunningError extends Error {
   constructor(url: string) {
     super(
       `[mobile-inspector] an inspector is already running for this project at ${url} — ` +
-        'open that window instead of starting a second one, or close it first',
+        'use that window instead of starting a second one, or close it first. Its access token is not ' +
+        'stored anywhere, so a window that is already gone means stopping that process and launching again',
     );
     this.name = 'InspectorAlreadyRunningError';
     this.url = url;
@@ -126,6 +146,16 @@ function isLoopbackOrigin(origin: string | undefined, host: string): boolean {
   }
 }
 
+/**
+ * The token from `x-inspector-token`, when exactly one was sent.
+ *
+ * Node joins duplicate headers into one comma-separated value, and an ambiguous credential is not a
+ * credential — two of them means something is confused about who it is, so neither is accepted.
+ */
+function tokenFromHeader(value: string | string[] | undefined): string | undefined {
+  return typeof value === 'string' && !value.includes(',') ? value : undefined;
+}
+
 function tokenFromCookie(cookieHeader: string | undefined): string | undefined {
   for (const part of (cookieHeader ?? '').split(';')) {
     const [name, ...rest] = part.trim().split('=');
@@ -151,9 +181,8 @@ export async function startInspectorService(
   if (!options.skipInstanceLock) {
     const existing = await readLock(projectRoot);
     if (existing) {
-      throw new InspectorAlreadyRunningError(
-        `http://${host}:${existing.port}/?token=${existing.token}`,
-      );
+      // The origin only: the running instance's token is deliberately not on disk to be quoted back here.
+      throw new InspectorAlreadyRunningError(`http://${host}:${existing.port}`);
     }
   }
 
@@ -222,7 +251,9 @@ export async function startInspectorService(
     const url = new URL(req.url ?? '/', `http://${host}`);
     const queryToken = url.searchParams.get('token');
     const authorized =
-      tokenMatches(queryToken, token) || tokenMatches(tokenFromCookie(req.headers.cookie), token);
+      tokenMatches(tokenFromHeader(req.headers['x-inspector-token']), token) ||
+      tokenMatches(queryToken, token) ||
+      tokenMatches(tokenFromCookie(req.headers.cookie), token);
 
     if (!authorized || !isLoopbackOrigin(req.headers.origin, host)) {
       res.writeHead(403, { 'content-type': 'text/plain' });
@@ -396,11 +427,12 @@ export async function startInspectorService(
   const { port } = server.address() as AddressInfo;
 
   if (!options.skipInstanceLock) {
-    await writeLock(projectRoot, { port, token, pid: process.pid });
+    await writeLock(projectRoot, { port, pid: process.pid });
   }
 
   let closed = false;
   return {
+    origin: `http://${host}:${port}`,
     url: `http://${host}:${port}/?token=${token}`,
     port,
     token,

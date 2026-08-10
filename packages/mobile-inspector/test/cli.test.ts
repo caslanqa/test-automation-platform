@@ -46,7 +46,7 @@ async function launchAndSignal(projectRoot: string, signal: NodeJS.Signals): Pro
   );
   const printedUrl = new Promise<boolean>(resolve => {
     const check = (): void => {
-      if (/http:\/\/127\.0\.0\.1:\d+\/\?token=/.test(output)) {
+      if (/http:\/\/127\.0\.0\.1:\d+/.test(output)) {
         resolve(true);
       }
     };
@@ -65,7 +65,17 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     try {
       const launch = await launchAndSignal(projectRoot, signal);
 
-      assert.match(launch.output, /http:\/\/127\.0\.0\.1:\d+\/\?token=/, 'it must print a URL');
+      assert.match(launch.output, /http:\/\/127\.0\.0\.1:\d+/, 'it must print a URL');
+      // The launch token is a live credential and printed output is the least private place there is —
+      // scrollback, screenshots, a pasted terminal. The window gets it as a header instead, and the only
+      // path that still prints it is the one where no window could be opened, which says so in words.
+      if (!/Could not open a browser window/.test(launch.output)) {
+        assert.doesNotMatch(
+          launch.output,
+          /token=/,
+          `the token must not be printed on the happy path; output:\n${launch.output}`,
+        );
+      }
       assert.doesNotMatch(
         launch.output,
         /triggerUncaughtException|UnhandledPromiseRejection/,

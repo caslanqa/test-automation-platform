@@ -338,9 +338,24 @@ problem. Instead:
 
 The renderer is untrusted even though it is local; the service writes files and spawns processes.
 
-- **Bind:** loopback only, random port, per-launch random token. The WS upgrade and every HTTP request
-  MUST present the token; `Origin` MUST be loopback. The asset cookie MUST be `HttpOnly; SameSite=Strict`
-  and the served page MUST carry a strict CSP.
+- **Bind:** loopback only, random port, per-launch random token. Every HTTP request MUST present the token;
+  `Origin` MUST be loopback. The asset cookie MUST be `HttpOnly; SameSite=Strict` and the served page MUST
+  carry a strict CSP.
+- **The token MUST NOT be written where a human or a file can keep it.** It is a live credential for a
+  service that spawns processes and writes files, and it was previously printed on every launch (`?token=…`
+  in the URL the CLI logs) and stored in the single-instance lock file under `node_modules`. Neither was
+  needed:
+  - The window the CLI opens authenticates with an **`x-inspector-token` header**, set on the Playwright
+    browser context so it covers the navigation and every subresource. The token then never reaches printed
+    output, the page's own `location`, the browser profile, or `ps` (the window still opens on a blank
+    `data:` URL and navigates afterwards, so it is not in `--app=` either).
+  - The lock file holds **port and pid only**. It stored the token so a second launch could quote a
+    ready-to-open URL — a live credential in a world-readable file for the length of a session, to save one
+    relaunch.
+  - `?token=` remains for the one case with no alternative: a browser this process did not launch cannot be
+    given a header. That URL is printed **only** when no window could be opened, and says what it carries.
+  - Duplicate `x-inspector-token` headers MUST be refused rather than resolved: Node folds them into one
+    comma-separated value, and accepting a prefix would let a caller append a guess to a real token.
 - **Validation:** every inbound message MUST be validated _field by field_, not just by `kind` — see the
   per-action required-field table in §5. An action with a missing or wrongly typed field is rejected with
   an `error`, never forwarded to an adapter.
