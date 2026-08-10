@@ -27,7 +27,8 @@ with every hit-test already and the UI dropped them.
 
 **The editor completes from the device**: `mobileApp`'s methods, and locator literals built from the live
 hierarchy. Reading an id off the tree panel and typing it back is exactly where a typo becomes a locator that
-never matches.
+never matches. The method list is a total `Record` over `keyof MobileApp`, so a method added to the facade
+fails the UI type-check until it is listed — the hand-maintained version drifted inside a single release.
 
 **The timeline is walkable.** Each recorded step remembers the frame the screen showed once it had run, so
 clicking a step shows that screen; a pinned step is read-only, because coordinates on a past screen do not

@@ -234,3 +234,44 @@ test('with no package or no app id there is nothing to compare, so no penalty', 
   assert.equal(locatorCandidates(unknown, [unknown], { appId: 'com.example.app' })[0].score, 92);
   assert.equal(outOfAppWarning({ appPackage: 'com.other' }, undefined), undefined);
 });
+
+test('findNode counts an ordinal in depth-first order, and stops at it', () => {
+  // The order matters twice: it is what `locatorCandidates` records as a node's ordinal, and what an adapter
+  // then re-counts on the device. A nested match is the case a flat scan would order differently.
+  const hierarchy: MobileNode[] = [
+    { text: 'Delete', resourceId: 'first' },
+    { children: [{ text: 'Delete', resourceId: 'second' }] },
+    { text: 'Delete', resourceId: 'third' },
+  ];
+
+  assert.equal(
+    findNode(hierarchy, { text: 'Delete' })?.resourceId,
+    'first',
+    'no ordinal means the first',
+  );
+  assert.equal(findNode(hierarchy, { text: 'Delete', index: 1 })?.resourceId, 'second');
+  assert.equal(findNode(hierarchy, { text: 'Delete', index: 2 })?.resourceId, 'third');
+  assert.equal(
+    findNode(hierarchy, { text: 'Delete', index: 3 }),
+    undefined,
+    'past the end matches nothing',
+  );
+});
+
+test('findNode stops walking once it has the match it was asked for', () => {
+  // It used to collect every match before indexing, which walks the whole tree for a hit that is usually the
+  // first one — and `resolveTargetPoint` does this per drag/pinch endpoint. A getter that counts visits is the
+  // only way to see the difference from outside.
+  let visited = 0;
+  const leaf = (text: string): MobileNode => ({
+    get text() {
+      visited += 1;
+      return text;
+    },
+  });
+  const hierarchy: MobileNode[] = [leaf('Delete'), leaf('Delete'), leaf('Delete')];
+
+  assert.ok(findNode(hierarchy, { text: 'Delete' }));
+
+  assert.equal(visited, 1, `expected to stop at the first match, read ${visited} nodes`);
+});

@@ -11,7 +11,7 @@ import { EditorView } from '@codemirror/view';
 import { basicSetup } from 'codemirror';
 import { useEffect, useRef, useState } from 'react';
 
-import type { ClientMessage, MobileNode } from '../protocol';
+import type { ClientMessage, MobileApp, MobileNode } from '../protocol';
 
 interface CodeEditorProps {
   source: string;
@@ -21,21 +21,36 @@ interface CodeEditorProps {
   send: (message: ClientMessage) => void;
 }
 
-/** The `MobileApp` facade's methods — kept in step with `mobile-core`'s `MobileApp` interface by hand. */
-const MOBILE_APP_METHODS: Completion[] = [
-  { label: 'tap', detail: '(locator)', type: 'method' },
-  { label: 'fill', detail: '(locator, value)', type: 'method' },
-  { label: 'longPress', detail: '(locator, options?)', type: 'method' },
-  { label: 'swipe', detail: "('up' | 'down' | 'left' | 'right', options?)", type: 'method' },
-  { label: 'scroll', detail: "('up' | 'down' | 'left' | 'right', options?)", type: 'method' },
-  { label: 'drag', detail: '(from, to)', type: 'method' },
-  { label: 'pinch', detail: '(scale, options?)', type: 'method' },
-  { label: 'pressKey', detail: "('back' | 'home' | 'enter' | …)", type: 'method' },
-  { label: 'back', detail: '()', type: 'method' },
-  { label: 'waitFor', detail: '(locator, options?)', type: 'method' },
-  { label: 'isVisible', detail: '(locator, options?) → boolean', type: 'method' },
-  { label: 'screenshot', detail: '(name?) → path', type: 'method' },
-];
+/**
+ * The signature shown beside each `MobileApp` method.
+ *
+ * Typed as a total `Record` over the interface's own keys, so a method added to the facade fails
+ * `typecheck:ui` until it is listed here. The list was hand-maintained before and drifted within one release:
+ * `doubleTap`, `eraseText`, `hideKeyboard` and `scrollUntilVisible` joined the IR and the editor kept offering
+ * completion as though they did not exist — a silence, which is the failure mode §6 exists to prevent.
+ */
+const MOBILE_APP_SIGNATURES: Record<keyof MobileApp, string> = {
+  tap: '(locator)',
+  doubleTap: '(locator)',
+  fill: '(locator, value)',
+  eraseText: '(locator, options?)',
+  hideKeyboard: '()',
+  longPress: '(locator, options?)',
+  swipe: "('up' | 'down' | 'left' | 'right', options?)",
+  scroll: "('up' | 'down' | 'left' | 'right', options?)",
+  scrollUntilVisible: '(locator, options?)',
+  drag: '(from, to)',
+  pinch: '(scale, options?)',
+  pressKey: "('back' | 'home' | 'enter' | …)",
+  back: '()',
+  waitFor: '(locator, options?)',
+  isVisible: '(locator, options?) → boolean',
+  screenshot: '(name?) → path',
+};
+
+const MOBILE_APP_METHODS: Completion[] = Object.entries(MOBILE_APP_SIGNATURES).map(
+  ([label, detail]) => ({ label, detail, type: 'method' }),
+);
 
 /** Completions for `mobileApp.` — the facade the generated test drives. */
 function methodCompletions(context: CompletionContext): CompletionResult | null {

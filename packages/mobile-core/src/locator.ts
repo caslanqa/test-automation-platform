@@ -9,9 +9,31 @@ import type { LocatorCandidate, MobileLocator, MobileNode, MobileTarget } from '
 /**
  * Depth-first search for the node matching `locator`'s set fields (all must match), honouring
  * `locator.index` — which selects among the matches rather than narrowing what counts as one.
+ *
+ * Stops at the wanted match rather than collecting every one of them. Building the full list first reads more
+ * simply and turns every lookup — `resolveTargetPoint` does one per `drag`/`pinch` endpoint — into a complete
+ * walk of a tree that can hold thousands of nodes, for a match that is usually the first hit.
+ * {@link countMatches} genuinely needs the whole list; this does not.
  */
 export function findNode(nodes: MobileNode[], locator: MobileLocator): MobileNode | undefined {
-  return matchingNodes(nodes, locator)[locator.index ?? 0];
+  const wanted = locator.index ?? 0;
+  let seen = -1;
+  const visit = (candidates: MobileNode[]): MobileNode | undefined => {
+    for (const node of candidates) {
+      if (nodeMatches(node, locator)) {
+        seen += 1;
+        if (seen === wanted) {
+          return node;
+        }
+      }
+      const inChildren = node.children?.length ? visit(node.children) : undefined;
+      if (inChildren) {
+        return inChildren;
+      }
+    }
+    return undefined;
+  };
+  return visit(nodes);
 }
 
 /** Every node matching `locator`, in depth-first order — the order `index` counts in. */
