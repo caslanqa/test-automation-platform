@@ -536,6 +536,10 @@ class MaestroInspectorDriver implements MobileInspectorDriver {
   async connect(options: ConnectOptions): Promise<DriverSession> {
     const progress = options.onProgress ?? ((): void => undefined);
     const release = await acquireDeviceLock(deviceLockKey(options.platform, options.device));
+    // Declared out here so a connect that fails AFTER creating it still removes it. Only a session's `close`
+    // did, and a connect that never returned a session therefore left an empty directory behind every time —
+    // a refused app id, a device that went away, a driver that would not start.
+    let outputDir: string | undefined;
     try {
       progress(
         options.device ? `acquiring ${options.device}` : `acquiring an ${options.platform} device`,
@@ -550,7 +554,7 @@ class MaestroInspectorDriver implements MobileInspectorDriver {
           await deviceUnavailableMessage('maestro', options.platform, options.device),
         );
       }
-      const outputDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pwtap-mobile-inspector-'));
+      outputDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pwtap-mobile-inspector-'));
       // Maestro has no install primitive of its own — install the build first (same helper the
       // plugin's own fixture uses) so `launchApp` below can find it.
       if (options.appSource) {
@@ -641,6 +645,9 @@ class MaestroInspectorDriver implements MobileInspectorDriver {
         }
       }
     } catch (error) {
+      if (outputDir) {
+        await fs.rm(outputDir, { recursive: true, force: true }).catch(() => undefined);
+      }
       release();
       throw error;
     }

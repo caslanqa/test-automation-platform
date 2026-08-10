@@ -21,8 +21,15 @@ import { fakeDriverMap, type FakeDriver } from './fakes/fakeDriver.js';
 const LOGIN_BUTTON = { x: 200, y: 230 };
 
 const running: InspectorServiceHandle[] = [];
+/** Temp projects the services were pointed at, removed with them — see {@link startService}. */
+const projects: string[] = [];
 after(async () => {
   await Promise.all(running.map(h => h.close()));
+  // Every service in this file gets a temp project and none of them were ever deleted, so running the suite
+  // measured its own history in temp directories. Removed after the services close, never before.
+  for (const dir of projects) {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 interface Service {
@@ -35,6 +42,7 @@ interface Service {
 
 async function startService(): Promise<Service> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pwtap-service-'));
+  projects.push(dir);
   const { map, driver } = fakeDriverMap();
   const handle = await startInspectorService({
     projectRoot: dir,
@@ -462,8 +470,11 @@ test('closing the service tears the launch down, including the driver session', 
   events.close();
 });
 
-test('a second inspector for the same project is refused with the first one’s URL', async () => {
+test('a second inspector for the same project is refused with the first one’s URL', async t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pwtap-lock-'));
+  // Removed even when an assertion fails: this file's temp projects were left behind on every run, and a
+  // suite run under a watcher measures that in hundreds of directories.
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const { map } = fakeDriverMap();
   const first = await startInspectorService({ projectRoot: dir, drivers: map });
   running.push(first);

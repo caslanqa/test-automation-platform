@@ -781,6 +781,8 @@ class AppiumInspectorDriver implements MobileInspectorDriver {
     const progress = options.onProgress ?? ((): void => undefined);
     const release = await acquireDeviceLock(deviceLockKey(options.platform, options.device));
     let server: AppiumServerHandle | undefined;
+    // Declared out here so the failure path below can remove it; only a session's `close` used to.
+    let outputDir: string | undefined;
     try {
       progress(
         options.device ? `acquiring ${options.device}` : `acquiring an ${options.platform} device`,
@@ -817,7 +819,7 @@ class AppiumInspectorDriver implements MobileInspectorDriver {
           options.platform === 'android' ? { appId: options.appId } : { bundleId: options.appId },
         );
       }
-      const outputDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pwtap-mobile-inspector-'));
+      outputDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pwtap-mobile-inspector-'));
       return new AppiumDriverSession(
         session,
         server,
@@ -832,6 +834,11 @@ class AppiumInspectorDriver implements MobileInspectorDriver {
       } catch (caught) {
         cleanupError = caught;
       } finally {
+        // Only a session's `close` removed this, so a connect that failed after creating it left an empty
+        // directory behind every time — a device that went away, a driver that would not start.
+        if (outputDir) {
+          await fs.rm(outputDir, { recursive: true, force: true }).catch(() => undefined);
+        }
         release();
       }
       if (cleanupError) {
