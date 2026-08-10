@@ -16,7 +16,10 @@ export const ACTION_DEFAULTS: {
   readonly waitForMs: number;
   readonly longPressMs: number;
   readonly swipeDistance: number;
+  readonly scrollUntilVisibleMs: number;
 } = {
+  /** How long `scrollUntilVisible` keeps looking before it fails, rather than scrolling forever. */
+  scrollUntilVisibleMs: 10_000,
   /** `isVisible` asks "is this here now?" to branch on, so it must not stall a test that expects `false`. */
   isVisibleMs: 2_000,
   /** `waitFor` is a wait, so it gets Playwright's own default expect timeout. */

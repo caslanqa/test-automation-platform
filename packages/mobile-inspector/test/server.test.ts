@@ -179,6 +179,57 @@ test('a wrong token is refused just like a missing one', async () => {
   assert.equal(response.status, 403);
 });
 
+test('the token is accepted as a header, so it never has to appear in a URL', async () => {
+  // How the window the CLI opens authenticates: Playwright sets this header on the browser context, which
+  // covers the navigation and every subresource, so the printed address carries no credential at all.
+  const service = await startService();
+
+  for (const url of ['/', '/frame/0']) {
+    const response = await fetch(`${service.base}${url}`, {
+      headers: { 'x-inspector-token': service.token },
+    });
+    assert.notEqual(response.status, 403, `${url} should accept the header`);
+    await response.body?.cancel();
+  }
+
+  const wrong = await fetch(service.base, {
+    headers: { 'x-inspector-token': '0'.repeat(service.token.length) },
+  });
+  assert.equal(wrong.status, 403, 'a wrong header token is still refused');
+});
+
+test('two token headers are refused rather than one of them being picked', async () => {
+  // Node folds duplicates into one comma-separated value. An ambiguous credential is not a credential, and
+  // accepting the first half would let a caller append a guess to a real one.
+  const service = await startService();
+
+  const response = await fetch(service.base, {
+    headers: { 'x-inspector-token': `${service.token}, ${service.token}` },
+  });
+
+  assert.equal(response.status, 403);
+});
+
+test('the single-instance lock holds no credential', async () => {
+  // It used to store the token so a second launch could print a ready-to-open URL — a live credential in a
+  // world-readable file under `node_modules`, for the lifetime of the session, to save one relaunch.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pwtap-lock-'));
+  const service = await startInspectorService({ projectRoot: dir, drivers: fakeDriverMap().map });
+  try {
+    const lock = fs.readFileSync(
+      path.join(dir, 'node_modules', '.cache', 'pwtap-inspector.lock.json'),
+      'utf8',
+    );
+
+    assert.deepEqual(Object.keys(JSON.parse(lock) as object).sort(), ['pid', 'port']);
+    assert.doesNotMatch(lock, /token/i);
+    assert.ok(!lock.includes(service.token), 'the token must not be on disk in any form');
+  } finally {
+    await service.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('a non-loopback Origin is refused even with a valid token', async () => {
   const service = await startService();
 
@@ -324,7 +375,7 @@ test('a reattached client starts its own command ordering, so a reload can still
   await connect(service);
   await first.waitFor('frame');
   await command(service, { type: 'tapAt', ...LOGIN_BUTTON, frameId: 0 });
-  await first.waitFor('timeline', t => t.actions.length === 1);
+  await first.waitFor('timeline', t => t.entries.length === 1);
   first.close();
   await new Promise(resolve => setTimeout(resolve, 50));
 
@@ -333,8 +384,8 @@ test('a reattached client starts its own command ordering, so a reload can still
   const response = await command(service, { type: 'tapAt', ...LOGIN_BUTTON, frameId: 0 }, 1);
 
   assert.equal(response.status, 202, 'a reloaded page must not have its commands refused');
-  const timeline = await second.waitFor('timeline', t => t.actions.length === 2);
-  assert.equal(timeline.actions.length, 2, 'the recording continues rather than stalling');
+  const timeline = await second.waitFor('timeline', t => t.entries.length === 2);
+  assert.equal(timeline.entries.length, 2, 'the recording continues rather than stalling');
   second.close();
 });
 
@@ -356,7 +407,7 @@ test('losing the event stream does NOT end the recording — reattaching resyncs
   await connect(service);
   await first.waitFor('frame');
   await command(service, { type: 'tapAt', ...LOGIN_BUTTON, frameId: 0 });
-  await first.waitFor('timeline', t => t.actions.length === 1);
+  await first.waitFor('timeline', t => t.entries.length === 1);
 
   // Exactly what pressing F5 does.
   first.close();
@@ -366,7 +417,7 @@ test('losing the event stream does NOT end the recording — reattaching resyncs
 
   assert.equal(service.driver.session?.closed, false, 'the device session must survive a reload');
   assert.equal((await second.waitFor('connected')).device.name, 'Pixel_7_API_34');
-  assert.equal((await second.waitFor('timeline')).actions.length, 1, 'the recording must survive');
+  assert.equal((await second.waitFor('timeline')).entries.length, 1, 'the recording must survive');
   assert.match((await second.waitFor('code')).source, /mobileApp\.tap/);
   assert.equal(
     second.messages.filter(m => m.type === 'connected').length,

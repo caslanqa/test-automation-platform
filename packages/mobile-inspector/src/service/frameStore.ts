@@ -19,6 +19,17 @@ import type { ScreenFrameMeta } from './protocol.js';
  */
 const RETAINED_FRAMES = 3;
 
+/**
+ * How many *step* frames a recording can keep beyond that window.
+ *
+ * The rolling window is right for a live viewport and useless for stepping back through what was recorded, so
+ * the frames the timeline points at are held separately. This is a real memory ceiling — a capture measures
+ * ~150 KB, so fifty is ~7 MB — and it is bounded rather than unbounded on purpose: a long session must not
+ * grow without limit (§11). Past it the OLDEST steps lose their frame and the UI says so when the image is
+ * requested; it does not pretend the step never had one.
+ */
+const RETAINED_STEP_FRAMES = 50;
+
 export interface StoredFrame {
   bytes: Buffer;
   contentType: string;
@@ -41,6 +52,8 @@ function contentTypeOf(bytes: Buffer): string {
 
 export class FrameStore {
   private readonly frames = new Map<number, StoredFrame>();
+  /** Frames a recorded step points at, held past the rolling window — see {@link retainOnly}. */
+  private readonly retained = new Map<number, StoredFrame>();
   private lastHash: string | undefined;
   private lastFrameId: number | undefined;
   /**
@@ -76,8 +89,30 @@ export class FrameStore {
     return { kind: 'new', meta };
   }
 
+  /**
+   * Keep exactly the frames a recording still refers to, on top of the rolling window.
+   *
+   * Driven by the timeline itself — whatever the current steps point at is kept, everything else is dropped —
+   * so undoing, deleting or clearing steps releases their frames without any caller having to remember to.
+   * Called with the ids from every `timeline` event; see `server.ts`.
+   */
+  retainOnly(frameIds: readonly number[]): void {
+    const wanted = new Set(frameIds.slice(-RETAINED_STEP_FRAMES));
+    for (const id of this.retained.keys()) {
+      if (!wanted.has(id)) {
+        this.retained.delete(id);
+      }
+    }
+    for (const id of wanted) {
+      const frame = this.retained.get(id) ?? this.frames.get(id);
+      if (frame) {
+        this.retained.set(id, frame);
+      }
+    }
+  }
+
   get(frameId: number): StoredFrame | undefined {
-    return this.frames.get(frameId);
+    return this.frames.get(frameId) ?? this.retained.get(frameId);
   }
 
   /** The frame a re-attaching client should render immediately (ADR-011), metadata included. */
@@ -86,6 +121,7 @@ export class FrameStore {
   }
 
   clear(): void {
+    this.retained.clear();
     this.frames.clear();
     this.lastHash = undefined;
     this.lastFrameId = undefined;

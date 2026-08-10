@@ -13,6 +13,7 @@ import type {
   ScreenFrameMeta,
   ServerMessage,
   TestFileEntry,
+  TimelineEntry,
 } from '../protocol';
 
 export interface LogEntry {
@@ -47,12 +48,20 @@ export interface InspectorState {
   drivers: DriverSummary[];
   devices: InspectorDevice[];
   apps: InstalledApp[];
-  connected: { driver: string; device: InspectorDevice; capabilities: DriverCapabilities } | null;
+  connected: {
+    driver: string;
+    device: InspectorDevice;
+    capabilities: DriverCapabilities;
+    warnings: string[];
+  } | null;
   connecting: boolean;
+  /** Which stage of a connect is running, so a long boot does not look like a hang. */
+  connectStage: string | null;
   /** Frame metadata only; the image itself is fetched from `/frame/<frameId>`. */
   frame: ScreenFrameMeta | null;
   hierarchy: MobileNode[];
-  timeline: MobileAction[];
+  /** The recorded steps, each with the frame it produced when one was captured. */
+  timeline: TimelineEntry[];
   /** Authoritative editor source and its server-side revision. */
   code: string;
   codeRevision: number;
@@ -79,6 +88,7 @@ const INITIAL_STATE: InspectorState = {
   apps: [],
   connected: null,
   connecting: false,
+  connectStage: null,
   frame: null,
   hierarchy: [],
   timeline: [],
@@ -200,22 +210,33 @@ function applyServerMessage(
       case 'apps':
         return { ...s, apps: message.apps };
       case 'connecting':
-        return { ...s, connecting: true };
+        return { ...s, connecting: true, connectStage: null };
+      case 'connectProgress':
+        return { ...s, connectStage: message.stage };
       case 'connected':
         return {
           ...s,
           connecting: false,
+          connectStage: null,
           connected: {
             driver: message.driver,
             device: message.device,
             capabilities: message.capabilities,
+            warnings: message.warnings ?? [],
           },
         };
       case 'disconnected':
         // The device is gone; the RECORDING is not. The draft and timeline survive on the server (they
         // describe work the user did), and `run` disconnects before it spawns Playwright — clearing them
         // here is what used to make pressing Run empty the editor.
-        return { ...s, connecting: false, connected: null, frame: null, hierarchy: [] };
+        return {
+          ...s,
+          connecting: false,
+          connectStage: null,
+          connected: null,
+          frame: null,
+          hierarchy: [],
+        };
       case 'frame':
         return { ...s, frame: message.frame };
       case 'frameUnchanged':
@@ -242,7 +263,7 @@ function applyServerMessage(
               },
         };
       case 'timeline':
-        return { ...s, timeline: message.actions };
+        return { ...s, timeline: message.entries };
       case 'code':
         // Only accept source newer than what we hold (guards against a stale echo).
         return message.revision >= s.codeRevision

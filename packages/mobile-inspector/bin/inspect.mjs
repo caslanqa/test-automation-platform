@@ -44,13 +44,24 @@ try {
   process.exit(1);
 }
 
-console.log(`\n  Mobile Inspector for ${projectRoot}\n\n  ${service.url}\n`);
+// The origin, not `service.url`: the launch token is a live credential, and printing it puts it in terminal
+// scrollback, in screenshots and in anything that records either. The window below is given it as a header.
+console.log(`\n  Mobile Inspector for ${projectRoot}\n\n  ${service.origin}\n`);
 
 // `onLaunched` hands over a closable window the moment the browser exists, before it is navigated: a
 // signal inside that window used to leave an orphaned Chromium because there was nothing to close yet.
 window = await openInspectorWindow(
-  service.url,
-  reason => console.warn(`  Could not open a browser window: ${reason}\n`),
+  service.origin,
+  service.token,
+  reason => {
+    console.warn(`  Could not open a browser window: ${reason}\n`);
+    // A browser this process did not launch cannot be given a header, so the token has to travel in the URL.
+    // This is the only place it is printed, and it says what it is.
+    console.warn(
+      `  Open this URL yourself — it contains this launch's access token, so treat it like a password:\n\n` +
+        `  ${service.url}\n`,
+    );
+  },
   opened => {
     window = opened;
   },
@@ -61,5 +72,5 @@ if (window) {
   await window.closed;
   await stop();
 } else {
-  console.log('  Open the URL above to use the inspector. Press Ctrl-C to stop.\n');
+  console.log('  Press Ctrl-C to stop.\n');
 }

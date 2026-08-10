@@ -1,0 +1,13 @@
+{
+  // Editor + `npm run typecheck:tests` project for this package's tests — see
+  // packages/mobile-inspector/test/tsconfig.json for why tests live outside the package build.
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "types": ["node"]
+  },
+  "include": ["**/*.ts"]
+}

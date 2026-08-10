@@ -5,16 +5,19 @@
  * Two recorders on one project would fight over the same device lock and produce two conflicting drafts of
  * the same test, so a second launch finds the first and points the user at it instead of starting a rival.
  *
- * The lock is a small JSON file holding the live service's port, token and pid. A stale one — the process
- * is gone, which is what a crash leaves behind — is reclaimed rather than treated as a conflict, because
- * refusing to start after a crash is worse than the race it would prevent.
+ * The lock is a small JSON file holding the live service's port and pid — and deliberately **not** its token.
+ * It used to store one so a second launch could quote a ready-to-open URL, which meant a live credential sat
+ * in a world-readable file under `node_modules` for the lifetime of the session, to save the user a relaunch.
+ * A port and a pid are enough to say "that one is running, use it or stop it".
+ *
+ * A stale lock — the process is gone, which is what a crash leaves behind — is reclaimed rather than treated
+ * as a conflict, because refusing to start after a crash is worse than the race it would prevent.
  */
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
 export interface LockInfo {
   port: number;
-  token: string;
   pid: number;
 }
 
@@ -37,11 +40,7 @@ function isAlive(pid: number): boolean {
 export async function readLock(projectRoot: string): Promise<LockInfo | undefined> {
   try {
     const raw = JSON.parse(await fs.readFile(lockPath(projectRoot), 'utf8')) as Partial<LockInfo>;
-    if (
-      typeof raw.port !== 'number' ||
-      typeof raw.token !== 'string' ||
-      typeof raw.pid !== 'number'
-    ) {
+    if (typeof raw.port !== 'number' || typeof raw.pid !== 'number') {
       return undefined;
     }
     return isAlive(raw.pid) ? (raw as LockInfo) : undefined;

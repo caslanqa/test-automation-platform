@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import type { ClientMessage, MobileNode, ScreenFrameMeta } from '../protocol';
 
@@ -11,13 +11,25 @@ interface DeviceViewportProps {
   onContextMenu: (anchor: { x: number; y: number }) => void;
   /** Identity of the tree selection, re-resolved here each render so the box tracks the live tree. */
   selectedKey: string | null;
+  /**
+   * Whether a plain interaction is written down as well as performed. Held modifier inverts it, so either
+   * mode can do the other thing for one gesture without leaving the mode.
+   */
+  recordMode: boolean;
+  /**
+   * A past screen to show instead of the live one, when the user is walking the timeline.
+   *
+   * Read-only while set, deliberately: the hierarchy and the device have moved on, so a click's coordinates
+   * would be translated against a screen that is no longer there and land on whatever now occupies that spot.
+   */
+  pinned: { frameId: number; label: string } | null;
 }
 
 /**
- * Renders the latest device screenshot. Left-click records a tap; right-click asks the main process
- * to hit-test the point and returns ranked locator candidates (surfaced by the parent as a context
- * menu). Click coordinates are converted from on-screen CSS pixels to the driver's interaction
- * coordinate space.
+ * Renders the latest device screenshot. Left-click drives the device — and records the interaction when
+ * {@link recordsThisGesture} says so; right-click asks the service to hit-test the point and returns ranked
+ * locator candidates (surfaced by the parent as a context menu). Click coordinates are converted from
+ * on-screen CSS pixels to the driver's interaction coordinate space.
  *
  * The frame's on-screen box is computed explicitly in JS (via `ResizeObserver`) rather than relying
  * on CSS `aspect-ratio` inside a flex container: a flex item's `aspect-ratio` only resolves reliably
@@ -36,6 +48,8 @@ export function DeviceViewport({
   send,
   onContextMenu,
   selectedKey,
+  recordMode,
+  pinned,
 }: DeviceViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
@@ -46,6 +60,21 @@ export function DeviceViewport({
   } | null>(null);
   const [hoverNode, setHoverNode] = useState<MobileNode | null>(null);
   const [renderSize, setRenderSize] = useState<{ width: number; height: number } | null>(null);
+  /** A retained step frame can age out; the request then 404s and the panel has to say why it is blank. */
+  const [pinnedMissing, setPinnedMissing] = useState(false);
+  useEffect(() => setPinnedMissing(false), [pinned?.frameId]);
+  /** Latest pointer position and the animation frame that will consume it — see `onMouseMove`. */
+  const pendingHover = useRef<{ x: number; y: number } | null>(null);
+  const hoverFrame = useRef<number | null>(null);
+
+  useEffect(
+    () => () => {
+      if (hoverFrame.current !== null) {
+        cancelAnimationFrame(hoverFrame.current);
+      }
+    },
+    [],
+  );
 
   // Recompute the rendered frame box whenever the container resizes or a new frame changes the
   // device's native aspect ratio (e.g. orientation change).
@@ -110,10 +139,11 @@ export function DeviceViewport({
     }
     const dx = event.clientX - start.clientX;
     const dy = event.clientY - start.clientY;
+    const record = recordsThisGesture(event, recordMode);
     if (Math.max(Math.abs(dx), Math.abs(dy)) < 16) {
       const point = toDeviceCoords(event);
       if (point) {
-        send({ type: 'tapAt', x: point.x, y: point.y, frameId: frame.frameId });
+        send({ type: 'tapAt', x: point.x, y: point.y, frameId: frame.frameId, record });
       }
       return;
     }
@@ -125,7 +155,11 @@ export function DeviceViewport({
     const rect = event.currentTarget.getBoundingClientRect();
     const travelled = horizontal ? Math.abs(dx) / rect.width : Math.abs(dy) / rect.height;
     const distance = Math.min(1, Math.max(0.05, Number(travelled.toFixed(2))));
-    send({ type: 'perform', action: { kind: 'swipe', direction, options: { distance } } });
+    send({
+      type: 'perform',
+      action: { kind: 'swipe', direction, options: { distance } },
+      record,
+    });
   }
 
   function onPointerCancel(event: React.PointerEvent<HTMLImageElement>): void {
@@ -143,11 +177,33 @@ export function DeviceViewport({
     }
   }
 
+  /**
+   * Hover highlight, at most one hit-test per animation frame (ADR-006).
+   *
+   * A pointer produces mousemove events far faster than the screen repaints, and each one walked the whole
+   * hierarchy — hundreds of nodes on a native screen — and then set state, re-rendering the viewport. On a
+   * deep tree that is enough to make the panel feel like it is dragging behind the mouse. Coalescing to a
+   * frame does the work once per repaint, and comparing node identity means moving *within* an element
+   * costs nothing at all.
+   */
   function onMouseMove(event: React.MouseEvent<HTMLImageElement>): void {
-    const p = toDeviceCoords(event);
-    if (p) {
-      setHoverNode(findSmallestNodeAt(hierarchy, p.x, p.y));
+    const point = toDeviceCoords(event);
+    if (!point) {
+      return;
     }
+    pendingHover.current = point;
+    if (hoverFrame.current !== null) {
+      return;
+    }
+    hoverFrame.current = requestAnimationFrame(() => {
+      hoverFrame.current = null;
+      const latest = pendingHover.current;
+      if (!latest) {
+        return;
+      }
+      const node = findSmallestNodeAt(hierarchy, latest.x, latest.y);
+      setHoverNode(previous => (previous?.key === node?.key ? previous : node));
+    });
   }
 
   const selectedNode = selectedKey ? findByKey(hierarchy, selectedKey) : undefined;
@@ -160,6 +216,13 @@ export function DeviceViewport({
 
   return (
     <div className="device-viewport" ref={containerRef}>
+      {pinned && (
+        <div className="viewport-pinned" role="status">
+          {pinnedMissing
+            ? `${pinned.label}: its screen is no longer kept`
+            : `showing ${pinned.label} — read-only`}
+        </div>
+      )}
       {frame && renderSize ? (
         <div
           className="device-viewport-frame"
@@ -168,17 +231,18 @@ export function DeviceViewport({
           <img
             ref={imgRef}
             // The bytes come from the service; the browser decodes off-thread and caches by frame id.
-            src={`/frame/${frame.frameId}`}
-            alt="device screen"
-            onPointerDown={onPointerDown}
-            onPointerUp={onPointerUp}
-            onPointerCancel={onPointerCancel}
-            onContextMenu={onContext}
-            onMouseMove={onMouseMove}
+            src={`/frame/${pinned?.frameId ?? frame.frameId}`}
+            alt={pinned ? `device screen after ${pinned.label}` : 'device screen'}
+            onPointerDown={pinned ? undefined : onPointerDown}
+            onPointerUp={pinned ? undefined : onPointerUp}
+            onPointerCancel={pinned ? undefined : onPointerCancel}
+            onContextMenu={pinned ? undefined : onContext}
+            onMouseMove={pinned ? undefined : onMouseMove}
             onMouseLeave={() => setHoverNode(null)}
+            onError={() => setPinnedMissing(pinned !== null)}
             draggable={false}
           />
-          {visibleHighlight && (
+          {visibleHighlight && !pinned && (
             <div
               className={`hover-overlay${selectedNode?.bounds ? ' selected' : ''}`}
               style={{
@@ -197,6 +261,22 @@ export function DeviceViewport({
       )}
     </div>
   );
+}
+
+/**
+ * Whether this gesture is written down as well as performed.
+ *
+ * Recording every click made the recorder unusable for anything but a journey that starts on the screen you
+ * want: getting *to* the interesting screen put every step of the trip into the test, to be deleted by hand
+ * afterwards. So the viewport drives the app by default and records on an explicit modifier — and holding the
+ * modifier while Record mode is on does the reverse, so one throwaway tap does not need the mode toggled
+ * twice. `metaKey` on macOS, `ctrlKey` elsewhere; both are accepted on both.
+ */
+function recordsThisGesture(
+  event: { metaKey: boolean; ctrlKey: boolean },
+  recordMode: boolean,
+): boolean {
+  return recordMode !== (event.metaKey || event.ctrlKey);
 }
 
 function intersectBounds(

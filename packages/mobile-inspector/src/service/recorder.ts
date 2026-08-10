@@ -3,18 +3,31 @@
  * redo stack away on any non-append edit, so removing one step silently made everything you had just undone
  * unrecoverable. Pure in-memory — no device, no files (§6).
  *
+ * Steps carry a stable id (§6), so a caller can come back to one later — to stamp the frame it produced, or
+ * to retract it after the driver refused it — without depending on its position, which the user can change
+ * while the device is still answering.
+ *
  * @example const recorder = new Recorder(); recorder.append({ kind: 'back' }); recorder.undo();
  */
 import type { MobileAction } from '@pwtap/mobile-core';
 
+import type { TimelineEntry } from './protocol.js';
+
 export class Recorder {
-  private log: MobileAction[] = [];
+  private log: TimelineEntry[] = [];
   /** How many entries of `log` are live. Undo moves it back, redo forward; nothing is discarded. */
   private cursor = 0;
+  /** Never reset, not even by {@link clear}: a stale id must not come to mean a different step. */
+  private nextId = 1;
 
-  /** The actions that make up the current recording. */
-  get actions(): MobileAction[] {
+  /** The steps that make up the current recording. */
+  get entries(): TimelineEntry[] {
     return this.log.slice(0, this.cursor);
+  }
+
+  /** The actions those steps hold, in order — what codegen consumes. */
+  get actions(): MobileAction[] {
+    return this.entries.map(entry => entry.action);
   }
 
   get canUndo(): boolean {
@@ -26,9 +39,22 @@ export class Recorder {
   }
 
   /** Record a new action, dropping anything that was undone — a new branch replaces the abandoned one. */
-  append(action: MobileAction): void {
-    this.log = [...this.actions, action];
+  append(action: MobileAction): TimelineEntry {
+    const entry: TimelineEntry = { id: this.nextId++, action };
+    this.log = [...this.entries, entry];
     this.cursor = this.log.length;
+    return entry;
+  }
+
+  /**
+   * Remember which frame the screen showed once step `id` had run. Ignored for a step that is no longer
+   * there, because the device answers after the user may already have undone it.
+   */
+  stamp(id: number, frameId: number): void {
+    const entry = this.entries.find(candidate => candidate.id === id);
+    if (entry) {
+      entry.frameId = frameId;
+    }
   }
 
   undo(): MobileAction | undefined {
@@ -36,16 +62,16 @@ export class Recorder {
       return undefined;
     }
     this.cursor -= 1;
-    return this.log[this.cursor];
+    return this.log[this.cursor].action;
   }
 
   redo(): MobileAction | undefined {
     if (!this.canRedo) {
       return undefined;
     }
-    const action = this.log[this.cursor];
+    const entry = this.log[this.cursor];
     this.cursor += 1;
-    return action;
+    return entry.action;
   }
 
   /**
@@ -54,16 +80,21 @@ export class Recorder {
    * second or two the device took to answer, and removing "the last one" would then take the wrong step.
    */
   retract(action: MobileAction): boolean {
-    const index = this.actions.lastIndexOf(action);
-    return index === -1 ? false : this.remove(index);
+    const live = this.entries;
+    for (let index = live.length - 1; index >= 0; index -= 1) {
+      if (live[index].action === action) {
+        return this.remove(index);
+      }
+    }
+    return false;
   }
 
   /**
-   * Remove one live action. This rewrites the log, so anything undone past this point is abandoned — the
+   * Remove one live step. This rewrites the log, so anything undone past this point is abandoned — the
    * alternative is a redo that reinserts a step around a hole the user deliberately made.
    */
   remove(index: number): boolean {
-    const live = this.actions;
+    const live = this.entries;
     if (index < 0 || index >= live.length) {
       return false;
     }

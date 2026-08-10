@@ -13,11 +13,14 @@ import { ACTION_DEFAULTS } from '../src/defaults.js';
 import type { DriverCapabilities, DriverSession } from '../src/types.js';
 
 test('a default exists for every option an adapter could otherwise invent', () => {
-  // The audit found four such literals across the two adapters; a fifth appearing without a home here is
-  // how the drift starts again.
+  // The audit found four such literals across the two adapters; a further one appearing without a home here
+  // is how the drift starts again. `scrollUntilVisibleMs` bounds the swipe loop the Appium adapter has to run
+  // because it has no primitive for it — exactly the kind of number that would otherwise be a literal inside
+  // one adapter and a different literal inside the other.
   assert.deepEqual(Object.keys(ACTION_DEFAULTS).sort(), [
     'isVisibleMs',
     'longPressMs',
+    'scrollUntilVisibleMs',
     'swipeDistance',
     'waitForMs',
   ]);

@@ -146,10 +146,51 @@ test('connect requires a known platform and an options object', () => {
   assert.equal(parseClientMessage({ type: 'connect', options: { platform: 'ios' } }), null);
 });
 
+test('every connect option is typed, not just the platform', () => {
+  const connect = (options: Record<string, unknown>): unknown =>
+    parseClientMessage({ type: 'connect', driver: 'appium', options });
+
+  assert.ok(
+    connect({ platform: 'android', device: 'Pixel_7', appId: 'com.example', headless: false }) !==
+      null,
+  );
+  // Once `platform` checked out, the whole object used to be forwarded on trust — so a non-string device
+  // reached the device resolver, which is a shell-adjacent code path (ADR-010).
+  assert.equal(connect({ platform: 'android', device: 42 }), null);
+  assert.equal(connect({ platform: 'android', appId: {} }), null);
+  assert.equal(connect({ platform: 'android', appSource: ['./app.apk'] }), null);
+  assert.equal(connect({ platform: 'android', headless: 'yes' }), null);
+});
+
+test('a connect payload cannot smuggle in the progress callback the service injects', () => {
+  const parsed = parseClientMessage({
+    type: 'connect',
+    driver: 'appium',
+    options: { platform: 'android', onProgress: 'not a function' },
+  });
+
+  assert.ok(parsed !== null, 'an unknown extra field is dropped, not a reason to refuse');
+  assert.equal(
+    (parsed as unknown as { options: Record<string, unknown> }).options.onProgress,
+    undefined,
+    'the adapter calls onProgress, so a client-supplied value would be called as one',
+  );
+});
+
 test('pointer messages require numeric coordinates', () => {
   assert.ok(parseClientMessage({ type: 'tapAt', x: 1, y: 2, frameId: 0 }) !== null);
   assert.equal(parseClientMessage({ type: 'tapAt', x: '1', y: 2, frameId: 0 }), null);
   assert.equal(parseClientMessage({ type: 'inspectAt', x: 1, y: 2 }), null);
+});
+
+test('the record flag is optional and must be a boolean when present', () => {
+  // It decides whether an interaction becomes a test step, so a truthy string must not pass for `true`.
+  assert.ok(parseClientMessage({ type: 'tapAt', x: 1, y: 2, frameId: 0, record: false }) !== null);
+  assert.equal(parseClientMessage({ type: 'tapAt', x: 1, y: 2, frameId: 0, record: 'no' }), null);
+  assert.ok(
+    parseClientMessage({ type: 'perform', action: { kind: 'back' }, record: true }) !== null,
+  );
+  assert.equal(parseClientMessage({ type: 'perform', action: { kind: 'back' }, record: 1 }), null);
 });
 
 test('save requires a mode, a path, a title and a source', () => {
@@ -164,4 +205,46 @@ test('save requires a mode, a path, a title and a source', () => {
   assert.equal(parseClientMessage({ ...valid, mode: 'overwrite' }), null);
   assert.equal(parseClientMessage({ ...valid, targetPath: 42 }), null);
   assert.equal(parseClientMessage({ ...valid, source: undefined }), null);
+});
+
+test('the actions added with the IR extension validate their own fields', () => {
+  accepts({ kind: 'doubleTap', locator: { text: 'Row' } }, 'a double tap');
+  accepts({ kind: 'hideKeyboard' }, 'hiding the keyboard');
+  accepts({ kind: 'eraseText', locator: { text: 'Email' } }, 'erasing a whole field');
+  accepts(
+    { kind: 'eraseText', locator: { text: 'Email' }, options: { characters: 3 } },
+    'a partial erase',
+  );
+  accepts({ kind: 'scrollUntilVisible', locator: { text: 'Row 40' } }, 'scrolling into view');
+  accepts(
+    { kind: 'scrollUntilVisible', locator: { text: 'Row 40' }, options: { direction: 'up' } },
+    'scrolling up into view',
+  );
+
+  rejects({ kind: 'doubleTap' }, 'a double tap with no locator');
+  rejects({ kind: 'eraseText' }, 'an erase with no field');
+  // A count of keystrokes: a fraction or a negative would reach `String.repeat` in the adapter.
+  rejects(
+    { kind: 'eraseText', locator: { text: 'Email' }, options: { characters: 1.5 } },
+    'a fractional erase',
+  );
+  rejects(
+    { kind: 'eraseText', locator: { text: 'Email' }, options: { characters: 0 } },
+    'erasing nothing',
+  );
+  rejects(
+    { kind: 'scrollUntilVisible', locator: { text: 'Row' }, options: { direction: 'sideways' } },
+    'a bogus direction',
+  );
+});
+
+test('an ordinal must be a real position in the match list', () => {
+  accepts({ kind: 'tap', locator: { text: 'Delete', index: 0 } }, 'the first match');
+  accepts({ kind: 'tap', locator: { text: 'Delete', index: 7 } }, 'a later match');
+
+  rejects({ kind: 'tap', locator: { text: 'Delete', index: -1 } }, 'a negative ordinal');
+  rejects({ kind: 'tap', locator: { text: 'Delete', index: 1.5 } }, 'a fractional ordinal');
+  rejects({ kind: 'tap', locator: { text: 'Delete', index: '1' } }, 'a stringly-typed ordinal');
+  // An ordinal is not a strategy: there is nothing to count without one.
+  rejects({ kind: 'tap', locator: { index: 1 } }, 'an ordinal with nothing to index');
 });

@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { readImageSize } from '../src/imageSize.js';
+import { orientCoordinateSpace, readImageSize } from '../src/imageSize.js';
 
 /** Minimal valid PNG prefix: 8-byte signature + an IHDR chunk carrying width/height. */
 function pngHeader(width: number, height: number): Buffer {
@@ -62,4 +62,22 @@ test('returns undefined for a buffer that is neither PNG nor JPEG', () => {
 
 test('returns undefined for a truncated PNG rather than reading past the buffer', () => {
   assert.equal(readImageSize(pngHeader(10, 10).subarray(0, 20)), undefined);
+});
+
+test('the coordinate space is transposed when the image says the screen rotated', () => {
+  // A driver reads the interaction coordinate space once — it costs a device round trip — while the screen
+  // can rotate underneath it. Reported unrotated, every click lands transposed.
+  assert.deepEqual(
+    orientCoordinateSpace({ width: 1792, height: 828 }, { width: 828, height: 1792 }),
+    { width: 1792, height: 828 },
+  );
+});
+
+test('a coordinate space that already agrees with the image is left alone', () => {
+  const portrait = { width: 828, height: 1792 };
+  assert.equal(orientCoordinateSpace({ width: 414, height: 896 }, portrait), portrait);
+});
+
+test('a driver that could not determine a coordinate space gets no answer invented for it', () => {
+  assert.equal(orientCoordinateSpace({ width: 828, height: 1792 }, undefined), undefined);
 });

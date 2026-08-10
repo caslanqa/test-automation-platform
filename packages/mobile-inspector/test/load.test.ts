@@ -50,7 +50,7 @@ function harness(): {
     send: message => session.dispatch(message),
     timeline: () => {
       const last = [...events].reverse().find(e => e.type === 'timeline');
-      return last?.type === 'timeline' ? last.actions.length : -1;
+      return last?.type === 'timeline' ? last.entries.length : -1;
     },
   };
 }

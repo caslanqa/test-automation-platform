@@ -28,8 +28,10 @@ import type {
 } from '@pwtap/mobile-core';
 import {
   ACTION_DEFAULTS,
+  DeviceUnavailableError,
   deviceUnavailableMessage,
   discoverMobileDevices,
+  orientCoordinateSpace,
   readImageSize,
 } from '@pwtap/mobile-core';
 import type { DiscoveredDevice, MobilePlatform } from '@pwtap/platform';
@@ -63,10 +65,14 @@ const CAPABILITIES: DriverCapabilities = {
   liveFrames: true,
   gestures: {
     tap: true,
+    doubleTap: true,
     fill: true,
+    eraseText: true,
+    hideKeyboard: true,
     longPress: true,
     swipe: true,
     scroll: true,
+    scrollUntilVisible: true,
     drag: true,
     pinch: true,
     pressKey: true,
@@ -84,6 +90,12 @@ const CAPABILITIES: DriverCapabilities = {
 
 /** A selector accepted by WebdriverIO's `$` command. */
 type AppiumSelector = Parameters<WebdriverIO.Browser['$']>[0];
+
+/** The resolved element WebdriverIO hands back, without naming one of its internal types. */
+type AppiumElement = Awaited<ReturnType<WebdriverIO.Browser['$']>>;
+
+/** BACK_SPACE in the W3C key set — how a partial erase is expressed when a driver can only clear a field. */
+const BACKSPACE = '\uE003';
 
 /** Gap between visibility polls — see {@link AppiumDriverSession.isVisible}. */
 const POLL_INTERVAL_MS = 250;
@@ -248,12 +260,28 @@ function toInspectorDevice(device: DiscoveredDevice, booted: boolean): Inspector
 }
 
 /**
- * WebdriverIO's `Element.elementId` is typed `Promise<string>` on the chainable proto and `string`
- * on the resolved element depending on which overload TS picks up — accept either shape structurally
- * and `await` defensively so this adapter works regardless of which type TS infers at a call site.
+ * The raw element id a `mobile:` gesture needs — or a loud failure.
+ *
+ * WebdriverIO's `Element.elementId` is typed `Promise<string>` on the chainable proto and `string` on the
+ * resolved element depending on which overload TS picks up, so it is awaited defensively either way. The
+ * check matters more than the typing: `$()` is lazy, so a locator that matches nothing yields an element
+ * whose `elementId` is `undefined`, and the commands that go through here hand that id to `execute()` rather
+ * than calling a method on the element. `click()`/`setValue()` fail with "element wasn't found"; a gesture
+ * given `elementId: undefined` was **reported as success** — found on an iOS simulator, where `doubleTap` on a
+ * locator that matched nothing came back `ok: true` in 545 ms. Every `mobile:` gesture routes through here
+ * (doubleTap, longPress, pinch, scroll-within, drag), so one check covers all of them.
  */
-async function elementIdOf(el: { elementId: string | Promise<string> }): Promise<string> {
-  return el.elementId;
+async function elementIdOf(el: {
+  elementId: string | Promise<string>;
+  selector?: unknown;
+}): Promise<string> {
+  const elementId = await el.elementId;
+  if (!elementId) {
+    throw new Error(
+      `[appium-inspector] no element matched ${JSON.stringify(String(el.selector ?? 'the locator'))}`,
+    );
+  }
+  return elementId;
 }
 
 class AppiumDriverSession implements DriverSession {
@@ -266,6 +294,8 @@ class AppiumDriverSession implements DriverSession {
   private readonly server: AppiumServerHandle;
   readonly device: InspectorDevice;
   private readonly outputDir: string;
+  /** Interaction coordinate space, read once and reconciled with each frame's orientation. */
+  private windowSize: { width: number; height: number } | undefined;
 
   constructor(
     session: WebdriverIO.Browser,
@@ -290,19 +320,33 @@ class AppiumDriverSession implements DriverSession {
     return capabilitiesFor(this.platform);
   }
 
+  /**
+   * The interaction coordinate space, read once.
+   *
+   * `getWindowSize()` is a WebDriver round trip, and the inspector captures on every action and every idle
+   * poll — asking again per frame bought a number that only changes on rotation, which
+   * {@link orientCoordinateSpace} resolves from the image itself.
+   */
+  private async coordinateSpace(): Promise<{ width: number; height: number }> {
+    this.windowSize ??= await this.session.getWindowSize();
+    return this.windowSize;
+  }
+
   async captureScreen(): Promise<ScreenFrame> {
-    const filePath = path.join(this.outputDir, `inspector-frame-${this.frameCounter}.png`);
-    await this.session.saveScreenshot(filePath);
-    const buf = await fs.readFile(filePath);
-    const size = readImageSize(buf) ?? { width: 0, height: 0 };
-    const coordinateSize = await this.session.getWindowSize();
+    // `takeScreenshot()` already returns base64. `saveScreenshot` + `readFile` wrote a PNG per frame into
+    // a temp directory nothing ever emptied (hundreds of files in a ten-minute session, against a §11
+    // budget of three) to arrive at the same string.
+    const imageBase64 = await this.session.takeScreenshot();
+    // ponytail: the decode is only here to read the PNG header — `ScreenFrame` carries base64 by contract.
+    const size = readImageSize(Buffer.from(imageBase64, 'base64')) ?? { width: 0, height: 0 };
+    const coordinateSize = orientCoordinateSpace(size, await this.coordinateSpace());
     return {
       frameId: this.frameCounter++,
-      imageBase64: buf.toString('base64'),
+      imageBase64,
       width: size.width,
       height: size.height,
-      coordinateWidth: coordinateSize.width,
-      coordinateHeight: coordinateSize.height,
+      coordinateWidth: coordinateSize?.width,
+      coordinateHeight: coordinateSize?.height,
       orientation: size.width > size.height ? 'landscape' : 'portrait',
       capturedAt: Date.now(),
     };
@@ -326,12 +370,52 @@ class AppiumDriverSession implements DriverSession {
     }
   }
 
+  /**
+   * The element a locator addresses, honouring `locator.index`.
+   *
+   * Every element lookup goes through here so the ordinal is not something each call site can forget: `index`
+   * selects among the matches (WebdriverIO's `$$` returns them in document order, which is the order the
+   * locator engine counts in), and an index past the end fails by saying how many matched rather than
+   * throwing `undefined is not an object` from inside the driver.
+   */
+  private async element(locator: MobileLocator): Promise<AppiumElement> {
+    const selector = toAppiumSelector(locator, this.platform);
+    if (locator.index === undefined) {
+      return this.session.$(selector);
+    }
+    const matches = await this.session.$$(selector);
+    const match = matches[locator.index];
+    if (!match) {
+      throw new Error(
+        `[appium-inspector] index ${locator.index} is out of range — ${matches.length} element(s) match ` +
+          `${JSON.stringify(selector)}`,
+      );
+    }
+    return match;
+  }
+
+  /**
+   * Send `count` backspaces to the focused field, as explicit key down/up pairs.
+   *
+   * `keys(''.repeat(n))` is the obvious form and it works on Android and fails on iOS: WebDriverAgent
+   * answers `Key Down action '' must have a closing Key Up successor`, because it reads the string as a
+   * W3C actions sequence rather than as text. Building the pairs explicitly is what both platforms accept, so
+   * the partial erase stays expressible instead of becoming an Android-only option (§5).
+   */
+  private async pressBackspaces(count: number): Promise<void> {
+    let keys = this.session.action('key');
+    for (let pressed = 0; pressed < count; pressed += 1) {
+      keys = keys.down(BACKSPACE).up(BACKSPACE);
+    }
+    await keys.perform();
+  }
+
   /** Resolve a {@link MobileTarget} to `{ x, y }` — a locator via its element rect, or a raw point. */
   private async resolvePoint(target: MobileTarget): Promise<{ x: number; y: number }> {
     if ('x' in target && 'y' in target) {
       return target;
     }
-    const element = await this.session.$(toAppiumSelector(target, this.platform));
+    const element = await this.element(target);
     const rect = await this.session.getElementRect(await elementIdOf(element));
     return { x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) };
   }
@@ -358,7 +442,34 @@ class AppiumDriverSession implements DriverSession {
         if (action.locator.point) {
           return this.tapPoint(action.locator.point.x, action.locator.point.y);
         }
-        return (await this.session.$(toAppiumSelector(action.locator, this.platform))).click();
+        return (await this.element(action.locator)).click();
+      case 'doubleTap': {
+        const elementId = await elementIdOf(await this.element(action.locator));
+        return this.platform === 'android'
+          ? this.session.execute('mobile: doubleClickGesture', { elementId })
+          : this.session.execute('mobile: doubleTap', { elementId });
+      }
+      case 'eraseText': {
+        const element = await this.element(action.locator);
+        const characters = action.options?.characters;
+        if (characters === undefined) {
+          return element.clearValue();
+        }
+        // `clearValue` empties the field, so a partial erase is keystrokes instead — focus first, since keys
+        // go to whatever has focus rather than to an element.
+        await element.click();
+        return this.pressBackspaces(characters);
+      }
+      case 'hideKeyboard':
+        // The `mobile:` extension rather than WebdriverIO's `hideKeyboard()`: both UiAutomator2 and XCUITest
+        // implement it, and it is the one form that does not need per-platform strategy arguments.
+        return this.session.execute('mobile: hideKeyboard');
+      case 'scrollUntilVisible':
+        return this.scrollUntilVisible(
+          action.locator,
+          action.options?.direction ?? 'down',
+          action.options?.timeoutMs ?? ACTION_DEFAULTS.scrollUntilVisibleMs,
+        );
       case 'fill':
         if (action.locator.point) {
           // No element to call `setValue` on for a bare point — tap to focus whatever is there,
@@ -367,9 +478,7 @@ class AppiumDriverSession implements DriverSession {
           await this.tapPoint(action.locator.point.x, action.locator.point.y);
           return this.session.keys(action.value);
         }
-        return (await this.session.$(toAppiumSelector(action.locator, this.platform))).setValue(
-          action.value,
-        );
+        return (await this.element(action.locator)).setValue(action.value);
       case 'longPress': {
         const durationMs = action.options?.durationMs ?? ACTION_DEFAULTS.longPressMs;
         if (action.locator.point) {
@@ -378,7 +487,7 @@ class AppiumDriverSession implements DriverSession {
             ? this.session.execute('mobile: longClickGesture', { x, y, duration: durationMs })
             : this.session.execute('mobile: touchAndHold', { x, y, duration: durationMs / 1000 });
         }
-        const element = await this.session.$(toAppiumSelector(action.locator, this.platform));
+        const element = await this.element(action.locator);
         const elementId = await elementIdOf(element);
         return this.platform === 'android'
           ? this.session.execute('mobile: longClickGesture', {
@@ -426,16 +535,14 @@ class AppiumDriverSession implements DriverSession {
         }
         return this.session.pressKeyCode(ANDROID_KEYCODES.back);
       case 'waitFor':
-        return (
-          await this.session.$(toAppiumSelector(action.locator, this.platform))
-        ).waitForDisplayed({
+        return (await this.element(action.locator)).waitForDisplayed({
           timeout: action.options?.timeoutMs ?? ACTION_DEFAULTS.waitForMs,
         });
       case 'isVisible':
         return this.isVisible(action.locator, action.options?.timeoutMs);
       case 'assertVisible': {
         const visible = await (
-          await this.session.$(toAppiumSelector(action.locator, this.platform))
+          await this.element(action.locator)
         ).waitForDisplayed({ timeout: 5000 });
         if (!visible) {
           throw new Error('[appium-inspector] element never became visible');
@@ -443,7 +550,7 @@ class AppiumDriverSession implements DriverSession {
         return true;
       }
       case 'assertNotVisible': {
-        const element = await this.session.$(toAppiumSelector(action.locator, this.platform));
+        const element = await this.element(action.locator);
         const displayed = (await element.isExisting()) && (await element.isDisplayed());
         if (displayed) {
           throw new Error('[appium-inspector] element is visible but expected not to be');
@@ -501,6 +608,38 @@ class AppiumDriverSession implements DriverSession {
     }
   }
 
+  /**
+   * Scroll until an element is visible, or fail at the deadline.
+   *
+   * Maestro has a primitive for this; Appium does not, so it is a bounded loop of "look, then scroll". The
+   * platform-specific alternatives were both worse: Android's `UiScrollable().scrollIntoView` only accepts a
+   * `UiSelector`, so an accessibility-id or predicate locator could not use it, and iOS's `mobile: scroll`
+   * with `predicateString` needs a container element the recording does not have. A loop over the two
+   * primitives this adapter already implements works for every locator on both platforms.
+   *
+   * The visibility check is deliberately short-bounded per attempt: `isVisible`'s own default would spend
+   * seconds per iteration waiting for something that is genuinely not on screen yet.
+   */
+  private async scrollUntilVisible(
+    locator: MobileLocator,
+    direction: MobileDirection,
+    timeoutMs: number,
+  ): Promise<void> {
+    const deadline = Date.now() + Math.max(0, timeoutMs);
+    for (;;) {
+      if (await this.isVisible(locator, POLL_INTERVAL_MS)) {
+        return;
+      }
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `[appium-inspector] scrollUntilVisible gave up after ${timeoutMs}ms — ` +
+            `${JSON.stringify(locator)} never came into view scrolling ${direction}`,
+        );
+      }
+      await this.scrollScreen(direction);
+    }
+  }
+
   private async swipeWholeScreen(
     direction: MobileDirection,
     durationMs?: number,
@@ -536,9 +675,7 @@ class AppiumDriverSession implements DriverSession {
         percent: ACTION_DEFAULTS.swipeDistance,
       };
       if (within) {
-        params.elementId = await elementIdOf(
-          await this.session.$(toAppiumSelector(within, 'android')),
-        );
+        params.elementId = await elementIdOf(await this.element(within));
       } else {
         const { width, height } = await this.session.getWindowSize();
         Object.assign(params, { left: 0, top: 0, width, height });
@@ -547,7 +684,7 @@ class AppiumDriverSession implements DriverSession {
     }
     const params: Record<string, unknown> = { direction };
     if (within) {
-      params.elementId = await elementIdOf(await this.session.$(toAppiumSelector(within, 'ios')));
+      params.elementId = await elementIdOf(await this.element(within));
     }
     return this.session.execute('mobile: scroll', params);
   }
@@ -613,6 +750,8 @@ class AppiumDriverSession implements DriverSession {
     } catch (error) {
       errors.push(error);
     } finally {
+      // Best-effort: a leftover temp directory is untidy, not a failure, and must not mask a close error.
+      await fs.rm(this.outputDir, { recursive: true, force: true }).catch(() => undefined);
       this.releaseLock?.();
       this.releaseLock = undefined;
     }
@@ -639,25 +778,40 @@ class AppiumInspectorDriver implements MobileInspectorDriver {
 
   async connect(options: ConnectOptions): Promise<DriverSession> {
     assertPlatformSupported(options.platform);
+    const progress = options.onProgress ?? ((): void => undefined);
     const release = await acquireDeviceLock(deviceLockKey(options.platform, options.device));
     let server: AppiumServerHandle | undefined;
     try {
+      progress(
+        options.device ? `acquiring ${options.device}` : `acquiring an ${options.platform} device`,
+      );
       const acquired = await acquireDevice(options.platform, {
         deviceName: options.device,
         headless: options.headless ?? true,
         onBooted: recordBootedDevice,
       });
       if (!acquired) {
-        throw new Error(await deviceUnavailableMessage('appium', options.platform, options.device));
+        throw new DeviceUnavailableError(
+          await deviceUnavailableMessage('appium', options.platform, options.device),
+        );
       }
+      progress('starting the Appium server');
       server = await ensureAppiumServer(0);
       // A local artifact installs (and launches) via the `app` capability — Appium handles install
       // itself, unlike Maestro. With no artifact, start a plain session (lands on the home screen)
       // and activate the already-installed `appId` afterwards via `mobile: activateApp`, since a bare
       // package/bundle id isn't a valid `appium:app` value (that capability expects a file path/URL).
       const capabilities = buildCapabilities({ device: acquired, app: options.appSource });
+      // On iOS the first session of a machine builds WebDriverAgent, which is minutes, not seconds — the
+      // single longest silence in the whole connect and the one users read as a hang.
+      progress(
+        options.appSource
+          ? `installing ${options.appSource} and starting the driver session`
+          : 'starting the driver session',
+      );
       const session = await createSession({ baseUrl: server.baseUrl, capabilities });
       if (options.appId && !options.appSource) {
+        progress(`activating ${options.appId}`);
         await session.execute(
           'mobile: activateApp',
           options.platform === 'android' ? { appId: options.appId } : { bundleId: options.appId },

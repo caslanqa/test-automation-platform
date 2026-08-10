@@ -118,6 +118,7 @@ body {
 
 /* ---------- device viewport ---------- */
 .device-viewport {
+  position: relative; /* anchors the pinned-step banner */
   flex: 1;
   overflow: hidden;
   display: flex;
@@ -247,6 +248,30 @@ body {
   font-size: 12px;
 }
 
+/* Viewing a recorded step's screen rather than the live device: the panel must say so, because everything
+   about it looks live except that it does not respond. */
+.viewport-pinned {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 2;
+  padding: 3px 6px;
+  background: #094771;
+  color: #cfe8ff;
+  font-size: 11px;
+  text-align: center;
+}
+
+/* Device-level keys under the viewport (back / home / enter / screenshot). */
+.device-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px 6px;
+  border-top: 1px solid #3c3c3c;
+}
+
 /* ---------- fields ---------- */
 .field-hint {
   font-size: 10px;
@@ -274,6 +299,10 @@ body {
 .field-row {
   display: flex;
   gap: 6px;
+}
+.field-row-between {
+  align-items: center;
+  justify-content: space-between;
 }
 .field-row input {
   flex: 1;
@@ -367,6 +396,11 @@ body {
   padding: 0;
   width: 14px;
 }
+/* How many children a collapsed branch is holding, so a folded subtree is not mistaken for a leaf. */
+.tree-count {
+  font-size: 10px;
+  padding-left: 4px;
+}
 .tree-label {
   font-size: 12px;
   cursor: pointer;
@@ -435,6 +469,34 @@ body {
   justify-content: space-between;
   font-size: 12px;
   gap: 8px;
+}
+.timeline-item.active {
+  background: #094771;
+}
+/* The step label is a button (it shows that step's screen), so it has to stop looking like one. */
+.timeline-step {
+  flex: 1;
+  display: flex;
+  gap: 8px;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  padding: 2px 4px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.timeline-step:disabled {
+  cursor: default;
+  opacity: 0.75;
+}
+.timeline-step:not(:disabled):hover {
+  background: #2d2d2d;
+}
+.timeline-index {
+  min-width: 16px;
+  text-align: right;
 }
 
 /* ---------- run output ---------- */
@@ -562,6 +624,43 @@ body {
   border-top: 1px solid #3c3c3c;
   margin-top: 4px;
 }
+/* The element's own attributes, as the driver reports them. */
+.element-attributes {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 4px 2px;
+  border-top: 1px solid #3c3c3c;
+  margin: 4px 0 0;
+  font-size: 11px;
+}
+.element-attribute {
+  display: flex;
+  gap: 6px;
+}
+.element-attribute dt {
+  flex: 0 0 54px;
+  font-size: 10px;
+}
+.element-attribute dd {
+  flex: 1;
+  margin: 0;
+  font-family: 'SF Mono', Menlo, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.locator-scroll {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  font-size: 11px;
+}
+.locator-record-only {
+  padding: 4px;
+  font-size: 10px;
+}
 .locator-fill {
   display: flex;
   gap: 4px;
@@ -647,6 +746,12 @@ dialog.modal::backdrop {
 }
 .banner-failure {
   background: #6b3a1f;
+}
+/* Not an error: the connection worked, but something about it will change what the saved test does. */
+.banner-warning {
+  background: #6b5a1f;
+  color: #ffe9b0;
+  text-align: left;
 }
 
 /* Connection-loss banner. The event stream retries by itself, so this states the gap and gets out of the

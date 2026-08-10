@@ -20,6 +20,8 @@ import {
   type MobileNode,
 } from '@pwtap/mobile-core';
 
+import { createHash } from 'node:crypto';
+
 import type { RecorderEvent } from './protocol.js';
 
 /** How many capture durations feed the median that sets the interval. */
@@ -50,6 +52,8 @@ export class DeviceSession {
   private session: DriverSession | undefined;
   private capabilities: MobileInspectorDriver['capabilities'] | undefined;
   private lastHierarchy: MobileNode[] = [];
+  /** Digest of the last tree that was SENT, so an unchanged one is not sent again. */
+  private lastHierarchyDigest: string | undefined;
   private lastFrameId = -1;
   private lastFrameBytes: string | undefined;
   private frameRefresh: Promise<void> | undefined;
@@ -98,10 +102,14 @@ export class DeviceSession {
     this.session = await driver.connect(options);
     this.capabilities = this.session.capabilities ?? driver.capabilities;
     this.lastHierarchy = [];
+    this.lastHierarchyDigest = undefined;
     this.lastFrameId = -1;
     this.lastFrameBytes = undefined;
     this.captureDurations = [];
     this.consecutiveFailures = 0;
+    // The driver is connected but the panel is still empty at this point, and on Maestro the first
+    // hierarchy plus screenshot is another few hundred milliseconds of silence.
+    options.onProgress?.('reading the first screen');
     await this.refreshHierarchy();
     await this.refreshFrame();
     this.scheduleIdlePoll();
@@ -139,25 +147,38 @@ export class DeviceSession {
   }
 
   /**
-   * Look at the screen after an action: once when it has had a moment to react, and once more if it moved,
-   * because an animating screen looks different a beat later. The first capture is emitted immediately so
-   * the UI stays responsive; a second only follows when there is something new to show.
+   * Look at the screen after an action.
+   *
+   * One capture immediately: the device has already performed the action, so whatever moved is on screen
+   * now, not only after a sleep — waiting the full settle before the FIRST look is what made a tap take
+   * about half a second to show any visible effect. Identical frames are deduped, so a look that finds
+   * nothing new costs a hash rather than a repaint.
+   *
+   * What follows depends on the driver. One that waited for the animation itself
+   * (`ActionResult.settled` — Maestro sends `waitForAnimationToEnd` inside the same command) has already
+   * answered the question the sleep was asking, so nothing more is needed. One that did not gets the
+   * two-look schedule from ADR-006, but comparing the two **settled** looks rather than comparing against
+   * the mid-animation frame: a tap always looks different a beat later, so the old comparison made the
+   * third look unconditional and charged every interaction for it.
+   *
+   * @param alreadySettled The driver returned with the screen at rest (`ActionResult.settled`).
    */
-  async settle(): Promise<void> {
-    // Look once immediately: the device has already performed the action, so whatever moved is on screen
-    // now, not only after the settle sleep. Identical frames are deduped, so a look that finds nothing new
-    // costs a hash rather than a repaint — and waiting the full settle before the FIRST look is what made a
-    // tap take about half a second to show any visible effect.
+  async settle(alreadySettled = false): Promise<void> {
     await this.refreshFrame();
-    const before = this.lastFrameBytes;
-    await sleep(this.timing.settleMs);
-    await this.refreshHierarchy();
-    await this.refreshFrame();
-    if (this.lastFrameBytes !== before) {
+    if (!alreadySettled) {
+      const beforeSettle = this.lastFrameBytes;
       await sleep(this.timing.settleMs);
-      await this.refreshHierarchy();
       await this.refreshFrame();
+      if (this.lastFrameBytes !== beforeSettle) {
+        // Still moving a settle later, so look once more. A third identical pair is not worth a round trip.
+        await sleep(this.timing.settleMs);
+        await this.refreshFrame();
+      }
     }
+    // The hierarchy is read ONCE, last. It is what the next click gets hit-tested against, so reading it
+    // mid-animation — as the old schedule did, and then again at the end — bought a tree that was stale
+    // before it arrived and paid for it twice.
+    await this.refreshHierarchy();
     this.scheduleIdlePoll();
   }
 
@@ -210,7 +231,14 @@ export class DeviceSession {
           return false;
         }
         this.lastHierarchy = hierarchy;
-        this.emit({ type: 'hierarchy', nodes: hierarchy });
+        // Deduplicated the way frames are (ADR-006): an unchanged screen produces an identical tree, and
+        // re-sending it makes the client rebuild its whole accessibility view for no new information —
+        // which on a deep native tree is continuous main-thread work while the device sits idle.
+        const digest = createHash('sha1').update(JSON.stringify(hierarchy)).digest('hex');
+        if (digest !== this.lastHierarchyDigest) {
+          this.lastHierarchyDigest = digest;
+          this.emit({ type: 'hierarchy', nodes: hierarchy });
+        }
         return true;
       } catch (error) {
         this.consecutiveFailures += 1;
@@ -248,8 +276,15 @@ export class DeviceSession {
     }
     this.pollTimer = setTimeout(() => {
       void (async () => {
+        // An idle poll asks one question — "did the screen move?" — and the frame answers it. Reading the
+        // hierarchy as well doubled the device work per tick for a tree that cannot have changed while the
+        // pixels did not, and on Maestro that second round trip is ~110 ms of the device's attention that a
+        // user interaction then has to queue behind.
+        const before = this.lastFrameBytes;
         await this.refreshFrame();
-        await this.refreshHierarchy();
+        if (this.lastFrameBytes !== before) {
+          await this.refreshHierarchy();
+        }
         this.scheduleIdlePoll();
       })();
     }, this.nextPollDelay());

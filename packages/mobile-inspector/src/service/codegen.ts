@@ -32,6 +32,10 @@ function locatorLiteral(locator: MobileLocator): string {
   if (locator.point !== undefined) {
     parts.push(`point: { x: ${locator.point.x}, y: ${locator.point.y} }`);
   }
+  // Last, and only alongside a strategy: it selects among that strategy's matches.
+  if (locator.index !== undefined) {
+    parts.push(`index: ${locator.index}`);
+  }
   return `{ ${parts.join(', ')} }`;
 }
 
@@ -50,8 +54,16 @@ function statementFor(action: MobileAction): string {
   switch (action.kind) {
     case 'tap':
       return `await mobileApp.tap(${locatorLiteral(action.locator)});`;
+    case 'doubleTap':
+      return `await mobileApp.doubleTap(${locatorLiteral(action.locator)});`;
     case 'fill':
       return `await mobileApp.fill(${locatorLiteral(action.locator)}, ${quote(action.value)});`;
+    case 'eraseText':
+      return `await mobileApp.eraseText(${locatorLiteral(action.locator)}${optionsArg(action.options)});`;
+    case 'hideKeyboard':
+      return `await mobileApp.hideKeyboard();`;
+    case 'scrollUntilVisible':
+      return `await mobileApp.scrollUntilVisible(${locatorLiteral(action.locator)}${optionsArg(action.options)});`;
     case 'longPress':
       return `await mobileApp.longPress(${locatorLiteral(action.locator)}${optionsArg(action.options)});`;
     case 'swipe':

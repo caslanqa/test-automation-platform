@@ -42,7 +42,7 @@ Change `driver: 'maestro'` to `'appium'` and the body is unchanged. `mobileTarge
 
 ## The surface
 
-`tap`, `fill`, `longPress`, `swipe`, `scroll`, `drag`, `pinch`, `pressKey`, `back`, `waitFor`, `isVisible`, `screenshot`.
+`tap`, `doubleTap`, `fill`, `eraseText`, `hideKeyboard`, `longPress`, `swipe`, `scroll`, `scrollUntilVisible`, `drag`, `pinch`, `pressKey`, `back`, `waitFor`, `isVisible`, `screenshot`.
 
 `isVisible` returns a boolean and never throws, so a test can branch on it — the assertions (`assertVisible` / `assertNotVisible`) are what fail. An action the connected driver cannot perform throws `UnsupportedActionError` naming the driver and the action, rather than failing somewhere inside an adapter.
 
@@ -54,7 +54,7 @@ One driver-neutral shape, translated by each adapter:
 { accessibilityId: 'loginButton' }        // most durable
 { resourceId: 'com.example:id/email' }    // Android id / iOS identifier
 { text: 'Log in' }                        // exact text
-{ text: 'Log in', index: 1 }              // nth match
+{ text: 'Log in', index: 1 }              // nth match, 0-based — for a repeated list row
 { point: { x: 200, y: 230 } }             // last resort
 ```
 

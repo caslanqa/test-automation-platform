@@ -7,9 +7,12 @@
  * for none of the 296 MB Electron cost. `@playwright/test` is a peer dependency, so this resolves to the
  * browser the host project already downloaded.
  *
- * Note the two-step navigation: the window opens on a blank `data:` URL and *then* goes to the service. The
- * URL carries the launch token, and passing it as `--app=<url>` would put it in the process command line,
- * where any other user on the machine could read it out of `ps`.
+ * The launch token reaches the service as an `x-inspector-token` header set on the browser context, which
+ * covers the navigation and every subresource it makes. Deliberately not in the URL: a URL is printed, ends up
+ * in terminal scrollback and screenshots, and would also sit in the page's own `location` and in the browser
+ * profile. It is not passed as `--app=<url>` either — that would put it in the process command line, where
+ * any other user on the machine could read it out of `ps` — which is why the window still opens on a blank
+ * `data:` URL and navigates afterwards.
  */
 import type { BrowserContext } from '@playwright/test';
 
@@ -27,7 +30,10 @@ export interface InspectorWindow {
  * printing the URL, which is a perfectly usable inspector, rather than failing the launch outright.
  */
 export async function openInspectorWindow(
-  url: string,
+  /** The service origin, with no credential in it — see this module's note. */
+  origin: string,
+  /** The launch token, sent as a header rather than being put in `origin`. */
+  token: string,
   onUnavailable: (reason: string) => void,
   /**
    * Called with a closable handle the moment the browser exists, before it is navigated. Launching takes
@@ -42,6 +48,9 @@ export async function openInspectorWindow(
     context = await chromium.launchPersistentContext('', {
       // An empty user-data dir means a throwaway profile, so the window never inherits or leaves state.
       headless: false,
+      // Every request this context makes — the navigation, the assets, the event stream, each frame — carries
+      // the launch token, so the URL never has to.
+      extraHTTPHeaders: { 'x-inspector-token': token },
       // Without this the window wears Chromium's "controlled by automated software" infobar.
       ignoreDefaultArgs: ['--enable-automation'],
       // The window IS the viewport; a fixed one would letterbox the UI.
@@ -71,7 +80,7 @@ export async function openInspectorWindow(
 
   try {
     const page = context.pages()[0] ?? (await context.newPage());
-    await page.goto(url);
+    await page.goto(origin);
   } catch (error) {
     // The browser went away mid-setup: a signal during launch, or the user closing the window at once.
     // Reported, not thrown — an unhandled rejection here used to crash the CLI before it could release the

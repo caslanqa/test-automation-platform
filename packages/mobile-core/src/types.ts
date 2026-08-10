@@ -87,12 +87,28 @@ export interface ConnectOptions {
   /**
    * Android package name / iOS bundle id of the app to launch on connect. When `appSource` is also
    * given, this is the id the installed artifact registers as (used to launch it after install).
-   * Optional for Appium (an omitted `appId` just attaches to whatever is already foregrounded, e.g.
-   * the home screen) but effectively REQUIRED for Maestro: its MCP session scopes every single
-   * command (including `tap`/`back`) to an app id and throws until `launchApp` has been called, so
-   * without this the Maestro adapter cannot perform any action at all.
+   *
+   * Optional for Appium (an omitted `appId` just attaches to whatever is already foregrounded, e.g. the home
+   * screen). For Maestro it decides what the session is *scoped* to: every Maestro command carries a config
+   * header naming an app. Omitting it is only meaningful together with {@link attachWithoutApp}; a replayed
+   * test needs one, because a test that never launches its app and taps whatever happens to be on screen is
+   * not a test.
    */
   appId?: string;
+  /**
+   * Attach to whatever is on screen when no `appId` was given, instead of refusing to connect.
+   *
+   * For a **recorder**, not for a test. The recorder's whole job is to let someone tap around a live device —
+   * including the launcher, the status bar and another app — and then write down what they did; refusing to
+   * start until they can name a bundle id made the Maestro driver unusable on iOS, where nothing reports the
+   * frontmost app (`launchctl list` names every running one, `simctl appinfo` names none, and the view
+   * hierarchy's app label is not dependably there). Maestro's own `appId: any` header satisfies the config
+   * section without scoping the flow.
+   *
+   * A test leaves this alone and gets the refusal, deliberately: the recording it replays is supposed to pin
+   * the app it was made against (ADR-003).
+   */
+  attachWithoutApp?: boolean;
   /**
    * Local build artifact path or http(s) URL (`.apk`/`.app`/`.ipa`/`.zip`-of-`.app`) to install
    * before launching. Omit when `appId` is already installed on the device. Appium installs this
@@ -101,6 +117,18 @@ export interface ConnectOptions {
    * already uses) and then launches `appId`.
    */
   appSource?: string;
+  /**
+   * Called with a short, human-readable stage name as `connect` progresses.
+   *
+   * Connecting is the longest thing the inspector does — acquire or boot a device, install a build, start a
+   * driver process, launch the app — and it reported one word ("connecting…") for all of it, so a slow boot
+   * and a hung driver looked identical and users restarted a session that was working. A stage name is not a
+   * progress bar and deliberately not a percentage; it says which of those is happening now.
+   *
+   * Never arrives over the wire: it is injected by whatever hosts the session (see `recorderSession.ts`),
+   * and the trust boundary rebuilds these options field by field so a client cannot supply one (ADR-010).
+   */
+  onProgress?: (stage: string) => void;
 }
 
 /**
@@ -115,6 +143,19 @@ export interface MobileLocator {
   resourceId?: string;
   /** Visible text (Maestro-style full-string, case-insensitive match). */
   text?: string;
+  /**
+   * Which match to act on, 0-based, when the other strategies match more than one element.
+   *
+   * The disambiguator a repeated list row needs. Without it, "the third Add button" had no expressible
+   * locator at all: the engine scored the text as non-unique, took 25 points off it, and the only thing left
+   * below that was a raw coordinate — so the recording of a perfectly ordinary list interaction came out
+   * fragile. Portable by design: Maestro has `index`, and WebdriverIO indexes the match list, so both
+   * adapters express it natively. It is still position-dependent, which is why the engine offers it as a
+   * *second* candidate behind the unique ones and warns that reordering the list breaks it.
+   *
+   * Ignored when the locator matches one element, so adding it can only narrow.
+   */
+  index?: number;
   /** Platform-native selector escape hatch (e.g. an XPath or a Maestro selector object). */
   native?: unknown;
   /** Last-resort coordinate fallback — flagged fragile by the locator engine. */
@@ -141,6 +182,23 @@ export interface ScrollOptions {
   within?: MobileLocator;
 }
 
+export interface ScrollUntilOptions {
+  /** Which way to scroll while looking. Defaults to `down`, which is what a list usually needs. */
+  direction?: MobileDirection;
+  /** Give up after this long; the action then fails rather than scrolling forever. */
+  timeoutMs?: number;
+}
+
+export interface EraseTextOptions {
+  /**
+   * Erase only the last `characters`. Omit to clear the whole field.
+   *
+   * A driver that can only clear everything MUST refuse a partial erase rather than clearing the field and
+   * calling it done — the same rule `scroll`'s `within` follows (§5).
+   */
+  characters?: number;
+}
+
 /** A point-like target: a locator (resolved to its center) or explicit coordinates. */
 export type MobileTarget = MobileLocator | { x: number; y: number };
 
@@ -161,10 +219,17 @@ export interface WaitOptions {
  */
 export interface MobileApp {
   tap(locator: MobileLocator): Promise<void>;
+  doubleTap(locator: MobileLocator): Promise<void>;
   fill(locator: MobileLocator, value: string): Promise<void>;
+  /** Clear a field. `characters` erases only the last n; omit it to clear the whole value. */
+  eraseText(locator: MobileLocator, options?: EraseTextOptions): Promise<void>;
+  /** Dismiss the soft keyboard, so it stops covering what the next step targets. */
+  hideKeyboard(): Promise<void>;
   longPress(locator: MobileLocator, options?: LongPressOptions): Promise<void>;
   swipe(direction: MobileDirection, options?: SwipeOptions): Promise<void>;
   scroll(direction: MobileDirection, options?: ScrollOptions): Promise<void>;
+  /** Scroll until an element is on screen, then stop — the reliable way to reach a row in a long list. */
+  scrollUntilVisible(locator: MobileLocator, options?: ScrollUntilOptions): Promise<void>;
   drag(from: MobileTarget, to: MobileTarget): Promise<void>;
   pinch(scale: number, options?: PinchOptions): Promise<void>;
   pressKey(key: MobileKey): Promise<void>;
@@ -228,10 +293,14 @@ export interface ScreenFrame {
 /** The driver-neutral action IR — every recorded interaction and every generated statement. */
 export type MobileAction =
   | { kind: 'tap'; locator: MobileLocator }
+  | { kind: 'doubleTap'; locator: MobileLocator }
   | { kind: 'fill'; locator: MobileLocator; value: string }
+  | { kind: 'eraseText'; locator: MobileLocator; options?: EraseTextOptions }
+  | { kind: 'hideKeyboard' }
   | { kind: 'longPress'; locator: MobileLocator; options?: LongPressOptions }
   | { kind: 'swipe'; direction: MobileDirection; options?: SwipeOptions }
   | { kind: 'scroll'; direction: MobileDirection; options?: ScrollOptions }
+  | { kind: 'scrollUntilVisible'; locator: MobileLocator; options?: ScrollUntilOptions }
   | { kind: 'drag'; from: MobileTarget; to: MobileTarget }
   | { kind: 'pinch'; scale: number; options?: PinchOptions }
   | { kind: 'pressKey'; key: MobileKey }
@@ -256,6 +325,16 @@ export interface ActionResult {
   value?: unknown;
   error?: string;
   durationMs: number;
+  /**
+   * The driver waited for the screen to stop moving before returning, so the caller does not have to.
+   *
+   * A recorder cannot know when an animation has finished, so it sleeps and looks again — which costs a
+   * fixed delay plus an extra capture and hierarchy read on every action that moves the screen. A driver
+   * that can express "and then wait for the animation to end" in the SAME device round trip (Maestro's
+   * `waitForAnimationToEnd`) answers the question for free, and the caller then needs one look instead of
+   * three. Optional: a driver that cannot promise this omits it and the caller keeps sleeping (ADR-006).
+   */
+  settled?: boolean;
 }
 
 /**
@@ -333,6 +412,23 @@ export class UnsupportedActionError extends Error {
     this.name = 'UnsupportedActionError';
     this.driverId = driverId;
     this.kind = kind;
+  }
+}
+
+/**
+ * Thrown by an adapter's `connect` when the device a test asks for is not on this machine.
+ *
+ * Its own type, rather than a plain `Error`, because the caller's correct response differs from every other
+ * connect failure. A recording pins a device by name so it is reproducible (ADR-003), so the very first thing
+ * that happens on a colleague's laptop or in CI is that the name does not resolve — a fact about the machine,
+ * not a defect in the test, and one the `maestro`/`appium` fixtures already answer with a skip that states the
+ * reason. A missing CLI or a broken driver server is a defect, and those still fail. `deviceUnavailableMessage`
+ * builds the message; this only marks what kind of failure it is.
+ */
+export class DeviceUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'DeviceUnavailableError';
   }
 }
 

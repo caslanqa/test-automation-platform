@@ -6,20 +6,51 @@
  */
 import type { LocatorCandidate, MobileLocator, MobileNode, MobileTarget } from './types.js';
 
-/** Depth-first search for the first node matching `locator`'s set fields (all must match). */
+/**
+ * Depth-first search for the node matching `locator`'s set fields (all must match), honouring
+ * `locator.index` — which selects among the matches rather than narrowing what counts as one.
+ *
+ * Stops at the wanted match rather than collecting every one of them. Building the full list first reads more
+ * simply and turns every lookup — `resolveTargetPoint` does one per `drag`/`pinch` endpoint — into a complete
+ * walk of a tree that can hold thousands of nodes, for a match that is usually the first hit.
+ * {@link countMatches} genuinely needs the whole list; this does not.
+ */
 export function findNode(nodes: MobileNode[], locator: MobileLocator): MobileNode | undefined {
-  for (const node of nodes) {
-    if (nodeMatches(node, locator)) {
-      return node;
-    }
-    if (node.children?.length) {
-      const found = findNode(node.children, locator);
-      if (found) {
-        return found;
+  const wanted = locator.index ?? 0;
+  let seen = -1;
+  const visit = (candidates: MobileNode[]): MobileNode | undefined => {
+    for (const node of candidates) {
+      if (nodeMatches(node, locator)) {
+        seen += 1;
+        if (seen === wanted) {
+          return node;
+        }
+      }
+      const inChildren = node.children?.length ? visit(node.children) : undefined;
+      if (inChildren) {
+        return inChildren;
       }
     }
-  }
-  return undefined;
+    return undefined;
+  };
+  return visit(nodes);
+}
+
+/** Every node matching `locator`, in depth-first order — the order `index` counts in. */
+function matchingNodes(nodes: MobileNode[], locator: MobileLocator): MobileNode[] {
+  const matches: MobileNode[] = [];
+  const visit = (candidates: MobileNode[]): void => {
+    for (const node of candidates) {
+      if (nodeMatches(node, locator)) {
+        matches.push(node);
+      }
+      if (node.children?.length) {
+        visit(node.children);
+      }
+    }
+  };
+  visit(nodes);
+  return matches;
 }
 
 function nodeMatches(node: MobileNode, locator: MobileLocator): boolean {
@@ -158,33 +189,27 @@ export function outOfAppWarning(node: MobileNode, appId?: string): string | unde
   return `belongs to ${node.appPackage}, not the app under test (${appId}) — the driver is scoped to the app, so this will not resolve on replay`;
 }
 
-/** Count how many nodes in `hierarchy` match `locator` — used to flag non-unique candidates. */
+/**
+ * Count how many nodes in `hierarchy` match `locator` — used to flag non-unique candidates.
+ *
+ * `locator.index` is not part of the match: it picks one of the results, so counting with it applied would
+ * report every `index`-bearing locator as unique and defeat the check.
+ */
 export function countMatches(hierarchy: MobileNode[], locator: MobileLocator): number {
-  let count = 0;
-  const visit = (nodes: MobileNode[]): void => {
-    for (const node of nodes) {
-      if (nodeMatches(node, locator)) {
-        count += 1;
-      }
-      if (node.children?.length) {
-        visit(node.children);
-      }
-    }
-  };
-  visit(hierarchy);
-  return count;
+  return matchingNodes(hierarchy, locator).length;
 }
 
 /** Render a `MobileLocator` as a copy-ready TypeScript object literal (matches the codegen style). */
 function locatorDisplay(locator: MobileLocator): string {
+  const index = locator.index === undefined ? '' : `, index: ${locator.index}`;
   if (locator.accessibilityId !== undefined) {
-    return `{ accessibilityId: ${JSON.stringify(locator.accessibilityId)} }`;
+    return `{ accessibilityId: ${JSON.stringify(locator.accessibilityId)}${index} }`;
   }
   if (locator.resourceId !== undefined) {
-    return `{ resourceId: ${JSON.stringify(locator.resourceId)} }`;
+    return `{ resourceId: ${JSON.stringify(locator.resourceId)}${index} }`;
   }
   if (locator.text !== undefined) {
-    return `{ text: ${JSON.stringify(locator.text)} }`;
+    return `{ text: ${JSON.stringify(locator.text)}${index} }`;
   }
   if (locator.point !== undefined) {
     return `{ point: { x: ${locator.point.x}, y: ${locator.point.y} } }`;
@@ -230,7 +255,8 @@ export function locatorCandidates(
       warnings.push(outOfApp);
     }
     // Coordinate candidates aren't "matchable" against the tree; everything else is uniqueness-checked.
-    const unique = strategy === 'point' ? false : countMatches(hierarchy, locator) === 1;
+    const matches = strategy === 'point' ? [] : matchingNodes(hierarchy, locator);
+    const unique = strategy !== 'point' && matches.length === 1;
     if (strategy !== 'point' && !unique) {
       score -= 25;
       warnings.push('not unique — multiple elements match this locator');
@@ -245,6 +271,30 @@ export function locatorCandidates(
       warnings,
       display: locatorDisplay(locator),
     });
+
+    // A repeated list row leaves every attribute non-unique, and the only candidate that used to survive
+    // that was a raw coordinate — so recording an ordinary "third item in the list" produced a fragile step.
+    // Pinning the ordinal keeps the attribute and disambiguates it; it is offered BELOW the plain candidate
+    // (which may still be the right answer once the list is filtered) and above the coordinate, and it says
+    // what makes it fragile rather than presenting itself as solid.
+    const ordinal = matches.indexOf(node);
+    if (!unique && ordinal >= 0) {
+      const indexed = { ...locator, index: ordinal };
+      candidates.push({
+        strategy,
+        locator: indexed,
+        score: Math.max(0, Math.min(100, baseScore - (outOfApp ? 60 : 0) - 10)),
+        confidence: confidenceBand(Math.max(0, baseScore - (outOfApp ? 60 : 0) - 10)),
+        // Exactly one element by construction: it selects among the matches rather than describing them.
+        unique: true,
+        warnings: [
+          ...warnings.filter(warning => !warning.startsWith('not unique')),
+          `position-dependent — matches ${matches.length} elements and takes number ${ordinal + 1}, so ` +
+            'reordering or filtering the list changes what this resolves to',
+        ],
+        display: locatorDisplay(indexed),
+      });
+    }
   };
 
   if (node.accessibilityId) {

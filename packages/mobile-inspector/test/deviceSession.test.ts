@@ -25,12 +25,18 @@ const FAST = { settleMs: 5, minPollMs: 20, maxPollMs: 40, maxBackoffMs: 200 };
 function harness(t: TestContext): {
   device: DeviceSession;
   frames: () => number;
+  hierarchies: () => number;
   events: RecorderEvent[];
 } {
   const events: RecorderEvent[] = [];
   const device = new DeviceSession(event => events.push(event), FAST);
   t.after(() => device.disconnect());
-  return { device, frames: () => events.filter(e => e.type === 'frame').length, events };
+  return {
+    device,
+    frames: () => events.filter(e => e.type === 'frame').length,
+    hierarchies: () => events.filter(e => e.type === 'hierarchy').length,
+    events,
+  };
 }
 
 test('connecting captures a frame and a hierarchy straight away', async t => {
@@ -101,6 +107,67 @@ test('a settle after an action looks twice when the screen moved', async t => {
 
   const captured = frames() - afterConnect;
   assert.ok(captured >= 2, `a moving screen deserves a second look, saw ${captured}`);
+});
+
+test('a driver that settled on the device is not made to sleep again', async t => {
+  const { device, frames, hierarchies } = harness(t);
+  const driver = new FakeDriver();
+  await device.connect(driver, { platform: 'android' });
+  const session = driver.session;
+  assert.ok(session);
+  session.settlesOnDevice = true;
+  const before = { frames: frames(), hierarchies: hierarchies() };
+
+  await device.perform({ kind: 'back' });
+  await device.settle(true);
+
+  // One look is the whole job: the driver already waited for the animation, so a sleep-then-look-again cycle
+  // would be pure delay — and on Maestro each extra look is a device round trip of its own.
+  assert.equal(frames() - before.frames, 1, 'exactly one capture');
+  assert.equal(hierarchies() - before.hierarchies, 1, 'exactly one hierarchy read');
+});
+
+test('the hierarchy is read once per settle, at the end', async t => {
+  const { device, hierarchies } = harness(t);
+  await device.connect(new FakeDriver(), { platform: 'android' });
+  const before = hierarchies();
+
+  await device.perform({ kind: 'back' });
+  await device.settle();
+
+  // It used to be read mid-animation AND again at the end. The first tree was stale before it arrived, and
+  // the next click was hit-tested against whichever of the two landed last.
+  assert.equal(hierarchies() - before, 1, `read the tree once, saw ${hierarchies() - before}`);
+});
+
+test('an unchanged screen is not re-sent as a new hierarchy', async t => {
+  const { device, hierarchies } = harness(t);
+  // One screen, so every read produces an identical tree — an idle device, in other words.
+  await device.connect(new FakeDriver({ screens: [[{ text: 'Log in' }]] }), {
+    platform: 'android',
+  });
+  const afterConnect = hierarchies();
+
+  await device.refreshHierarchy();
+  await device.refreshHierarchy();
+
+  assert.equal(hierarchies(), afterConnect, 'an identical tree must not be sent again');
+  assert.equal(device.hierarchy.length, 1, 'the engine still holds it for hit-testing');
+});
+
+test('an idle poll on a still screen never touches the hierarchy', async t => {
+  const { device, hierarchies, frames } = harness(t);
+  await device.connect(new FakeDriver({ screens: [[{ text: 'Log in' }]] }), {
+    platform: 'android',
+  });
+  const afterConnect = { frames: frames(), hierarchies: hierarchies() };
+
+  await sleep(70);
+
+  // The frame answers "did the screen move?" on its own. Reading the tree as well doubled the device work
+  // per tick for something that cannot have changed while the pixels did not.
+  assert.ok(frames() > afterConnect.frames, 'the poll must still look');
+  assert.equal(hierarchies(), afterConnect.hierarchies, 'but not read the tree');
 });
 
 test('a failing capture is reported and backs off instead of hammering', async t => {
