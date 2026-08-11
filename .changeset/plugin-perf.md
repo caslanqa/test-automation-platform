@@ -73,11 +73,33 @@ and somebody quotes the number.
 the first run: `@types/k6` does not declare `console`, so `perf/globals.d.ts` declares it rather than pulling the
 entire DOM lib in for one global.
 
+**The measurements go into the report, not into stdout.** Each fixture writes a one-line annotation next to the test
+(`perf:vitals lcp 512ms · cls 0.002 · ttfb 128ms`) and attaches the full measurement as JSON — `perf-vitals.json`,
+`perf-resources.json`, `perf-bench.json`, written at teardown so they exist **even when the test failed**, which is
+the run whose numbers someone actually needs. `perf-resources.json` lists every request with its transfer size, so
+"what grew" is answerable without re-running with the network tab open.
+
+**`budget.collect()` waits for the network to go quiet first** (2 s by default, `collect({ settleMs })` to change).
+Without it the number depends on when you call it: measured on one real page, 4 requests and 181 kB at `load` against
+9 requests and 249 kB once quiet, and a route reached by clicking reported **0 requests** while six images were still
+in flight — a budget built on that passes while the page has tripled. Playwright's `waitForLoadState('networkidle')`
+turned out to be the wrong primitive: once a navigation's load lifecycle has gone idle it resolves immediately, so
+requests started after `load` — precisely the ones a resource budget exists for — were never waited on. The fixture
+tracks in-flight requests itself instead, bounded, and the same page now measures identically across runs.
+
 Two defects that only a live run could find, both of which had passed `tsc -b`, eslint and 35 unit tests:
 `performance.getEntriesByType('largest-contentful-paint')` returns an **empty array** in Chromium even on a loaded
 page, so LCP is read through a `buffered: true` `PerformanceObserver` instead; and **LCP arrives later than the
 `load` event** (measured: `load` at 39 ms, first contentful paint at 268 ms on a trivial page), so `collect()` waits
 up to 2 s for the first candidate rather than making every caller add a `waitForTimeout`.
+
+`@pwtap/create` also learned to rewrite `tests/…` inside a plugin's **npm scripts**, not only in its example
+destinations. Example paths were already remapped onto `--tests-dir`; script values were not, and plugin-perf is the
+first plugin whose script names a test path — on a project scaffolded as `--tests-dir e2e`, `test:perf` ran
+`playwright test tests/perf` and reported "no tests found", which reads like a failed install rather than a path bug.
+The rewrite requires a trailing slash so a value that merely looks like the folder (`--grep tests`) is left alone,
+and both `add` and `remove` read the recorded folder from the project's own package.json so removal still matches by
+value.
 
 Only `@pwtap/create` is versioned by this changeset: `@pwtap/plugin-perf` has never been published, so
 `changeset publish` picks up its `0.1.0` from package.json directly. A minor rather than a patch because the

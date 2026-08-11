@@ -11,6 +11,7 @@
  * compareResources([{ url: 'https://x/app.js', resourceType: 'script', bytes: 900_000 }], { totalBytes: 500_000 });
  * // → ['total transfer 900 kB exceeds the 500 kB budget — largest: script https://x/app.js (900 kB)']
  */
+import { bytes } from './report.js';
 
 /** One finished request. */
 export interface ResourceRecord {
@@ -126,15 +127,4 @@ function largest(records: ResourceRecord[]): string {
     .slice(0, CULPRITS_SHOWN)
     .map(record => `${record.resourceType} ${record.url} (${bytes(record.bytes)})`)
     .join(', ');
-}
-
-/** kB/MB in the decimal units browsers and bundlers report, so the number matches what the reader compares to. */
-function bytes(value: number): string {
-  if (value >= 1_000_000) {
-    return `${(value / 1_000_000).toFixed(2)} MB`;
-  }
-  if (value >= 1_000) {
-    return `${Math.round(value / 1_000)} kB`;
-  }
-  return `${value} B`;
 }
