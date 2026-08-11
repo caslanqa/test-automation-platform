@@ -1,5 +1,235 @@
 # @pwtap/mobile-inspector
 
+## 2.2.0
+
+### Minor Changes
+
+- 2065647: Stop a device the machine does not have from failing a run, and stop the picker from describing a machine that
+  has moved on
+
+  Reported as "the test blows up when the devices on the machine are out of sync with the framework". Two
+  independent causes, at the two ends of a recording's life.
+
+  **On replay.** A recording pins a device by name so it is reproducible, which means the very first thing that
+  happens on a colleague's laptop or in CI is that the name does not resolve. The `maestro` and `appium` fixtures
+  have always answered that with a skip that states the reason; the `mobileApp` fixture — the one every
+  inspector-generated test uses — threw instead, so sharing a recorded test failed the build. The adapters now
+  throw `DeviceUnavailableError` (new export) for exactly this case and the fixture skips with the reason,
+  which reaches both the terminal and the report. Every other connect failure — a missing CLI, a broken Appium
+  server — still fails the test, because those are defects rather than facts about the host.
+
+  **While recording.** The device list was read once, when a driver was picked, and never again — so booting or
+  killing an emulator afterwards left the picker offering something that no longer existed, and connecting to it
+  failed. It is now re-read whenever the panel opens, after any failed connect, and on a Refresh button. Three
+  more, found in the same area:
+
+  - Switching platform kept the selected device, so an Android serial could be sent as an iOS simulator name.
+  - A failed connect never cleared the "connecting" state: the button stayed disabled, reading `Connecting…`,
+    permanently — and a stale device list is the most likely way to get there.
+  - The picker sent a booted emulator's `adb` serial and relied on the resolver mapping it back to the AVD name
+    before codegen. It now sends the AVD name, which addresses a live emulator just as well and survives a
+    reboot. When only a serial is known, the picker says so where the choice is made, and the resulting
+    "this will not match after a reboot" warning is a banner rather than a line in a log tab.
+
+  Connecting also reports what it is doing (`ConnectOptions.onProgress`, new and optional): acquiring or booting
+  the device, installing a build, starting the driver, launching the app, reading the first screen. It reported
+  one word for all of it, so a slow boot and a hung driver looked identical and users restarted sessions that
+  were working.
+
+- 2065647: Stop paying for work the inspector never needed between a tap and the screen
+
+  Reported as "the mobile inspector is slow". Most of the per-tap cost belongs to Maestro — it runs every command
+  as its own flow and charges roughly 420 ms for the privilege, which nothing on this side removes (re-verified
+  against Maestro 2.6.1: `run` is still the only interaction tool, and `maestro studio` still has no port flag).
+  Everything around that floor was ours:
+
+  - **Every frame round-tripped through the filesystem.** Both adapters took the base64 the driver already
+    returned, decoded it, wrote a file, read the file back and encoded it again — and neither ever emptied the
+    temp directory, so a ten-minute session at one frame per 750 ms left hundreds of screenshots on disk against
+    a documented budget of three. Live frames now write no file, and the directory is removed on close.
+    `screenshot`/`aiAssert` and failure evidence still write files, because a file is what those are for.
+    Measured on a device, this is a **disk** fix rather than a latency one: `takeScreenshot()` against
+    `saveScreenshot()` + `readFile` is 488 ms vs 485 ms p50, indistinguishable next to the driver's own
+    screenshot call — but the old path wrote ~1 MB per poll tick and never deleted any of it.
+  - **Every action settled three times.** The engine captured, slept 250 ms, read the hierarchy, captured again,
+    and — if that frame differed from the one taken _before_ the sleep — slept and did it all again. A tap always
+    looks different a beat later, so the third pass ran essentially always. `ActionResult.settled` (new, optional)
+    lets a driver say it already waited: Maestro now sends `waitForAnimationToEnd` inside the same `run` call, so
+    one look finishes the job. A driver that cannot promise it keeps a two-look schedule, now comparing the two
+    _settled_ captures rather than one taken mid-animation. Either way the hierarchy is read once, at the end,
+    instead of twice — once mid-animation, where it was stale before it arrived.
+  - **`fill` cost two Maestro calls.** Maestro has no "fill this field" primitive, so it is a tap plus an
+    `inputText` — sent as two `run` calls, paying that ~420 ms twice for one recorded step. `run` accepts a
+    multi-line flow, so both lines now travel in one call.
+  - **An idle poll read the whole hierarchy.** The poll asks one question — did the screen move? — and the frame
+    answers it. The tree is now read only when the frame's bytes changed, which on Maestro takes ~110 ms of the
+    device's attention per tick out of the queue the user's next interaction waits in.
+  - **An unchanged tree was re-sent anyway.** Frames were deduplicated and hierarchies were not, so an idle
+    device had the browser rebuild its whole accessibility view on every tick. Identical trees are now dropped
+    the way identical frames already were, and the tree renders three levels deep instead of every node — a
+    native screen is several hundred rows, mostly anonymous layout containers.
+  - **The once-per-session locator check was awaited.** `verifyStrategies` issues a real `isVisible` query with a
+    2 s bound; awaiting it added that to the first interaction using each strategy, which the spec had already
+    ruled out. It now runs unawaited, and not at all for an interaction that was not recorded.
+  - **Appium asked for the window size once per frame.** A WebDriver round trip for a number that only changes on
+    rotation, which `orientCoordinateSpace` (new, shared) derives from the image instead.
+
+  The hover highlight is also throttled to one hit-test per animation frame and only re-renders when the element
+  under the pointer actually changes; it walked the entire tree on every mousemove event before.
+
+  Measured on an Android emulator, p50 of five samples: **click → screen moves on Maestro is 1510 ms → 896 ms.**
+  Appium is unchanged within emulator variance, which is expected — it reports no `settled` and its per-command
+  cost was never the problem. The device-gated test now prints these numbers so the next change to the schedule
+  can be checked rather than argued about.
+
+- 2065647: Recording is now an explicit act, and the element menu can express what the IR always could
+
+  **Every click used to become a test step.** The viewport is also how you reach the screen you came to record,
+  so a recording began with the whole trip there, to be deleted by hand afterwards. A plain click now drives the
+  device and records nothing; **⌘/Ctrl + click records**. A `Record` toggle inverts the default — and is the
+  keyboard-reachable equivalent, since a modifier-click is mouse-only — and holding the modifier always means
+  "do the other thing, once". Choosing a locator from the context menu still records unconditionally: picking one
+  from a list is the explicit act. Navigation is now also cheaper than recording, because it skips codegen, the
+  draft update and the locator-strategy check entirely.
+
+  **The context menu offered five of the fifteen actions the IR has.** It now covers tap, fill, long press, wait,
+  assert visible / not visible, is visible, screenshot and an AI-rubric assertion, plus scrolling inside the
+  chosen element, "copy as code", "reveal in tree", and a checkbox to write a step down _without_ running it —
+  which was previously hard-wired for `assertNotVisible` alone and unavailable for anything else.
+
+  **`back` and `pressKey` had no way into a recording at all** — both are in the IR and supported by both drivers,
+  but neither the screen nor an element menu can express "press Home". A small toolbar under the viewport carries
+  Back / Home / Enter / Screenshot, under the same record gate.
+
+  **The element's own attributes are shown.** The ranked candidates say how to address an element; class, text,
+  accessibility id, resource id, owning package and bounds say whether it is the element you meant. They arrived
+  with every hit-test already and the UI dropped them.
+
+  **The editor completes from the device**: `mobileApp`'s methods, and locator literals built from the live
+  hierarchy. Reading an id off the tree panel and typing it back is exactly where a typo becomes a locator that
+  never matches. The method list is a total `Record` over `keyof MobileApp`, so a method added to the facade
+  fails the UI type-check until it is listed — the hand-maintained version drifted inside a single release.
+
+  **The timeline is walkable.** Each recorded step remembers the frame the screen showed once it had run, so
+  clicking a step shows that screen; a pinned step is read-only, because coordinates on a past screen do not
+  address the live one. Steps also carry a stable id now, which is what makes a step identifiable at all —
+  retracting a refused action had to match by object identity before. Retention is bounded at 50 step frames
+  (~7 MB) and a step whose frame has aged out says so instead of rendering blank.
+
+- 79f02d5: Keep the launch token out of printed output and off disk
+
+  `mobile-inspect` printed `http://127.0.0.1:<port>/?token=<secret>` on every launch. That token authorises a
+  service which spawns processes and writes files inside the project, and printed output is the least private
+  place there is: terminal scrollback, a screenshot, a pasted log, a recorded pairing session. It was also
+  stored in the single-instance lock file under `node_modules`, world-readable, for the length of the session.
+
+  Neither was necessary:
+
+  - **The window carries the token in an `x-inspector-token` header**, set on the Playwright browser context, so
+    it covers the navigation and every subresource — the page, the bundle, the event stream, each frame. The
+    launch now prints `http://127.0.0.1:<port>` and nothing else. The token no longer appears in printed output,
+    in the page's own `location`, or in the browser profile, and it was already kept out of `ps` by navigating
+    after launch rather than passing `--app=<url>`.
+  - **The lock file holds port and pid only.** It carried the token so a second launch could quote a
+    ready-to-open URL; a port and a pid are enough to say "that one is running, use it or stop it".
+  - **`?token=` still works**, because a browser this process did not launch cannot be given a header. That URL
+    is printed only when no window could be opened, and the line says it contains a secret. The cookie the first
+    such request sets is unchanged, so the hand-opened path keeps working for assets, events and frames.
+
+  Duplicate `x-inspector-token` headers are refused rather than resolved — Node folds them into one
+  comma-separated value, and accepting a prefix would let a caller append a guess to a real token.
+
+  Nothing to change in a project: `npm run mobile:inspect` behaves the same, minus the secret in the log. Anyone
+  scripting against `startInspectorService()` gets a new token-free `origin` on the handle; `url` still carries
+  the query token and now documents when using it is appropriate.
+
+- 2065647: Four actions the drivers could always do, and the ordinal a list row needs
+
+  **`doubleTap`, `eraseText`, `hideKeyboard`, `scrollUntilVisible`.** All four were reachable from the Maestro
+  session layer already and absent from the action IR, so no recording could contain one and no generated test
+  could call one — a flow that clears a field and scrolls to a row forty items down had to be finished by hand.
+  Both adapters implement all four; the two that needed care are worth stating:
+
+  - `eraseText` clears the whole field by default and takes `characters` for a partial erase. Maestro's own
+    command acts on the focused field, so the adapter taps and erases in one call; Appium's `clearValue` can
+    only empty a field, so a partial erase is that many backspaces to the focused element instead of pretending.
+    The iOS run caught the obvious form of those backspaces being Android-only: `keys(''.repeat(n))` works on
+    UiAutomator2 and WebDriverAgent answers `Key Down action '' must have a closing Key Up successor`, so the
+    key down/up pairs are built explicitly. Verified by observation where the value is visible —
+    `"abcdefgh"` → `"abcde"` on Android, `"example"` → `"exam"` on iOS through Maestro.
+  - `scrollUntilVisible` is a Maestro primitive and a bounded look-then-scroll loop on Appium, with the timeout
+    in `ACTION_DEFAULTS` rather than invented inside the adapter. The platform-specific alternatives were both
+    narrower: `UiScrollable().scrollIntoView` only accepts a `UiSelector`, so an accessibility-id locator could
+    not use it, and iOS's predicate scroll needs a container element a recording does not have. Running it on a
+    device caught the first version dropping `timeoutMs` on Maestro — a four-second budget spent twenty seconds
+    looking — which is the silent-substitution §5 forbids; the timeout is forwarded to Maestro's own `timeout`.
+
+  **`MobileLocator.index`** — 0-based, selects among the matches. This is the case where the locator engine had
+  nothing good to offer: in a repeated list row every attribute is non-unique, so the text lost 25 points and
+  the only thing ranked below it was a raw coordinate. The engine now adds an ordinal candidate at `base − 10`
+  — under anything genuinely unique, over the coordinate it replaces — and says that reordering the list changes
+  what it resolves to. Both drivers express it natively (Maestro's `index`, WebdriverIO's match list), so it
+  stays portable; Maestro's relational selectors (`childOf`, `containsChild`) would not, and are deliberately
+  left to `native`.
+
+  `@pwtap/mobile-core`'s README documented `{ text: 'Log in', index: 1 }` before the field existed. It does now.
+
+  Adapters implementing `MobileInspectorDriver` need no change: `DriverCapabilities.gestures` is a partial
+  record, so an adapter that does not list the new kinds simply reports nothing for them and the UI leaves the
+  controls enabled until the driver refuses one — the same behaviour as before this release.
+
+- b75229a: Let the recorder connect a Maestro session with no app id — which is every iOS connect
+
+  Reported from a live installation: opening the inspector against an iOS simulator with the Maestro driver and
+  leaving the app-id field empty always failed with
+
+  ```
+  connect failed: [maestro-inspector] the Maestro driver scopes every command to one app, and no app id was
+  given or could be detected on the device — connect with an app id (e.g. com.example.app)
+  ```
+
+  "or could be detected" was not true on iOS: nothing was even attempted there. Looking for something to attempt
+  found nothing usable either — `launchctl list` names every running app rather than the frontmost one,
+  `simctl appinfo` names none, and the view hierarchy's app label is not dependably present (the same query
+  returned `"Safari"` once and `undefined` a minute later). Android was only better by luck: connecting while the
+  device sat on the home screen detected the _launcher_, which Maestro answers with `Unable to launch app
+com.google.android.apps.nexuslauncher`, and the connect failed the same way.
+
+  The premise was wrong. Maestro does not need an app **id** for every command, it needs a config **header** —
+  and `appId: any` is a valid one. Verified on a simulator: `tapOn` by point and by selector, `assertVisible`,
+  `extendedWaitUntil`, `swipe`, `waitForAnimationToEnd` and `back` all run under it.
+
+  - **Recording** now attaches to whatever is on screen when no app id was given and none could be detected, via
+    the new `ConnectOptions.attachWithoutApp` that only the recorder sets. A _detected_ app id that fails to
+    launch degrades the same way, because it was our guess — the home-screen case above now connects instead of
+    failing. An app id the caller **named** still throws: getting that wrong is worth hearing about.
+  - **Replay** keeps the refusal, deliberately. A test that never launches its app and taps whatever happens to
+    be in front of it passes or fails for reasons unrelated to the test, so the fixture does not pass the flag and
+    gets a message naming what to set.
+  - A session with no app pinned **says so on screen** through the connection warnings, because the recording is
+    real and the generated test still needs an `appId` to run. Codegen emits none rather than `any`, which is a
+    header wildcard and not a bundle id anything could launch.
+
+  Found while fixing it: the iOS app picker was hiding every system app. A fresh simulator has three user apps
+  and seventeen system ones, so Settings and Safari — what every mobile example and most first recordings use —
+  were absent from the list, on the one platform where the app id could not be detected either. Android had
+  always listed both. The picker now lists them with the user's own apps first.
+
+  Also reported and fixed: **the device picker was showing simulators as UDIDs with no name in them.** The label
+  was built from the handle the picker sends, and iOS sends the UDID — so every row read
+  `69F9D9B8-CBAA-4D98-94CB-2B91B4EA4BD2`, leaving nothing to choose by. Every row now leads with the device's own
+  name and keeps a short id after it, because simulator names repeat legally (this machine has five called
+  "iPhone 17 Pro") and something has to tell them apart. Booted devices are listed first. The value the picker
+  sends is unchanged, so a recording still pins the durable handle.
+
+### Patch Changes
+
+- Updated dependencies [2065647]
+- Updated dependencies [2065647]
+- Updated dependencies [2065647]
+- Updated dependencies [b75229a]
+  - @pwtap/mobile-core@1.3.0
+
 ## 2.1.1
 
 ### Patch Changes
