@@ -252,7 +252,7 @@ export async function provideBudget(
    * ends are exactly the ones a resource budget is for.
    */
   const inFlight = new Map<Request, () => void>();
-  let pending: Array<Promise<ResourceRecord | null>> = [];
+  let pending: Array<{ request: Request; record: Promise<ResourceRecord | null> }> = [];
 
   const onRequest = (request: Request): void => {
     let settle = (): void => {};
@@ -260,8 +260,9 @@ export async function provideBudget(
       settle = resolve;
     });
     inFlight.set(request, settle);
-    pending.push(
-      settled
+    pending.push({
+      request,
+      record: settled
         // `sizes()` is only valid once the request has settled, which is what `settled` waits for.
         .then(async () => {
           const sizes = await request.sizes();
@@ -275,7 +276,7 @@ export async function provideBudget(
         // A request that failed, or whose sizes have gone because the page navigated away mid-flight, is dropped
         // rather than failing the test. This is accounting; it is not the thing under test.
         .catch(() => null),
-    );
+    });
   };
 
   const onSettled = (request: Request): void => {
@@ -312,7 +313,14 @@ export async function provideBudget(
 
   const collect = async (options: CollectOptions = {}): Promise<PageResources> => {
     await settleNetwork(options.settleMs ?? DEFAULT_SETTLE_MS);
-    const resources = (await Promise.all(pending)).filter(
+    // Only what has actually settled is read. A record resolves on `requestfinished` / `requestfailed`, so awaiting
+    // one that is still open would outlast the bounded wait and, on a page with polling or a websocket, never
+    // return — the hang the settle budget exists to prevent. Anything still in flight stays in `pending` and is
+    // counted by the next `collect()` if it arrives by then.
+    const settled = pending
+      .filter(entry => !inFlight.has(entry.request))
+      .map(entry => entry.record);
+    const resources = (await Promise.all(settled)).filter(
       (record): record is ResourceRecord => record !== null,
     );
     measured = { ...totalsOf(resources), resources };

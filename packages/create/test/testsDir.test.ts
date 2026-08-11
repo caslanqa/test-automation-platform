@@ -67,6 +67,16 @@ test('a script that only LOOKS like it names the folder is left alone', () => {
   assert.equal(remapTestsDirInScript('rm -rf tests-old/x', 'e2e'), 'rm -rf tests-old/x');
 });
 
+test('a folder name containing $ is written literally, not as a substitution token', () => {
+  // `$1` in a replacement string means "the matched group", so a string replacement would splice the leading space
+  // back in and lose the folder the user asked for.
+  assert.equal(
+    remapTestsDirInScript('playwright test tests/perf', 'e2e$1'),
+    'playwright test e2e$1/perf',
+  );
+  assert.equal(remapTestsDirInScript('eslint "tests/**/*.ts"', '$&x'), 'eslint "$&x/**/*.ts"');
+});
+
 test('readTestsDir reads what create recorded, and falls back when it is absent', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pwtap-testsdir-'));
   try {

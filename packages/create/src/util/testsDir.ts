@@ -60,5 +60,10 @@ export function remapTestsDirInScript(script: string, testsDir: string): string 
   if (testsDir === DEFAULT_TESTS_DIR) {
     return script;
   }
-  return script.replace(new RegExp(`(^|[\\s"'=])${DEFAULT_TESTS_DIR}(?=/)`, 'g'), `$1${testsDir}`);
+  // A replacer function, not a replacement string: `$` in a folder name is a substitution token there (`$&`, `$1`),
+  // so `--tests-dir 'e2e$1'` would splice the match back in instead of writing the folder the user asked for.
+  return script.replace(
+    new RegExp(`(^|[\\s"'=])${DEFAULT_TESTS_DIR}(?=/)`, 'g'),
+    (_match, prefix: string) => `${prefix}${testsDir}`,
+  );
 }
