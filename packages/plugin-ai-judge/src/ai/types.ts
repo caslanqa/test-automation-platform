@@ -56,6 +56,10 @@ export interface JudgeMeta {
   source: SelectionSource;
   /** True when the verdict was replayed from `.judge/cache` instead of judged again. */
   cached?: boolean;
+  /** How many judgements were combined (only when `samples`/`jury` asked for more than one). */
+  votes?: number;
+  /** Share of those votes that agreed with the reported verdict — 1 is unanimous. */
+  agreement?: number;
 }
 
 /**
@@ -80,6 +84,19 @@ export interface JudgeInput {
   model?: string;
   /** Manual tier override; resolved via aiJudgeConfig.tierModels then dynamic assignment. */
   tier?: ModelTier;
+  /**
+   * Judge this many times and take the majority — the answer to a judge that flips on borderline
+   * material. Each sample is cached separately, so the cost is paid once. Default 1.
+   * @example { samples: 3 }
+   */
+  samples?: number;
+  /**
+   * Judge with each of these models and take the majority. A panel of smaller models agrees with
+   * humans better than one large judge and cannot share a single model's bias; combined with `samples`
+   * it is one vote per model per sample. A local panel pays a model swap per vote.
+   * @example { jury: ['local/qwen3.5:4b', 'local/llama3.1', 'anthropic/claude-opus-4-8'] }
+   */
+  jury?: string[];
   /**
    * Image to evaluate (multimodal judging) or, in compare mode, the ACTUAL image. Accepts a
    * Playwright screenshot Buffer, a data URI ("data:image/png;base64,..."), or a file path. Forces

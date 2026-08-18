@@ -7,6 +7,8 @@ const USAGE = `[ai-judge] judge:calibrate — measure a judge model against huma
   node …/calibrate/cli.js [dataset.json] [options]
 
   --model <id>          judge with this model; repeat to compare several (default: auto-routing)
+  --samples <n>         judge each case n times and take the majority
+  --jury <a,b,c>        judge each case with every model listed and take the majority
   --min-accuracy <n>    fail when accuracy is below n (0-1 or a percentage)
   --min-kappa <n>       fail when Cohen's kappa is below n
   --max-false-pass <n>  fail when more than n cases passed that a human failed
@@ -67,6 +69,11 @@ async function main(argv: string[]): Promise<number> {
   loadProjectEnv();
   const cases = loadDataset(file);
   const models = values(argv, '--model');
+  const samples = Number(values(argv, '--samples')[0] ?? NaN);
+  const jury = (values(argv, '--jury')[0] ?? '')
+    .split(',')
+    .map(entry => entry.trim())
+    .filter(Boolean);
   const minAccuracy = threshold(argv, '--min-accuracy');
   const minKappa = threshold(argv, '--min-kappa');
   const maxFalsePass = Number(values(argv, '--max-false-pass')[0] ?? NaN);
@@ -77,6 +84,8 @@ async function main(argv: string[]): Promise<number> {
     reports.push(
       await calibrate(cases, {
         ...(model === undefined ? {} : { model }),
+        ...(Number.isFinite(samples) ? { samples } : {}),
+        ...(jury.length > 0 ? { jury } : {}),
         onCase: (result, index, total) =>
           process.stdout.write(
             `  [${index + 1}/${total}] ${result.expected === result.actual ? 'ok  ' : 'MISS'} ${result.name} (${result.score}/100)\n`,

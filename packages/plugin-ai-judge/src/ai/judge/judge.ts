@@ -19,6 +19,7 @@ import {
 } from './judgePrompt.js';
 import { cacheKey, readCached, writeCached } from './verdictCache.js';
 import { VerdictParseError } from './verdictParser.js';
+import { aggregateVerdicts } from './vote.js';
 
 /** Normalize any thrown value to a readable string. */
 function errText(error: unknown): string {
@@ -66,34 +67,8 @@ async function judgeWithRepair(
   }
 }
 
-/**
- * Grade a chatbot response (and optionally an image) against a rubric using an LLM judge.
- *
- * Model selection is automatic and discovery-first. Complexity of the input maps to a tier
- * (simple/medium/complex); the tier resolves to a concrete model from whatever Ollama has
- * installed (ranked by size), pinned overrides in aiJudgeConfig.tierModels, or — only when no
- * compatible local model exists — a cloud model discovered from the 9Router gateway. Precedence:
- * `input.model` > `input.tier` > env `JUDGE_MODEL` > automatic.
- *
- * Determinism: temperature is 0 everywhere and every verdict is cached under `.judge/cache` keyed by
- * model + material, so a re-run replays the same judgement at no cost (`JUDGE_CACHE=off` to disable).
- * Set `verbose: true` to attach a routing trace as `verdict._meta`.
- *
- * @param input The user message, bot response, rubric, and optional image / model / tier / verbose.
- * @returns The parsed pass/fail verdict.
- * @example
- * <code>
- * const verdict = await judgeResponse({
- *   userMessage: 'What time do you open?',
- *   botResponse: 'We open at 9am every day.',
- *   rubric: 'Must state the store opens at 9am.',
- * });
- * expect(verdict.pass, verdict.reasoning).toBeTruthy();
- * </code>
- */
-export async function judgeResponse(input: JudgeInput): Promise<JudgeVerdict> {
-  validateJudgeInput(input);
-
+/** One judgement of the material. `sample` separates repeat samples in the cache; 0 is the first. */
+async function judgeOnce(input: JudgeInput, sample: number): Promise<JudgeVerdict> {
   const nonce = createNonce();
   const systemPrompt = buildSystemPrompt(input.referenceImage !== undefined, nonce);
   const userText = buildUserText(input, nonce);
@@ -116,7 +91,7 @@ export async function judgeResponse(input: JudgeInput): Promise<JudgeVerdict> {
       );
     }
 
-    const key = cacheKey(candidate.id, input);
+    const key = cacheKey(candidate.id, input, sample);
     const cached = readCached(key);
     if (cached !== undefined) {
       return input.verbose
@@ -145,4 +120,65 @@ export async function judgeResponse(input: JudgeInput): Promise<JudgeVerdict> {
 
   // No candidates at all (no compatible local model and no reachable cloud model).
   throw noModelError(plan.meta.tier, complexity.needsVision, registry, attempts);
+}
+
+/**
+ * Grade a chatbot response (and optionally an image) against a rubric using an LLM judge.
+ *
+ * Model selection is automatic and discovery-first. Complexity of the input maps to a tier
+ * (simple/medium/complex); the tier resolves to a concrete model from whatever Ollama has
+ * installed (ranked by size, judge-tuned models first), pinned overrides in aiJudgeConfig.tierModels,
+ * or — only when no compatible local model exists — a cloud model discovered from the 9Router gateway.
+ * Precedence: `input.model` > `input.tier` > env `JUDGE_MODEL` > automatic.
+ *
+ * Determinism: temperature is 0 everywhere and every verdict is cached under `.judge/cache` keyed by
+ * model + material, so a re-run replays the same judgement at no cost (`JUDGE_CACHE=off` to disable).
+ * `samples` / `jury` judge several times and take a strict majority — a tie fails. Set `verbose: true`
+ * to attach the routing trace (and the vote split) as `verdict._meta`.
+ *
+ * @param input The user message, bot response, rubric, and optional image / model / tier / samples /
+ * jury / verbose.
+ * @returns The parsed pass/fail verdict.
+ * @example
+ * <code>
+ * const verdict = await judgeResponse({
+ *   userMessage: 'What time do you open?',
+ *   botResponse: 'We open at 9am every day.',
+ *   rubric: 'Must state the store opens at 9am.',
+ * });
+ * expect(verdict.pass, verdict.reasoning).toBeTruthy();
+ * </code>
+ */
+export async function judgeResponse(input: JudgeInput): Promise<JudgeVerdict> {
+  validateJudgeInput(input);
+
+  const samples = Math.max(1, Math.round(input.samples ?? 1));
+  const voters = input.jury !== undefined && input.jury.length > 0 ? input.jury : [input.model];
+  if (voters.length === 1 && samples === 1) {
+    return judgeOnce(input, 0);
+  }
+
+  const verdicts: JudgeVerdict[] = [];
+  for (const model of voters) {
+    for (let sample = 0; sample < samples; sample++) {
+      // verbose while voting: the aggregate needs each voter's model to name the panel.
+      verdicts.push(
+        await judgeOnce(
+          { ...input, ...(model === undefined ? {} : { model }), verbose: true },
+          sample,
+        ),
+      );
+    }
+  }
+
+  const aggregate = aggregateVerdicts(verdicts);
+
+  return input.verbose
+    ? aggregate
+    : {
+        pass: aggregate.pass,
+        score: aggregate.score,
+        reasoning: aggregate.reasoning,
+        ...(aggregate.criteria === undefined ? {} : { criteria: aggregate.criteria }),
+      };
 }

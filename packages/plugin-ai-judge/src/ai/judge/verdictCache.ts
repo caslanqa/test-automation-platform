@@ -21,9 +21,10 @@ function enabled(): boolean {
  * Key for one judging call: same model and same material means the same verdict, so a re-run costs
  * nothing and cannot drift. The per-call nonce is deliberately absent — it changes every call and
  * would sink every hit — while `PROMPT_VERSION` is present, so a prompt change invalidates the cache.
+ * `sample` separates repeat samples of one input (`samples: 3`), which must not replay each other.
  * @example cacheKey('local/qwen3.5:9b', { rubric: 'Must state 9am.', botResponse: 'We open at 9am.' });
  */
-export function cacheKey(modelId: string, input: JudgeInput): string {
+export function cacheKey(modelId: string, input: JudgeInput, sample = 0): string {
   const hash = createHash('sha256');
   hash.update(
     JSON.stringify([
@@ -33,6 +34,7 @@ export function cacheKey(modelId: string, input: JudgeInput): string {
       input.userMessage ?? '',
       input.botResponse ?? '',
       input.referenceImage !== undefined, // rubric vs compare mode: same material, different question
+      sample === 0 ? '' : sample, // keeps a single-sample key identical to what it was before voting
     ]),
   );
   for (const image of collectImages(input)) {

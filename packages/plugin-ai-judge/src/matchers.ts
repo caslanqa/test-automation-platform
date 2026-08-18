@@ -13,6 +13,16 @@ export interface JudgeOverrides {
   model?: string;
   /** Force a tier for this assertion. */
   tier?: ModelTier;
+  /**
+   * Judge this many times and take a strict majority — for an assertion that sits on the borderline.
+   * @example await expectAi(input).toPassRubric({ samples: 3 });
+   */
+  samples?: number;
+  /**
+   * Judge with each of these models and take a strict majority (a tie fails).
+   * @example await expectAi(input).toPassRubric({ jury: ['local/qwen3.5:4b', 'local/llama3.1'] });
+   */
+  jury?: string[];
 }
 
 /** Options for the `toPassRubric` matcher. */
@@ -40,30 +50,31 @@ function isVerdict(value: AiExpectArg): value is JudgeVerdict {
 }
 
 /**
- * Resolve the argument to a verdict: judge an input (applying any per-call model/tier overrides),
- * or return a verdict unchanged. Overrides on an already-computed verdict are a usage error — the
- * model was chosen when it was judged — so fail loudly rather than silently ignore them.
+ * Resolve the argument to a verdict: judge an input (applying any per-call judging overrides), or
+ * return a verdict unchanged. Overrides on an already-computed verdict are a usage error — the model
+ * was chosen when it was judged — so fail loudly rather than silently ignore them.
  */
 async function toVerdict(
   value: AiExpectArg,
   overrides: JudgeOverrides = {},
 ): Promise<JudgeVerdict> {
+  const given = Object.entries(overrides).filter(([, option]) => option !== undefined);
   if (isVerdict(value)) {
-    if (overrides.model !== undefined || overrides.tier !== undefined) {
+    if (given.length > 0) {
       throw new Error(
-        '[expectAi] model/tier options apply only when judging a JudgeInput; the value passed is an ' +
-          'already-computed verdict. Pass model/tier to judgeResponse() or expectAi(input) instead.',
+        `[expectAi] ${given.map(([name]) => name).join('/')} apply only when judging a JudgeInput; the ` +
+          'value passed is an already-computed verdict. Pass them to judgeResponse() or expectAi(input) instead.',
       );
     }
     return value;
   }
+
   return judgeResponse({
     // Default `verbose` on so the reported judgement carries routing (`_meta.selectedModel`, tier);
     // an explicit `verbose` in the input still wins.
     verbose: true,
     ...value,
-    ...(overrides.model !== undefined ? { model: overrides.model } : {}),
-    ...(overrides.tier !== undefined ? { tier: overrides.tier } : {}),
+    ...Object.fromEntries(given),
   });
 }
 
@@ -86,6 +97,12 @@ function renderVerdict(verdict: JudgeVerdict): string {
   if (verdict._meta) {
     const cached = verdict._meta.cached === true ? ', cached' : '';
     lines.push(`Model: ${verdict._meta.selectedModel} (tier ${verdict._meta.tier}${cached})`);
+    if (verdict._meta.votes !== undefined && verdict._meta.agreement !== undefined) {
+      const agreeing = Math.round(verdict._meta.agreement * verdict._meta.votes);
+      lines.push(
+        `Votes: ${agreeing}/${verdict._meta.votes} agreed on ${verdict.pass ? 'pass' : 'fail'}`,
+      );
+    }
   }
   if (verdict.criteria && verdict.criteria.length > 0) {
     const met = verdict.criteria.filter(item => item.met).length;
@@ -97,6 +114,16 @@ function renderVerdict(verdict: JudgeVerdict): string {
   lines.push(`Reasoning: ${verdict.reasoning || '(none)'}`);
 
   return lines.join('\n');
+}
+
+/** The judging overrides out of a matcher's options — `minScore` and `strict` are the matcher's own. */
+function overridesOf(options: PassRubricOptions | MatchImageOptions): JudgeOverrides {
+  return {
+    model: options.model,
+    tier: options.tier,
+    samples: options.samples,
+    jury: options.jury,
+  };
 }
 
 /** The failing requirements, for the assertion message — a failure that names them needs no report. */
@@ -175,7 +202,7 @@ export const expectAi = baseExpect.extend({
   /** Assert the material satisfies the rubric (optionally also meeting a minimum score). */
   async toPassRubric(received: AiExpectArg, options: PassRubricOptions = {}) {
     const assertionName = 'toPassRubric';
-    const verdict = await judgeAndReport(received, { model: options.model, tier: options.tier });
+    const verdict = await judgeAndReport(received, overridesOf(options));
     const scoreOk = options.minScore === undefined || verdict.score >= options.minScore;
     // Positive-sense result; Playwright inverts it for `.not` — do not flip here.
     const pass = verdict.pass && scoreOk;
@@ -231,7 +258,7 @@ export const expectAi = baseExpect.extend({
       throw new Error('[expectAi] toMatchImage needs the actual `image` on the received input.');
     }
 
-    const overrides = { model: options.model, tier: options.tier };
+    const overrides = overridesOf(options);
     const first = await judgeAndReport({ ...received, referenceImage: expected }, overrides);
     const verdict =
       options.strict === true

@@ -72,6 +72,10 @@ export interface CalibrateOptions {
   model?: string;
   /** Tier to force instead of a model. */
   tier?: ModelTier;
+  /** Judge each case this many times and take the majority (measures what sampling buys). */
+  samples?: number;
+  /** Judge each case with every one of these models and take the majority. */
+  jury?: string[];
   /** Called after each case, for progress output. */
   onCase?: (result: CaseResult, index: number, total: number) => void;
 }
@@ -96,6 +100,8 @@ export async function calibrate(
       ...entry.input,
       ...(options.model === undefined ? {} : { model: options.model }),
       ...(options.tier === undefined ? {} : { tier: options.tier }),
+      ...(options.samples === undefined ? {} : { samples: options.samples }),
+      ...(options.jury === undefined ? {} : { jury: options.jury }),
       verbose: true,
     });
     judged ??= verdict._meta?.selectedModel;

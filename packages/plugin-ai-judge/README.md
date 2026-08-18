@@ -59,9 +59,18 @@ The model id's **prefix** routes it to a provider:
 
 `anthropic/` is **native** (your own Anthropic key). To reach Claude _through_ OpenRouter instead, use `openrouter/anthropic/claude-3.5-sonnet` — the prefixes don't collide.
 
+## When one judgement is not enough — `samples` and `jury`
+
+A judge that sits on the borderline of a rubric answers differently on different runs. `samples: n` judges the same material n times; `jury: [...]` judges it with each model listed — a panel of smaller models agrees with humans better than one large judge and cannot share a single model's bias. Both take a **strict majority**, so a tie fails: judges disagreeing is not evidence the material is right. The score is the median of the votes, the split lands in the report (`Votes: 2/3 agreed on fail`), and each sample is cached separately, so the cost is paid once.
+
+```ts
+await expect(input).toPassRubric({ samples: 3 });
+await expect(input).toPassRubric({ jury: ['local/qwen3.5:4b', 'anthropic/claude-opus-4-8'] });
+```
+
 ## Measure the judge — `npm run judge:calibrate`
 
-A judge nobody measured is a test nobody validated. Put your own labelled examples in `tests/ai-judge/calibration.json` (`expected` is the verdict a **human** gives), and the command grades them with one or more models and reports accuracy, Cohen's kappa and — the number that matters in a suite — how many cases the judge **passed that a human failed**. Compare candidates in one run with repeated `--model`, and gate CI with `--min-accuracy` / `--min-kappa` / `--max-false-pass` (non-zero exit when a gate fails). Verdicts come from the same cache as a test run, so re-running an unchanged dataset is free.
+A judge nobody measured is a test nobody validated. Put your own labelled examples in `tests/ai-judge/calibration.json` (`expected` is the verdict a **human** gives), and the command grades them with one or more models and reports accuracy, Cohen's kappa and — the number that matters in a suite — how many cases the judge **passed that a human failed**. Compare candidates in one run with repeated `--model` (or measure what voting buys with `--samples` / `--jury`), and gate CI with `--min-accuracy` / `--min-kappa` / `--max-false-pass` (non-zero exit when a gate fails). Verdicts come from the same cache as a test run, so re-running an unchanged dataset is free.
 
 ```bash
 npm run judge:calibrate -- --model local/qwen3.5:4b --model anthropic/claude-opus-4-8 --max-false-pass 0

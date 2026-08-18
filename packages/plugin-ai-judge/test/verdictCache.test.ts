@@ -47,6 +47,13 @@ test('a different model, response, rubric or mode yields a different key', () =>
   );
 });
 
+test('repeat samples of one input get their own keys, and sample 0 keeps the old key', () => {
+  const base = cacheKey('local/qwen3.5:9b', INPUT);
+  assert.equal(cacheKey('local/qwen3.5:9b', INPUT, 0), base);
+  assert.notEqual(cacheKey('local/qwen3.5:9b', INPUT, 1), base);
+  assert.notEqual(cacheKey('local/qwen3.5:9b', INPUT, 2), cacheKey('local/qwen3.5:9b', INPUT, 1));
+});
+
 test('images take part in the key', () => {
   assert.notEqual(
     cacheKey('m', { rubric: 'r', image: Buffer.from('one') }),
