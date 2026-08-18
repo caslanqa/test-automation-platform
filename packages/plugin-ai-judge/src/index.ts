@@ -10,7 +10,12 @@
  * await expect({ userMessage, botResponse, rubric }).toPassRubric({ minScore: 80 });
  */
 export { expectAi as expect, expectAi } from './matchers.js';
-export type { AiExpectArg, JudgeOverrides, PassRubricOptions } from './matchers.js';
+export type {
+  AiExpectArg,
+  JudgeOverrides,
+  MatchImageOptions,
+  PassRubricOptions,
+} from './matchers.js';
 
 export type {
   JudgeInput,

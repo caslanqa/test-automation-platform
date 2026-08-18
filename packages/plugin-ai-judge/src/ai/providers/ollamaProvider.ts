@@ -1,8 +1,8 @@
 import { imageToBase64 } from '../judge/judgePrompt.js';
-import { parseVerdict } from '../judge/verdictParser.js';
+import { VERDICT_SCHEMA, parseVerdict } from '../judge/verdictParser.js';
 import type { JudgeVerdict } from '../types.js';
 import { withModelGate } from './ollamaGate.js';
-import { type AIProvider, JudgeHttpError } from './provider.js';
+import { type AIProvider, JudgeHttpError, judgeFetch } from './provider.js';
 
 /** Strip a trailing /v1 from JUDGE_OLLAMA_BASE_URL to reach Ollama's native API root. */
 export function ollamaApiBase(): string {
@@ -34,7 +34,7 @@ export const ollamaProvider: AIProvider = {
 
     // Serialize across workers and keep a single model resident at a time (see ollamaGate).
     return withModelGate(model, apiBase, async () => {
-      const response = await fetch(`${apiBase}/api/chat`, {
+      const response = await judgeFetch('Ollama', `${apiBase}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -42,6 +42,7 @@ export const ollamaProvider: AIProvider = {
           stream: false,
           think: false, // disable thinking → fast (qwen3.x reasoning adds ~40s/call otherwise)
           keep_alive: process.env.JUDGE_OLLAMA_KEEP_ALIVE ?? '30m', // keep resident across the run
+          format: VERDICT_SCHEMA, // constrained decoding: the reply is the verdict, never prose
           options: { temperature: 0 },
           messages: [{ role: 'system', content: systemPrompt }, userMessage],
         }),

@@ -11,6 +11,9 @@ playwright/.cache/
 # Cached auth sessions (per-session storage state)
 .auth/
 
+# AI judge: cross-worker model gate + cached verdicts
+.judge/
+
 # Secrets — only the *.example.json files are tracked
 env/environments.json
 testData/users.json

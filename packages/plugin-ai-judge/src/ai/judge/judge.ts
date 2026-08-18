@@ -9,13 +9,16 @@ import {
   planSelection,
   toApiModel,
 } from '../router/modelRouter.js';
-import type { JudgeInput, JudgeVerdict } from '../types.js';
+import type { JudgeInput, JudgeVerdict, ModelProfile } from '../types.js';
 import {
-  COMPARE_SYSTEM_PROMPT,
-  SYSTEM_PROMPT,
+  REPAIR_HINT,
+  buildSystemPrompt,
   buildUserText,
   collectImages,
+  createNonce,
 } from './judgePrompt.js';
+import { cacheKey, readCached, writeCached } from './verdictCache.js';
+import { VerdictParseError } from './verdictParser.js';
 
 /** Normalize any thrown value to a readable string. */
 function errText(error: unknown): string {
@@ -39,6 +42,31 @@ function validateJudgeInput(input: JudgeInput): void {
 }
 
 /**
+ * Judge once, and once more with a blunter reminder when the reply carried no JSON. Small local models
+ * occasionally answer in prose despite constrained decoding, and a second ask is cheaper than failing
+ * a test on formatting.
+ */
+async function judgeWithRepair(
+  candidate: ModelProfile,
+  systemPrompt: string,
+  userText: string,
+  images: Array<string | Buffer>,
+): Promise<JudgeVerdict> {
+  const provider = getProvider(candidate);
+  const model = toApiModel(candidate);
+  try {
+    return await provider.judge(model, systemPrompt, userText, images);
+  } catch (error) {
+    if (!(error instanceof VerdictParseError)) {
+      throw error;
+    }
+    console.warn(`[ai-judge] ${candidate.id} did not return JSON; asking once more`);
+
+    return provider.judge(model, systemPrompt, `${userText}\n\n${REPAIR_HINT}`, images);
+  }
+}
+
+/**
  * Grade a chatbot response (and optionally an image) against a rubric using an LLM judge.
  *
  * Model selection is automatic and discovery-first. Complexity of the input maps to a tier
@@ -47,8 +75,9 @@ function validateJudgeInput(input: JudgeInput): void {
  * compatible local model exists — a cloud model discovered from the 9Router gateway. Precedence:
  * `input.model` > `input.tier` > env `JUDGE_MODEL` > automatic.
  *
- * Determinism: temperature is 0 everywhere; name a model (input.model / JUDGE_MODEL) to pin the
- * judge for reproducible CI. Set `verbose: true` to attach a routing trace as `verdict._meta`.
+ * Determinism: temperature is 0 everywhere and every verdict is cached under `.judge/cache` keyed by
+ * model + material, so a re-run replays the same judgement at no cost (`JUDGE_CACHE=off` to disable).
+ * Set `verbose: true` to attach a routing trace as `verdict._meta`.
  *
  * @param input The user message, bot response, rubric, and optional image / model / tier / verbose.
  * @returns The parsed pass/fail verdict.
@@ -65,8 +94,9 @@ function validateJudgeInput(input: JudgeInput): void {
 export async function judgeResponse(input: JudgeInput): Promise<JudgeVerdict> {
   validateJudgeInput(input);
 
-  const systemPrompt = input.referenceImage !== undefined ? COMPARE_SYSTEM_PROMPT : SYSTEM_PROMPT;
-  const userText = buildUserText(input);
+  const nonce = createNonce();
+  const systemPrompt = buildSystemPrompt(input.referenceImage !== undefined, nonce);
+  const userText = buildUserText(input, nonce);
   const images = collectImages(input);
   const complexity = analyzeComplexity(input, aiJudgeConfig);
   const registry = await getRegistry(aiJudgeConfig);
@@ -86,13 +116,18 @@ export async function judgeResponse(input: JudgeInput): Promise<JudgeVerdict> {
       );
     }
 
+    const key = cacheKey(candidate.id, input);
+    const cached = readCached(key);
+    if (cached !== undefined) {
+      return input.verbose
+        ? { ...cached, _meta: { ...plan.meta, selectedModel: candidate.id, cached: true } }
+        : cached;
+    }
+
     try {
-      const verdict = await getProvider(candidate).judge(
-        toApiModel(candidate),
-        systemPrompt,
-        userText,
-        images,
-      );
+      const verdict = await judgeWithRepair(candidate, systemPrompt, userText, images);
+      writeCached(key, verdict);
+
       return input.verbose
         ? { ...verdict, _meta: { ...plan.meta, selectedModel: candidate.id } }
         : verdict;

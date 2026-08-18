@@ -1,7 +1,7 @@
 import { imageToDataUri } from '../judge/judgePrompt.js';
-import { parseVerdict } from '../judge/verdictParser.js';
+import { VERDICT_SCHEMA, parseVerdict } from '../judge/verdictParser.js';
 import type { ChatCompletionResponse, JudgeVerdict } from '../types.js';
-import { type AIProvider, JudgeHttpError } from './provider.js';
+import { type AIProvider, JudgeHttpError, judgeFetch } from './provider.js';
 
 /** Base URL of the default OpenAI-compatible gateway (JUDGE_GATEWAY_BASE_URL) — also used by discovery. */
 export function openAIBase(): string {
@@ -76,19 +76,35 @@ export function createOpenAICompatibleProvider(cfg: OpenAICompatibleConfig): AIP
               })),
             ];
 
-      const response = await fetch(`${baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model,
-          stream: false,
-          temperature: 0,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userContent },
-          ],
-        }),
-      });
+      const send = (structured: boolean): Promise<Response> =>
+        judgeFetch(cfg.label, `${baseUrl}/chat/completions`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model,
+            stream: false,
+            temperature: 0,
+            ...(structured
+              ? {
+                  response_format: {
+                    type: 'json_schema',
+                    json_schema: { name: 'verdict', strict: true, schema: VERDICT_SCHEMA },
+                  },
+                }
+              : {}),
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: userContent },
+            ],
+          }),
+        });
+
+      // Ask for a schema-constrained verdict first, then degrade: plenty of OpenAI-compatible
+      // endpoints and models reject `response_format` outright, and the parser copes without it.
+      let response = await send(true);
+      if (response.status === 400 || response.status === 422) {
+        response = await send(false);
+      }
 
       if (!response.ok) {
         throw new JudgeHttpError(

@@ -38,6 +38,8 @@ export interface JudgeMeta {
   reasons: string[];
   /** Which precedence branch selected the model. */
   source: SelectionSource;
+  /** True when the verdict was replayed from `.judge/cache` instead of judged again. */
+  cached?: boolean;
 }
 
 /**

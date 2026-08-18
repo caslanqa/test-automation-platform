@@ -21,6 +21,16 @@ export interface PassRubricOptions extends JudgeOverrides {
   minScore?: number;
 }
 
+/** Options for the `toMatchImage` matcher. */
+export interface MatchImageOptions extends PassRubricOptions {
+  /**
+   * Judge both orders — actual first, then reference first — and require the same answer. A verdict
+   * that flips when the two images swap places is position bias, not a match. Costs a second call.
+   * @example await expectAi({ image: shot }).toMatchImage(golden, { strict: true });
+   */
+  strict?: boolean;
+}
+
 /** A value is a verdict when it carries the judge's pass/score fields; otherwise it is an input. */
 function isVerdict(value: AiExpectArg): value is JudgeVerdict {
   return (
@@ -74,7 +84,8 @@ function currentTestInfo(): TestInfo | undefined {
 function renderVerdict(verdict: JudgeVerdict): string {
   const lines = [`Result: ${verdict.pass ? 'pass' : 'fail'}`, `Score: ${verdict.score}/100`];
   if (verdict._meta) {
-    lines.push(`Model: ${verdict._meta.selectedModel} (tier ${verdict._meta.tier})`);
+    const cached = verdict._meta.cached === true ? ', cached' : '';
+    lines.push(`Model: ${verdict._meta.selectedModel} (tier ${verdict._meta.tier}${cached})`);
   }
   lines.push(`Reasoning: ${verdict.reasoning || '(none)'}`);
   return lines.join('\n');
@@ -102,6 +113,25 @@ async function judgeAndReport(
     });
   }
   return verdict;
+}
+
+/**
+ * Merge the two image orders of a strict comparison: a match needs both to agree, and the score is
+ * the lower of the two. Disagreement is reported as what it is — an order-dependent verdict.
+ */
+function combineSwapped(first: JudgeVerdict, swapped: JudgeVerdict): JudgeVerdict {
+  const agree = first.pass === swapped.pass;
+  const both = `actual-first: ${first.reasoning} | reference-first: ${swapped.reasoning}`;
+
+  return {
+    pass: agree && first.pass,
+    score: Math.min(first.score, swapped.score),
+    reasoning: agree
+      ? both
+      : `Order-dependent verdict (position bias): actual-first ${first.pass ? 'match' : 'mismatch'} ` +
+        `(${first.score}), reference-first ${swapped.pass ? 'match' : 'mismatch'} (${swapped.score}). ${both}`,
+    ...(first._meta === undefined ? {} : { _meta: first._meta }),
+  };
 }
 
 /**
@@ -167,13 +197,13 @@ export const expectAi = baseExpect.extend({
    * Assert the received input's actual `image` matches the given reference image (compare mode).
    * The received value must be a JudgeInput carrying `image` — a precomputed verdict cannot be
    * re-judged. Pass a `rubric` in the input to focus the comparison; `options` accepts minScore /
-   * model / tier.
+   * model / tier / strict (judge both image orders and require the same answer).
    * @example await expectAi({ image: actualShot }).toMatchImage(expectedLogo, { minScore: 90 });
    */
   async toMatchImage(
     received: AiExpectArg,
     expected: string | Buffer,
-    options: PassRubricOptions = {},
+    options: MatchImageOptions = {},
   ) {
     const assertionName = 'toMatchImage';
     if (isVerdict(received)) {
@@ -181,11 +211,23 @@ export const expectAi = baseExpect.extend({
         '[expectAi] toMatchImage needs a JudgeInput carrying the actual `image`, not a verdict.',
       );
     }
+    const actualImage = received.image;
+    if (actualImage === undefined) {
+      throw new Error('[expectAi] toMatchImage needs the actual `image` on the received input.');
+    }
 
-    const verdict = await judgeAndReport(
-      { ...received, referenceImage: expected },
-      { model: options.model, tier: options.tier },
-    );
+    const overrides = { model: options.model, tier: options.tier };
+    const first = await judgeAndReport({ ...received, referenceImage: expected }, overrides);
+    const verdict =
+      options.strict === true
+        ? combineSwapped(
+            first,
+            await judgeAndReport(
+              { ...received, image: expected, referenceImage: actualImage },
+              overrides,
+            ),
+          )
+        : first;
     const scoreOk = options.minScore === undefined || verdict.score >= options.minScore;
     // Positive-sense result; Playwright inverts it for `.not` — do not flip here.
     const pass = verdict.pass && scoreOk;

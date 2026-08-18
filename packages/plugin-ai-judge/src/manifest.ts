@@ -25,6 +25,8 @@ export const manifest = {
     GROQ_API_KEY: '',
     JUDGE_GATEWAY_BASE_URL: '',
     JUDGE_API_KEY: '',
+    JUDGE_TIMEOUT_MS: '180000',
+    JUDGE_CACHE: 'on',
   },
   fixture: {
     importFrom: '@pwtap/plugin-ai-judge',
@@ -38,6 +40,9 @@ export const manifest = {
     'Pick a model with `JUDGE_MODEL` in `env/environments.json` — `local/<ollama-model>`, a bare id for',
     'an OpenAI-compatible gateway (`JUDGE_GATEWAY_BASE_URL` + `JUDGE_API_KEY`), or `anthropic/<model>`',
     '(`ANTHROPIC_API_KEY`).',
+    '',
+    'Verdicts are cached in `.judge/cache` keyed by model + material, so a re-run costs nothing',
+    '(`JUDGE_CACHE=off` to re-judge); a call is bounded by `JUDGE_TIMEOUT_MS`.',
     '',
     '```ts',
     'await expect({ userMessage, botResponse, rubric }).toPassRubric({ minScore: 80 });',

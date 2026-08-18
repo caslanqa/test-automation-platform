@@ -46,6 +46,15 @@ The model id's **prefix** routes it to a provider:
 
 `anthropic/` is **native** (your own Anthropic key). To reach Claude _through_ OpenRouter instead, use `openrouter/anthropic/claude-3.5-sonnet` — the prefixes don't collide.
 
+## Determinism, cost and safety
+
+Every verdict is cached under `.judge/cache`, keyed by model + material, so a re-run replays the same judgement for free — `JUDGE_CACHE=off` re-judges from scratch. A single request is bounded by `JUDGE_TIMEOUT_MS` (default `180000`), and rate limits (429) and 5xx are retried with backoff instead of failing the test. The response under test is quoted to the judge as data inside a per-call `<material-…>` tag, so a bot reply that instructs the judge to pass gets graded, not obeyed. The judge is asked for its reasoning **before** the score, and constrained to the verdict schema where the backend supports it (Ollama `format`, OpenAI-compatible `response_format`).
+
+```ts
+// Compare mode: judge both image orders and fail a verdict that flips when they swap.
+await expect({ image: shot }).toMatchImage(golden, { strict: true });
+```
+
 ## Bring your own provider
 
 ```ts

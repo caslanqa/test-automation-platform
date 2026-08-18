@@ -1,7 +1,7 @@
 import { imageToDataUri } from '../judge/judgePrompt.js';
 import { parseVerdict } from '../judge/verdictParser.js';
 import type { JudgeVerdict } from '../types.js';
-import { type AIProvider, JudgeHttpError } from './provider.js';
+import { type AIProvider, JudgeHttpError, judgeTimeoutMs } from './provider.js';
 
 /** API key for native Claude judging (Anthropic Messages API). */
 function anthropicApiKey(): string {
@@ -39,7 +39,8 @@ function toImageSource(image: string | Buffer): { media_type: MediaType; data: s
 export const anthropicProvider: AIProvider = {
   async judge(model, systemPrompt, userText, images): Promise<JudgeVerdict> {
     const { default: Anthropic } = await import('@anthropic-ai/sdk');
-    const client = new Anthropic({ apiKey: anthropicApiKey() });
+    // The SDK already backs off on 429/5xx (maxRetries defaults to 2); only the deadline is ours to set.
+    const client = new Anthropic({ apiKey: anthropicApiKey(), timeout: judgeTimeoutMs() });
 
     const content = [
       { type: 'text' as const, text: userText },
