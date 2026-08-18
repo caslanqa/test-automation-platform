@@ -896,10 +896,20 @@ budget). `run` never clears the draft.
 READMEs for `@pwtap/mobile-core` and `@pwtap/mobile-inspector` (neither had one).
 → **Exit: MET, with the device matrix verified by hand.** CI is green on `tsc -b`, `eslint`, the suite and the
 NFR checks. All four combinations — Android × {Maestro, Appium} and iOS × {Maestro, Appium} — were driven
-end-to-end on real devices: connect, record, reload mid-session, record again, save, run. `device.yml` runs the
-same matrix nightly; two defects in it were found and fixed rather than left to a green-looking run — the
-Android job was on a Linux runner `@pwtap/platform` cannot support at all, and the iOS job never booted a
-simulator, so the test skipped and the gate was vacuous.
+end-to-end on real devices: connect, record, reload mid-session, record again, save, run.
+
+**`device.yml` runs the iOS half of that matrix nightly, and only the iOS half.** It is worth stating what it
+took to get there, because the workflow failed 21 consecutive nightlies without ever passing once. The iOS jobs
+named a simulator — `xcrun simctl boot 'iPhone 16 Pro'` — and the runner image moved to Xcode 26, whose
+simulators are iPhone 17/17e/16e: `Invalid device or device pair`. The job now picks whatever iPhone the image
+offers, and both drivers pass against it (verified locally on a freshly booted simulator: Maestro 35 s, Appium
+71 s). The Android jobs cannot pass on any runner this product supports: GitHub's macOS runners are Apple
+silicon and do not expose the Hypervisor framework, so the emulator died at launch with `HVF error:
+HV_UNSUPPORTED` every night, while Linux runners — which do have KVM — hit `no Platform implementation for
+'linux'` from `@pwtap/platform`. They are removed rather than left red, since a permanently failing nightly
+also hides the iOS result. Restoring them is a product decision: add a `linux.ts` platform implementation and
+run the emulator on `ubuntu-latest` with KVM, or use a self-hosted Intel Mac. Until then Android device
+coverage is the local `npm run test:device`.
 
 ### Test strategy
 
