@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'crypto';
 import fs from 'fs';
 import path from 'path';
 
-import type { JudgeInput, JudgeVerdict } from '../types.js';
+import type { JudgeInput, JudgeVerdict, ModelProfile } from '../types.js';
 import { PROMPT_VERSION, collectImages, imageToBase64, modeOf } from './judgePrompt.js';
 
 const OFF = new Set(['off', '0', 'false', 'no']);
@@ -18,18 +18,25 @@ function enabled(): boolean {
 }
 
 /**
- * Key for one judging call: same model and same material means the same verdict, so a re-run costs
- * nothing and cannot drift. The per-call nonce is deliberately absent — it changes every call and
- * would sink every hit — while `PROMPT_VERSION` is present, so a prompt change invalidates the cache.
- * `sample` separates repeat samples of one input (`samples: 3`), which must not replay each other.
- * @example cacheKey('local/qwen3.5:9b', { rubric: 'Must state 9am.', botResponse: 'We open at 9am.' });
+ * Key for one judging call: same model build and same material means the same verdict, so a re-run
+ * costs nothing and cannot drift. The model's `revision` is part of it — `ollama pull` replaces the
+ * weights behind an unchanged tag, and without the digest every stale verdict would replay forever.
+ * The per-call nonce is deliberately absent (it changes every call and would sink every hit) while
+ * `PROMPT_VERSION` is present, so a prompt change invalidates the cache. `sample` separates repeat
+ * samples of one input (`samples: 3`), which must not replay each other.
+ * @example cacheKey({ id: 'local/qwen3.5:9b', provider: 'ollama', supportsVision: false }, input);
  */
-export function cacheKey(modelId: string, input: JudgeInput, sample = 0): string {
+export function cacheKey(
+  model: Pick<ModelProfile, 'id' | 'revision'>,
+  input: JudgeInput,
+  sample = 0,
+): string {
   const hash = createHash('sha256');
   hash.update(
     JSON.stringify([
       PROMPT_VERSION,
-      modelId,
+      model.id,
+      model.revision ?? '',
       modeOf(input), // same material, different question
       input.rubric ?? '',
       input.referenceAnswer ?? '',

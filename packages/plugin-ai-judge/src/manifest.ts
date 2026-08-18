@@ -36,6 +36,7 @@ export const manifest = {
     expect: { export: 'expect', alias: 'aiExpect' },
   },
   examples: [{ src: 'templates/tests', dest: 'tests/ai-judge' }],
+  docs: [{ src: 'docs/AI_JUDGING.md', dest: 'docs/AI_JUDGING.md' }],
   readmeSection: [
     '## AI Judge',
     '',
@@ -48,6 +49,7 @@ export const manifest = {
     '(`JUDGE_CACHE=off` to re-judge); a call is bounded by `JUDGE_TIMEOUT_MS`.',
     '`npm run judge:calibrate` grades `tests/ai-judge/calibration.json` — your own labelled examples —',
     'and reports accuracy, Cohen’s kappa and false passes, so a judge model is chosen with evidence.',
+    'Full guide, with the measurements behind each default: `docs/AI_JUDGING.md`.',
     '',
     '```ts',
     'await expect({ userMessage, botResponse, rubric }).toPassRubric({ minScore: 80 });',

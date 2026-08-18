@@ -1,5 +1,13 @@
 import type { JudgeVerdict } from '../types.js';
 
+/** Total of one numeric field across the votes, treating a missing value as 0. */
+function sum(
+  verdicts: JudgeVerdict[],
+  pick: (verdict: JudgeVerdict) => number | undefined,
+): number {
+  return verdicts.reduce((total, verdict) => total + (pick(verdict) ?? 0), 0);
+}
+
 /** Middle score of the votes (mean of the two middles when even) — one outlier cannot drag it. */
 function medianScore(verdicts: JudgeVerdict[]): number {
   const scores = verdicts.map(verdict => verdict.score).sort((a, b) => a - b);
@@ -48,6 +56,10 @@ export function aggregateVerdicts(verdicts: JudgeVerdict[]): JudgeVerdict {
             selectedModel: [...new Set(models)].join(', ') || representative._meta.selectedModel,
             votes: verdicts.length,
             agreement: agreeing.length / verdicts.length,
+            // What the panel cost as a whole, not what one voter cost.
+            cached: verdicts.every(verdict => verdict._meta?.cached === true),
+            calls: sum(verdicts, verdict => verdict._meta?.calls),
+            latencyMs: sum(verdicts, verdict => verdict._meta?.latencyMs),
           },
         }),
   };

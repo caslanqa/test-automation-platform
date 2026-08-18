@@ -115,6 +115,12 @@ registerProvider('gemini', new GeminiProvider(), { prefix: 'gemini/' });
 // then: JUDGE_MODEL=gemini/gemini-2.0-flash
 ```
 
+## Full guide
+
+`docs/AI_JUDGING.md` — how to write a rubric that grades cleanly, which mode answers which question, the injection
+model, calibrating a judge against human labels, when sampling earns its cost, and what this plugin deliberately
+does not do. Every number in it came from a run.
+
 ## Requirements
 
 - Peer: `@playwright/test >= 1.61`. Node ≥ 22.23.

@@ -105,20 +105,34 @@ async function judgeOnce(input: JudgeInput, sample: number): Promise<JudgeVerdic
       );
     }
 
-    const key = cacheKey(candidate.id, input, sample);
+    const key = cacheKey(candidate, input, sample);
     const cached = readCached(key);
     if (cached !== undefined) {
       return input.verbose
-        ? { ...cached, _meta: { ...plan.meta, selectedModel: candidate.id, cached: true } }
+        ? {
+            ...cached,
+            _meta: {
+              ...plan.meta,
+              selectedModel: candidate.id,
+              cached: true,
+              calls: 0,
+              latencyMs: 0,
+            },
+          }
         : cached;
     }
 
     try {
+      const started = Date.now();
       const verdict = await judgeWithRepair(candidate, systemPrompt, userText, images);
+      const latencyMs = Date.now() - started;
       writeCached(key, verdict);
 
       return input.verbose
-        ? { ...verdict, _meta: { ...plan.meta, selectedModel: candidate.id } }
+        ? {
+            ...verdict,
+            _meta: { ...plan.meta, selectedModel: candidate.id, calls: 1, latencyMs },
+          }
         : verdict;
     } catch (error) {
       attempts.push({ id: candidate.id, error: errText(error) });

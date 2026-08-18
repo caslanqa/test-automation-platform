@@ -60,6 +60,10 @@ export interface JudgeMeta {
   votes?: number;
   /** Share of those votes that agreed with the reported verdict — 1 is unanimous. */
   agreement?: number;
+  /** Provider calls this verdict actually cost; 0 when every vote came from the cache. */
+  calls?: number;
+  /** Wall-clock time spent judging, in ms (0 for a replay). */
+  latencyMs?: number;
 }
 
 /** One turn of a multi-turn exchange, for judging an answer in the context it was given in. */
@@ -160,6 +164,11 @@ export interface ModelProfile {
   ownedBy?: string;
   /** Whether the model can evaluate images. */
   supportsVision: boolean;
+  /**
+   * Build identifier of these exact weights (Ollama's digest, shortened). A re-pulled tag keeps its
+   * name and changes this, which is what keeps a cached verdict honest.
+   */
+  revision?: string;
   /** Parameter size in billions, when known (Ollama exposes it; the gateway does not). */
   paramsB?: number;
   /** Context window in tokens, when known. */

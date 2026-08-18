@@ -103,6 +103,14 @@ function renderVerdict(verdict: JudgeVerdict): string {
         `Votes: ${agreeing}/${verdict._meta.votes} agreed on ${verdict.pass ? 'pass' : 'fail'}`,
       );
     }
+    if (verdict._meta.calls !== undefined) {
+      const seconds = ((verdict._meta.latencyMs ?? 0) / 1000).toFixed(1);
+      lines.push(
+        verdict._meta.calls === 0
+          ? 'Cost: 0 calls (replayed from cache)'
+          : `Cost: ${verdict._meta.calls} call${verdict._meta.calls === 1 ? '' : 's'}, ${seconds}s`,
+      );
+    }
   }
   if (verdict.criteria && verdict.criteria.length > 0) {
     const met = verdict.criteria.filter(item => item.met).length;

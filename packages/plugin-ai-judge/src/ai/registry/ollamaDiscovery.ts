@@ -7,6 +7,7 @@ const DISCOVERY_TIMEOUT_MS = 4000;
 /** Subset of an Ollama /api/tags model entry we rely on. */
 interface OllamaTag {
   name: string;
+  digest?: string;
   capabilities?: string[];
   details?: { parameter_size?: string; context_length?: number };
 }
@@ -48,5 +49,7 @@ export async function discoverOllamaModels(): Promise<ModelProfile[]> {
     supportsVision: (model.capabilities ?? []).includes('vision'),
     paramsB: parseParams(model.details?.parameter_size),
     contextWindow: model.details?.context_length,
+    // The digest is what makes a cached verdict safe: a re-pulled tag keeps its name and changes this.
+    ...(model.digest === undefined ? {} : { revision: model.digest.slice(0, 12) }),
   }));
 }
