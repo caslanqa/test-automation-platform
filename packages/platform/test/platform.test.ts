@@ -67,8 +67,15 @@ test('a Linux host falls back to the runner SDK path when the env says nothing',
 });
 
 test('a missing SDK leaves the bare tool names, so PATH still decides', () => {
-  const platform = new LinuxPlatform();
-  process.env.ANDROID_HOME = path.join(sdk, 'nope');
+  // Every candidate has to be absent for this to mean anything, and a host cannot be assumed to lack an SDK:
+  // the first version of this test only emptied ANDROID_HOME and passed here while failing on a GitHub runner,
+  // where /usr/local/lib/android/sdk exists and the fallback correctly found it.
+  class NoSdkHost extends LinuxPlatform {
+    protected override androidSdkCandidates(): Array<string | undefined> {
+      return [path.join(sdk, 'nope'), path.join(sdk, 'also-nope')];
+    }
+  }
+  const platform = new NoSdkHost();
   assert.equal(platform.androidSdkRoot(), undefined);
   assert.equal(platform.adbPath(), 'adb');
   assert.equal(platform.emulatorPath(), 'emulator');
