@@ -60,7 +60,8 @@ export async function ensure(): Promise<void> {
       'Android SDK / adb not found — needed for Android runs. Install Android Studio or set ANDROID_HOME.',
     );
   }
-  if (!p.which('xcrun')) {
+  // Only on a host that could run iOS at all: "install Xcode" is not advice anyone can act on off macOS.
+  if (p.os === 'macos' && !p.which('xcrun')) {
     warn('Xcode command-line tools not found — needed for iOS simulator runs. Install Xcode.');
   }
 }

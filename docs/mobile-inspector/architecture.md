@@ -44,13 +44,15 @@ Recording a driver-neutral mobile flow against a booted Android emulator or iOS 
 locators for the elements touched, generating a readable Playwright test that uses the platform's own
 fixture barrel, saving it into the project, and running it back.
 
-**Supported hosts.** macOS (Android + iOS) is supported and CI-verified. **Linux is NOT supported**: the
-first nightly device run failed with `no Platform implementation for 'linux'` — `@pwtap/platform` branches on
-the host in `getPlatform()` and only has a macOS implementation. The Android job therefore has to run on a
-macOS runner, or a `linux.ts` has to be written. This document previously claimed Linux was CI-verified; it
-never was. Windows is **best-effort**: the code MUST stay path-portable (it already branches on `playwright.cmd`)
-and MUST NOT hard-code POSIX separators, but no phase exit criterion depends on Windows and no CI job
-covers it. iOS is macOS-only by platform constraint, not by our choice.
+**Supported hosts.** macOS drives both platforms. **Linux drives Android**, and does so because CI forced the
+question: GitHub's macOS runners are Apple silicon and expose no hypervisor, so the emulator could not start
+there at all (`HVF error: HV_UNSUPPORTED`), while a Linux runner has KVM. `@pwtap/platform` now has a
+`LinuxPlatform` alongside `MacPlatform`; it answers iOS calls with a failed `RunResult` rather than a throw,
+which is what device discovery and the pickers already handle, so an iOS request on Linux degrades to "no
+simulators" instead of crashing a UI that was only asking. iOS stays macOS-only by platform constraint, not by
+our choice. Windows is **best-effort**: the code MUST stay path-portable (it already branches on
+`playwright.cmd`) and MUST NOT hard-code POSIX separators, but no phase exit criterion depends on Windows and
+no CI job covers it — `getPlatform()` throws there, naming the file to add.
 
 ### Explicitly out of scope (with reason)
 
@@ -898,18 +900,19 @@ READMEs for `@pwtap/mobile-core` and `@pwtap/mobile-inspector` (neither had one)
 NFR checks. All four combinations — Android × {Maestro, Appium} and iOS × {Maestro, Appium} — were driven
 end-to-end on real devices: connect, record, reload mid-session, record again, save, run.
 
-**`device.yml` runs the iOS half of that matrix nightly, and only the iOS half.** It is worth stating what it
-took to get there, because the workflow failed 21 consecutive nightlies without ever passing once. The iOS jobs
-named a simulator — `xcrun simctl boot 'iPhone 16 Pro'` — and the runner image moved to Xcode 26, whose
-simulators are iPhone 17/17e/16e: `Invalid device or device pair`. The job now picks whatever iPhone the image
-offers, and both drivers pass against it (verified locally on a freshly booted simulator: Maestro 35 s, Appium
-71 s). The Android jobs cannot pass on any runner this product supports: GitHub's macOS runners are Apple
-silicon and do not expose the Hypervisor framework, so the emulator died at launch with `HVF error:
-HV_UNSUPPORTED` every night, while Linux runners — which do have KVM — hit `no Platform implementation for
-'linux'` from `@pwtap/platform`. They are removed rather than left red, since a permanently failing nightly
-also hides the iOS result. Restoring them is a product decision: add a `linux.ts` platform implementation and
-run the emulator on `ubuntu-latest` with KVM, or use a self-hosted Intel Mac. Until then Android device
-coverage is the local `npm run test:device`.
+**`device.yml` runs that matrix nightly, split across two hosts, and it took a rewrite to make it mean
+anything: it had failed 21 consecutive nightlies without ever passing once.** Three defects, each hidden behind
+the one before it. The iOS jobs booted a simulator by name — `xcrun simctl boot 'iPhone 16 Pro'` — and the
+image moved to Xcode 26, whose simulators are iPhone 17/17e/16e: `Invalid device or device pair`, before any
+test ran; the step now picks whatever iPhone the image offers. The Android jobs were on macOS runners that
+expose no hypervisor, so the emulator never started (`HVF error: HV_UNSUPPORTED`) and the job spent twelve
+minutes watching `adb` look for a device that was never coming; they moved to `ubuntu-latest` with `/dev/kvm`
+opened to the runner user, which is what the new `LinuxPlatform` unlocked. And both Appium legs would have
+failed even then, at "Appium CLI not found" — the adapter spawns a global `appium` plus a platform driver, and
+no runner ships either; the boot failures had been masking that for weeks. Verified where it can be: both iOS
+legs pass locally against a freshly booted simulator (Maestro 35 s, Appium 71 s), and the Linux host seam is
+unit-tested plus exercised on a real Linux kernel in a container. The emulator legs themselves are verified by
+the first nightly that runs after this lands.
 
 ### Test strategy
 

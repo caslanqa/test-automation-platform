@@ -2,11 +2,12 @@
  * @pwtap/platform — the single OS seam for Playwright Test Automation Platform plugins.
  *
  * All OS-specific commands/paths (Android SDK, iOS simulator, device discovery/boot) and the
- * cross-process device lock live here. Today only macOS is implemented; adding another OS means
- * adding one `Platform` implementation and one branch in `getPlatform()` — no plugin/core changes.
+ * cross-process device lock live here. macOS drives both Android and iOS; Linux drives Android (iOS
+ * simulators do not exist off macOS). Adding another OS means adding one `Platform` implementation and one
+ * branch in `getPlatform()` — no plugin/core changes.
  */
 
-export { MacPlatform, getPlatform, setPlatform } from './platform.js';
+export { LinuxPlatform, MacPlatform, getPlatform, setPlatform } from './platform.js';
 export type {
   DiscoveredDevice,
   MobilePlatform,

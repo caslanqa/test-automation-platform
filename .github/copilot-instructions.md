@@ -138,10 +138,12 @@ The platform monorepo does **not** use aliases; import relatively.
 - The template is compiled by **client projects** (each with their own `tsconfig.json`), not by the platform monorepo.
 - If updating template code, ensure it's self-contained and doesn't assume monorepo structure.
 
-### Platform Seam (macOS-First)
+### Platform Seam (macOS + Linux)
 
 - `@pwtap/platform` abstracts OS-specific operations (paths, shell commands, device discovery/boot).
-- Today: macOS only. Calling any platform function on non-darwin **throws** with a message naming the file to add.
+- Today: macOS (Android + iOS) and Linux (Android). `getPlatform()` throws on any other host with a message
+  naming the file to add. A Linux host returns a failed `RunResult` for iOS calls instead of throwing, since
+  discovery and the pickers already treat that as "no simulators".
 - Plugin code calls `getPlatform()` to access OS operations; never hardcode `darwin` checks.
 - **Goal:** hide every OS-specific detail so plugins can be ported to Windows/Linux with only platform-seam changes.
 
