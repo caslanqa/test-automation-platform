@@ -1,0 +1,109 @@
+# Nightly drift check for the model that judges your AI assertions.
+#
+# An AI assertion is only as trustworthy as its judge, and a judge drifts: a provider swaps a model behind an
+# unchanged name, a rubric gets edited, someone re-pulls an Ollama tag. This grades the labelled examples the
+# `judge:calibrate` script names — `tests/ai-judge/calibration.json` in a default scaffold; see
+# docs/AI_JUDGING.md §4.1 for building one out of a real run — and fails when agreement with your labels drops.
+#
+# Setup, once:
+#   - repository VARIABLE  JUDGE_MODEL             e.g. anthropic/claude-opus-4-8 (blank = this job skips)
+#   - repository SECRET    ANTHROPIC_API_KEY       or OPENROUTER_API_KEY / JUDGE_API_KEY, matching the prefix
+#   - repository VARIABLE  JUDGE_GATEWAY_BASE_URL  only for a bare model id on an OpenAI-compatible endpoint
+#
+# Nightly rather than per-pull-request on purpose: judging costs money, and drift takes days, not commits.
+name: AI judge calibration
+
+on:
+  schedule:
+    # 03:17 UTC — off the hour, where every other cron in the world is queued.
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      model:
+        description: 'Model to grade with (blank = the JUDGE_MODEL repository variable)'
+        required: false
+      dataset:
+        description: 'Labelled dataset to grade (blank = the one the judge:calibrate script names)'
+        required: false
+
+concurrency:
+  group: judge-calibration
+  cancel-in-progress: false
+
+jobs:
+  calibrate:
+    runs-on: ubuntu-latest
+    env:
+      JUDGE_MODEL: ${{ inputs.model || vars.JUDGE_MODEL }}
+      # Empty by default, deliberately: the `judge:calibrate` script already names the dataset, and that path is
+      # rewritten when a project is scaffolded with --tests-dir. Hardcoding it here would point at `tests/` on a
+      # project whose tests live in `e2e/`.
+      DATASET: ${{ inputs.dataset }}
+      # env/environments.json is gitignored, so it is NOT in the checkout: credentials have to arrive as
+      # environment variables, and the CLI leaves anything already set in the environment alone.
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      JUDGE_API_KEY: ${{ secrets.JUDGE_API_KEY }}
+      JUDGE_GATEWAY_BASE_URL: ${{ vars.JUDGE_GATEWAY_BASE_URL }}
+      # A drift check must re-judge. With the cache on, this job would replay yesterday's verdicts and report
+      # that nothing changed — which is the one answer it must never produce by construction.
+      JUDGE_CACHE: 'off'
+      # The gates. Tighten them as your dataset grows; MAX_FALSE_PASS is the one to keep at 0 — a judge that
+      # passes material you failed turns a green suite into a lie.
+      MIN_ACCURACY: '90'
+      MIN_KAPPA: '0.8'
+      MAX_FALSE_PASS: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+
+      # Skip loudly instead of failing red: a repository that has not set a judge up yet, or a fork, should see a
+      # notice explaining what to configure — not a broken nightly badge.
+      - name: Is a judge configured?
+        id: config
+        run: |
+          if [ -z "$JUDGE_MODEL" ]; then
+            echo "::notice::Set the JUDGE_MODEL repository variable (and its API key secret) to calibrate the judge nightly."
+            echo 'ready=false' >> "$GITHUB_OUTPUT"
+          elif [ -n "$DATASET" ] && [ ! -f "$DATASET" ]; then
+            echo "::notice::$DATASET does not exist — harvest one with 'npm run judge:calibrate -- --harvest $DATASET'."
+            echo 'ready=false' >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # `tee` keeps the full report for the artifact while the exit code still decides the job — `set -o pipefail`
+      # is what makes that true, because without it the pipe returns tee's success and a breached gate passes.
+      - name: Calibrate
+        if: steps.config.outputs.ready == 'true'
+        run: |
+          set -o pipefail
+          npm run judge:calibrate -- ${DATASET:+"$DATASET"} \
+            --model "$JUDGE_MODEL" \
+            --min-accuracy "$MIN_ACCURACY" \
+            --min-kappa "$MIN_KAPPA" \
+            --max-false-pass "$MAX_FALSE_PASS" \
+            | tee judge-calibration.txt
+
+      # `always()`: the run whose numbers someone actually needs is the one that failed.
+      - name: Put the numbers on the run page
+        if: always() && steps.config.outputs.ready == 'true'
+        run: |
+          {
+            echo "## AI judge calibration"
+            echo '```'
+            grep -E 'accuracy|FALSE (PASS|FAIL)|gate failed' judge-calibration.txt || cat judge-calibration.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the full report
+        if: always() && steps.config.outputs.ready == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: judge-calibration
+          path: judge-calibration.txt
+          if-no-files-found: warn

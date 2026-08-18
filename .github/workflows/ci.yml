@@ -47,6 +47,12 @@ jobs:
         run: npm test
       - name: Smoke — scaffold a core-only project and verify it builds
         run: npm run smoke
+      # The AI judge's calibration path is shipped tooling — a CLI, a labelled dataset, the metrics CI gates on —
+      # and nothing here can reach a real model: there is no Ollama on a runner and no key in this repo. A local
+      # fake gateway answers instead, which is also the only way to assert that a gate FIRES: it flips one verdict
+      # on purpose and requires a non-zero exit naming the case.
+      - name: Smoke — the judge's calibration workflow end to end
+        run: npm run smoke:judge
       # Linux only, and deliberately: k6 is a Go binary running its own JavaScript engine, so the scenarios behave
       # identically on either runner, while `brew install k6` costs minutes of macOS CI time for no extra signal.
       # The first version of this step had no `if:` and ran the apt commands on macos-latest, where

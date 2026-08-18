@@ -103,6 +103,10 @@ npm test
 npm run judge:calibrate -- --harvest tests/ai-judge/mine.json
 ```
 
+Installing the plugin also drops a nightly `.github/workflows/judge-calibration.yml` that re-judges the dataset
+(cache off) and fails when agreement drops. It skips with a notice until you set a `JUDGE_MODEL` repository variable
+and its API-key secret — `env/environments.json` is gitignored, so a runner never sees it.
+
 ## Judge with a model built to judge
 
 When any installed Ollama model matches `judgeModelHints` in `config/aiJudge.config.ts` (`selene`, `prometheus`, `glider`, `flow-judge`, …), the router picks tiers from those alone — an 8B judge-tuned model out-grades a much larger generalist, and ranking local models by size alone left it unused. `ollama pull` one and it takes over; with none installed, nothing changes.

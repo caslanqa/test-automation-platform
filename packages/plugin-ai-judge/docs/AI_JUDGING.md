@@ -122,6 +122,25 @@ Cases whose material included an image are skipped (a case without its screensho
 samples of one input collapse into a single case, and anything judged before this version was added has no recorded
 material and is skipped with a count.
 
+### 4.2 Gate it nightly
+
+`create-pwtap add ai-judge` drops `.github/workflows/judge-calibration.yml` into the project. It is inert until you
+set a `JUDGE_MODEL` repository **variable** and the matching API-key **secret** — until then it skips with a notice
+rather than failing red, since `env/environments.json` is gitignored and never reaches a runner.
+
+What it does, and why each part is that way:
+
+- **Nightly, not per pull request.** Judging costs money and drift takes days, not commits.
+- **`JUDGE_CACHE=off`.** A drift check that replays yesterday's verdicts reports that nothing changed, which is the
+  one answer it must never be able to produce.
+- **Gates on `MAX_FALSE_PASS: 0` first.** Accuracy moves on its own: `qwen3.5:4b` scored 89 % on one uncached run
+  of the shipped set and 95 % on the next, with the miss landing on a different case. False passes were 0 in both —
+  that is the number to hold at zero, with accuracy and kappa as looser floors.
+- **The full report is uploaded and summarised even when the gate fails**, because that is the run whose numbers
+  someone needs.
+- **No dataset path is hardcoded.** The `judge:calibrate` script already carries it, and that path is rewritten for
+  a project scaffolded with `--tests-dir`.
+
 The shipped dataset is a starting point built
 from known failure modes — a padded but correct answer, a long confident wrong one, a polite non-answer, a leak
 that should have been refused, a response instructing the judge to pass it, agreement with the user's wrong
