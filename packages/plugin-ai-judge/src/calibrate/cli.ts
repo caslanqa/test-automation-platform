@@ -1,11 +1,16 @@
 #!/usr/bin/env node
+import fs from 'fs';
+import path from 'path';
+
 import { type CalibrationReport, calibrate } from './calibrate.js';
-import { loadDataset, loadProjectEnv } from './dataset.js';
+import { loadDataset, loadProjectEnv, pickDataset } from './dataset.js';
+import { harvestCases, harvestToDataset } from './harvest.js';
 
 const USAGE = `[ai-judge] judge:calibrate — measure a judge model against human labels
 
   node …/calibrate/cli.js [dataset.json] [options]
 
+  --harvest <out.json>  draft cases from .judge/cache (what this suite already judged) and exit
   --model <id>          judge with this model; repeat to compare several (default: auto-routing)
   --samples <n>         judge each case n times and take the majority
   --jury <a,b,c>        judge each case with every model listed and take the majority
@@ -51,13 +56,45 @@ function print(report: CalibrationReport): void {
   }
 }
 
+/** Draft cases out of the cache a test run already filled, and say what a human has to do next. */
+function harvest(out: string): number {
+  const result = harvestCases();
+  if (result.cases.length === 0) {
+    console.error(
+      '[ai-judge] nothing to harvest — run the suite first (with JUDGE_CACHE on, which is the default), ' +
+        'then harvest what it judged.',
+    );
+    return 2;
+  }
+
+  fs.mkdirSync(path.dirname(path.resolve(out)), { recursive: true });
+  fs.writeFileSync(out, harvestToDataset(result));
+
+  const { withoutMaterial, withImage, duplicates } = result.skipped;
+  console.info(
+    `[ai-judge] wrote ${result.cases.length} draft case(s) to ${out}` +
+      ` (skipped ${duplicates} duplicate, ${withImage} with an image, ${withoutMaterial} without material)`,
+  );
+  console.info(
+    '  Every `expected` is what the JUDGE said. Read from the top — the least certain verdicts come ' +
+      'first — flip what it got wrong, then run judge:calibrate on the file.',
+  );
+
+  return 0;
+}
+
 async function main(argv: string[]): Promise<number> {
   if (argv.includes('--help') || argv.includes('-h')) {
     console.info(USAGE);
     return 0;
   }
 
-  const file = argv.find(arg => !arg.startsWith('--') && arg.endsWith('.json'));
+  const harvestTo = values(argv, '--harvest')[0];
+  if (harvestTo !== undefined && harvestTo.length > 0 && !harvestTo.startsWith('--')) {
+    return harvest(harvestTo);
+  }
+
+  const file = pickDataset(argv, harvestTo);
   if (file === undefined) {
     console.error(`[ai-judge] name a dataset file.\n${USAGE}`);
     return 2;

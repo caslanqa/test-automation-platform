@@ -46,6 +46,20 @@ export function loadDataset(file: string): CalibrationCase[] {
   });
 }
 
+/**
+ * The dataset to grade: the LAST `.json` argument wins. The npm script carries the default path, and
+ * `npm run judge:calibrate -- mine.json` appends the user's after it — taking the first match graded the
+ * default file and said nothing about it.
+ * @example pickDataset(['tests/ai-judge/calibration.json', 'mine.json']); // 'mine.json'
+ */
+export function pickDataset(argv: string[], exclude?: string): string | undefined {
+  const matches = argv.filter(
+    arg => !arg.startsWith('--') && arg.endsWith('.json') && arg !== exclude,
+  );
+
+  return matches[matches.length - 1];
+}
+
 /** Resolve `${TEST_ENV.KEY}` against the selected environment block, the way the project's loader does. */
 function resolveRef(value: string, selected: Record<string, unknown>): string {
   return value.replace(/\$\{TEST_ENV\.([^}]+)\}/g, (_, key: string) => {

@@ -87,44 +87,68 @@ test('a written verdict is replayed without its routing trace', () => {
   const key = cacheKey(MODEL, INPUT);
   assert.equal(readCached(key), undefined);
 
-  writeCached(key, {
-    pass: true,
-    score: 91,
-    reasoning: 'states 9am',
-    _meta: {
-      selectedModel: 'local/qwen3.5:9b',
-      tier: 'simple',
-      score: 0,
-      needsVision: false,
-      reasons: [],
-      source: 'auto',
+  writeCached(
+    key,
+    {
+      pass: true,
+      score: 91,
+      reasoning: 'states 9am',
+      _meta: {
+        selectedModel: 'local/qwen3.5:9b',
+        tier: 'simple',
+        score: 0,
+        needsVision: false,
+        reasons: [],
+        source: 'auto',
+      },
     },
-  });
+    INPUT,
+  );
   assert.deepEqual(readCached(key), { pass: true, score: 91, reasoning: 'states 9am' });
 });
 
 test('the checklist survives a round trip', () => {
   const key = cacheKey(MODEL, { ...INPUT, rubric: 'Must state 9am and be polite.' });
-  writeCached(key, {
-    pass: false,
-    score: 50,
-    reasoning: 'half',
-    criteria: [
-      { criterion: 'states 9am', met: true },
-      { criterion: 'is polite', met: false, why: 'blunt' },
-    ],
-  });
+  writeCached(
+    key,
+    {
+      pass: false,
+      score: 50,
+      reasoning: 'half',
+      criteria: [
+        { criterion: 'states 9am', met: true },
+        { criterion: 'is polite', met: false, why: 'blunt' },
+      ],
+    },
+    INPUT,
+  );
   assert.equal(readCached(key)?.criteria?.[1].why, 'blunt');
 });
 
 test('JUDGE_CACHE=off neither reads nor writes', () => {
   const key = cacheKey(MODEL, INPUT);
   process.env.JUDGE_CACHE = 'off';
-  writeCached(key, { pass: true, score: 91, reasoning: 'states 9am' });
+  writeCached(key, { pass: true, score: 91, reasoning: 'states 9am' }, INPUT);
   assert.equal(readCached(key), undefined);
 
   delete process.env.JUDGE_CACHE;
   assert.equal(readCached(key), undefined, 'nothing should have been written while off');
+});
+
+test('the material is stored with the verdict, images excluded', () => {
+  const key = cacheKey(MODEL, INPUT);
+  writeCached(
+    key,
+    { pass: true, score: 91, reasoning: 'ok' },
+    { ...INPUT, image: Buffer.from('x') },
+  );
+
+  const stored = JSON.parse(
+    fs.readFileSync(path.join(temp, '.judge', 'cache', `${key}.json`), 'utf8'),
+  ) as { input?: Record<string, unknown> };
+  assert.equal(stored.input?.botResponse, INPUT.botResponse);
+  assert.equal(stored.input?.hasImage, true);
+  assert.equal('image' in (stored.input ?? {}), false, 'a buffer per entry would bloat the cache');
 });
 
 test('a corrupt cache file reads as a miss, not a crash', () => {

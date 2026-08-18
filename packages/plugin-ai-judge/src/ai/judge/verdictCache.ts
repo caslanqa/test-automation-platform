@@ -73,8 +73,28 @@ export function readCached(key: string): JudgeVerdict | undefined {
   }
 }
 
-/** Store a verdict (routing trace stripped — it describes the call, not the judgement). */
-export function writeCached(key: string, verdict: JudgeVerdict): void {
+/**
+ * The material this call judged, in the shape a calibration case needs. Images are dropped — a buffer
+ * per entry would bloat the cache, and a harvested case without its image could not be re-judged, so
+ * `hasImage` marks it for the harvester to skip.
+ */
+function recordedInput(input: JudgeInput): Record<string, unknown> {
+  return {
+    ...(input.userMessage === undefined ? {} : { userMessage: input.userMessage }),
+    ...(input.botResponse === undefined ? {} : { botResponse: input.botResponse }),
+    ...(input.rubric === undefined ? {} : { rubric: input.rubric }),
+    ...(input.referenceAnswer === undefined ? {} : { referenceAnswer: input.referenceAnswer }),
+    ...(input.context === undefined ? {} : { context: input.context }),
+    ...(input.conversation === undefined ? {} : { conversation: input.conversation }),
+    ...(collectImages(input).length > 0 ? { hasImage: true } : {}),
+  };
+}
+
+/**
+ * Store a verdict with the material it judged (routing trace stripped — it describes the call, not the
+ * judgement). The material is what lets `--harvest` turn a normal test run into calibration cases.
+ */
+export function writeCached(key: string, verdict: JudgeVerdict, input: JudgeInput): void {
   if (!enabled()) {
     return;
   }
@@ -83,6 +103,7 @@ export function writeCached(key: string, verdict: JudgeVerdict): void {
     score: verdict.score,
     reasoning: verdict.reasoning,
     ...(verdict.criteria === undefined ? {} : { criteria: verdict.criteria }),
+    input: recordedInput(input),
   });
   const target = path.join(cacheDir(), `${key}.json`);
   const temp = `${target}.${randomBytes(4).toString('hex')}.tmp`;

@@ -95,7 +95,34 @@ npm run judge:calibrate -- --model local/qwen3.5:4b --model local/qwen3.5:9b --m
 
 Use it for three decisions: **which model** to judge with (compare candidates in one run), **whether sampling
 buys anything** (`--samples`, `--jury`), and **whether the judge drifted** (run it in CI with `--min-accuracy` /
-`--min-kappa` / `--max-false-pass`; a breached gate exits non-zero). The shipped dataset is a starting point built
+`--min-kappa` / `--max-false-pass`; a breached gate exits non-zero).
+
+### 4.1 Build the dataset out of your own suite
+
+Hand-writing labelled cases is the reason most teams never get a dataset. You already have one: every AI assertion
+your suite ran was cached with the material it judged.
+
+```bash
+npm test                                                     # judge as usual
+npm run judge:calibrate -- --harvest tests/ai-judge/mine.json # draft cases from what it judged
+```
+
+The drafted file carries the material, the judge's own label, its score and the requirements it marked unmet, with
+the **least certain verdicts first** — a partly-met checklist, then anything near the middle of the scale. Read from
+the top, flip what the judge got wrong, delete what you do not care about, then calibrate on the file.
+
+Until a human has been through it, calibrating a harvested file scores 100 % and means nothing — it is the judge
+agreeing with itself. The value appears on the first flipped label:
+
+```text
+FALSE FAIL  We open at 9am. — judged 50/100: the response omits the Sunday closure …
+```
+
+Cases whose material included an image are skipped (a case without its screenshot cannot be re-judged), repeat
+samples of one input collapse into a single case, and anything judged before this version was added has no recorded
+material and is skipped with a count.
+
+The shipped dataset is a starting point built
 from known failure modes — a padded but correct answer, a long confident wrong one, a polite non-answer, a leak
 that should have been refused, a response instructing the judge to pass it, agreement with the user's wrong
 premise, self-contradiction, three grounding cases and a multi-turn contradiction. Replace it: the numbers only

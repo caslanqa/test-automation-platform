@@ -126,7 +126,7 @@ async function judgeOnce(input: JudgeInput, sample: number): Promise<JudgeVerdic
       const started = Date.now();
       const verdict = await judgeWithRepair(candidate, systemPrompt, userText, images);
       const latencyMs = Date.now() - started;
-      writeCached(key, verdict);
+      writeCached(key, verdict, input);
 
       return input.verbose
         ? {

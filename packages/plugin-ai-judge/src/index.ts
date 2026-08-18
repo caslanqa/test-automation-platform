@@ -38,6 +38,8 @@ export type {
   CaseResult,
 } from './calibrate/calibrate.js';
 export { loadDataset } from './calibrate/dataset.js';
+export { harvestCases, harvestToDataset } from './calibrate/harvest.js';
+export type { HarvestResult, HarvestedCase } from './calibrate/harvest.js';
 
 export { JudgeHttpError, type AIProvider } from './ai/providers/provider.js';
 export { registerProvider } from './ai/providers/registry.js';

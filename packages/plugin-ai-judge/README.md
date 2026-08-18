@@ -93,6 +93,16 @@ npm run judge:calibrate -- --model local/qwen3.5:4b --model anthropic/claude-opu
 #   FALSE PASS  contradicts itself — judged 100/100: …
 ```
 
+Don't hand-write the dataset — harvest it. Every assertion your suite judged was cached with its material, so
+`--harvest` drafts cases from a normal run, labelled with the judge's own verdict and ordered least-certain-first.
+Flip the labels it got wrong (that review is the whole point: unreviewed, the file scores 100 % and means nothing),
+then calibrate on it.
+
+```bash
+npm test
+npm run judge:calibrate -- --harvest tests/ai-judge/mine.json
+```
+
 ## Judge with a model built to judge
 
 When any installed Ollama model matches `judgeModelHints` in `config/aiJudge.config.ts` (`selene`, `prometheus`, `glider`, `flow-judge`, …), the router picks tiers from those alone — an 8B judge-tuned model out-grades a much larger generalist, and ranking local models by size alone left it unused. `ollama pull` one and it takes over; with none installed, nothing changes.

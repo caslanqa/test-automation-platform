@@ -6,7 +6,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 
 import { kappa, toExpected } from '../src/calibrate/calibrate.js';
-import { loadDataset, loadProjectEnv } from '../src/calibrate/dataset.js';
+import { loadDataset, loadProjectEnv, pickDataset } from '../src/calibrate/dataset.js';
 
 const pair = (expected: boolean, actual: boolean) => ({ expected, actual });
 
@@ -43,6 +43,14 @@ test('an empty set is 0, not NaN', () => {
 
 test("a human label reads as a boolean or as 'pass'/'fail'", () => {
   assert.deepEqual([toExpected(true), toExpected('pass'), toExpected('fail')], [true, true, false]);
+});
+
+test("a dataset given after the npm script's own path wins", () => {
+  // `npm run judge:calibrate -- mine.json` → the script's default path comes first in argv.
+  assert.equal(pickDataset(['tests/ai-judge/calibration.json', 'mine.json']), 'mine.json');
+  assert.equal(pickDataset(['tests/ai-judge/calibration.json']), 'tests/ai-judge/calibration.json');
+  assert.equal(pickDataset(['--harvest', 'out.json'], 'out.json'), undefined);
+  assert.equal(pickDataset(['--model', 'local/x']), undefined);
 });
 
 test('a dataset loads from either shape and resolves its images', () => {
