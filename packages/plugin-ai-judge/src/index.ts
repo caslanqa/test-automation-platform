@@ -18,6 +18,7 @@ export type {
 } from './matchers.js';
 
 export type {
+  Criterion,
   JudgeInput,
   JudgeMeta,
   JudgeVerdict,

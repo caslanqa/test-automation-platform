@@ -7,18 +7,24 @@ import type { JudgeInput } from '../types.js';
  * Bumped whenever a prompt below changes, so verdicts cached under an older prompt are never reused.
  * @example const key = cacheKey(model, input); // hashes PROMPT_VERSION with the material
  */
-export const PROMPT_VERSION = 2;
+export const PROMPT_VERSION = 3;
 
 /** Random tag suffix for one call, so material cannot close the wrapper it is quoted inside. */
 export function createNonce(): string {
   return randomBytes(4).toString('hex');
 }
 
-/** Reasoning before the verdict: the score has to follow the reasoning, not be justified after it. */
+/**
+ * Checklist and reasoning before the verdict: a yes/no call per requirement is a question a model can
+ * answer, where "how good is this out of 100" is not, and the score is computed from the checklist.
+ */
 const JSON_CONTRACT =
-  'Reply with ONLY a JSON object, its keys in this order: {"reasoning": string, "score": number ' +
-  '0-100, "pass": boolean}. Write the reasoning FIRST and let the score and pass follow from it. ' +
-  'No text outside the JSON.';
+  'Split the criteria into atomic requirements — at most 8, each independently checkable, taken ONLY ' +
+  'from what the criteria state, never invented — and answer each one yes/no. Reply with ONLY a JSON ' +
+  'object, its keys in this order: {"criteria": [{"criterion": string, "why": string (one clause of ' +
+  'evidence), "met": boolean}], "reasoning": string, "score": number 0-100, "pass": boolean}. Grade ' +
+  'the criteria FIRST and let reasoning, score and pass follow from them. Use an empty criteria array ' +
+  'only when the criteria hold nothing separable. No text outside the JSON.';
 
 /** Untrusted material is data, not instructions — the bot response is whatever the system under test said. */
 function injectionGuard(nonce: string): string {

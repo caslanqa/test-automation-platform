@@ -74,6 +74,20 @@ test('a written verdict is replayed without its routing trace', () => {
   assert.deepEqual(readCached(key), { pass: true, score: 91, reasoning: 'states 9am' });
 });
 
+test('the checklist survives a round trip', () => {
+  const key = cacheKey('local/qwen3.5:9b', { ...INPUT, rubric: 'Must state 9am and be polite.' });
+  writeCached(key, {
+    pass: false,
+    score: 50,
+    reasoning: 'half',
+    criteria: [
+      { criterion: 'states 9am', met: true },
+      { criterion: 'is polite', met: false, why: 'blunt' },
+    ],
+  });
+  assert.equal(readCached(key)?.criteria?.[1].why, 'blunt');
+});
+
 test('JUDGE_CACHE=off neither reads nor writes', () => {
   const key = cacheKey('local/qwen3.5:9b', INPUT);
   process.env.JUDGE_CACHE = 'off';

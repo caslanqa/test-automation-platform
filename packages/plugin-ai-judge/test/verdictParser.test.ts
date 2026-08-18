@@ -49,6 +49,53 @@ test('a missing pass falls back to the score midpoint', () => {
   assert.equal(parseVerdict('{"score":40,"reasoning":""}').pass, false);
 });
 
+test('the score comes from the checklist, not from the model', () => {
+  const verdict = parseVerdict(
+    JSON.stringify({
+      criteria: [
+        { criterion: 'states 9am', met: false, why: 'said 6pm' },
+        { criterion: 'states 6pm', met: true },
+        { criterion: 'is polite', met: true },
+      ],
+      reasoning: 'wrong opening hour',
+      score: 90,
+      pass: true,
+    }),
+  );
+  assert.equal(verdict.score, 67, "the model's own 90 must lose to 2 of 3 criteria");
+  assert.equal(verdict.pass, false, 'an unmet requirement cannot pass');
+  assert.equal(verdict.criteria?.length, 3);
+  assert.equal(verdict.criteria?.[0].why, 'said 6pm');
+});
+
+test('a weight the model volunteers is dropped, so the score stays comparable', () => {
+  const verdict = parseVerdict(
+    '{"criteria":[{"criterion":"a","met":true,"weight":3},{"criterion":"b","met":false,"weight":1}],"reasoning":"","score":0,"pass":true}',
+  );
+  assert.equal(verdict.score, 50);
+  assert.equal('weight' in (verdict.criteria?.[0] ?? {}), false);
+});
+
+test('a checklist with every criterion met keeps the pass', () => {
+  const verdict = parseVerdict(
+    '{"criteria":[{"criterion":"a","met":true},{"criterion":"b","met":"yes"}],"reasoning":"","score":10,"pass":true}',
+  );
+  assert.deepEqual([verdict.pass, verdict.score], [true, 100]);
+});
+
+test('an empty checklist leaves the score to the model', () => {
+  const verdict = parseVerdict('{"criteria":[],"reasoning":"","score":73,"pass":true}');
+  assert.deepEqual([verdict.pass, verdict.score, verdict.criteria], [true, 73, undefined]);
+});
+
+test('checklist entries without a requirement are dropped', () => {
+  const verdict = parseVerdict(
+    '{"criteria":[{"met":true},{"criterion":"","met":true},{"criterion":"a","met":false}],"score":50,"pass":true,"reasoning":""}',
+  );
+  assert.equal(verdict.criteria?.length, 1);
+  assert.deepEqual([verdict.pass, verdict.score], [false, 0]);
+});
+
 test('a reply with no JSON object throws VerdictParseError', () => {
   assert.throws(() => parseVerdict('The response looks good to me.'), VerdictParseError);
   assert.throws(() => parseVerdict('{"score": broken'), VerdictParseError);

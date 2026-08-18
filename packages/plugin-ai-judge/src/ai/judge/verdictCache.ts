@@ -48,12 +48,14 @@ export function readCached(key: string): JudgeVerdict | undefined {
     return undefined;
   }
   try {
-    const { pass, score, reasoning } = JSON.parse(
+    const { pass, score, reasoning, criteria } = JSON.parse(
       fs.readFileSync(path.join(cacheDir(), `${key}.json`), 'utf8'),
     ) as JudgeVerdict;
-    return typeof pass === 'boolean' && typeof score === 'number'
-      ? { pass, score, reasoning }
-      : undefined;
+    if (typeof pass !== 'boolean' || typeof score !== 'number') {
+      return undefined;
+    }
+
+    return { pass, score, reasoning, ...(Array.isArray(criteria) ? { criteria } : {}) };
   } catch {
     return undefined;
   }
@@ -68,6 +70,7 @@ export function writeCached(key: string, verdict: JudgeVerdict): void {
     pass: verdict.pass,
     score: verdict.score,
     reasoning: verdict.reasoning,
+    ...(verdict.criteria === undefined ? {} : { criteria: verdict.criteria }),
   });
   const target = path.join(cacheDir(), `${key}.json`);
   const temp = `${target}.${randomBytes(4).toString('hex')}.tmp`;

@@ -87,8 +87,23 @@ function renderVerdict(verdict: JudgeVerdict): string {
     const cached = verdict._meta.cached === true ? ', cached' : '';
     lines.push(`Model: ${verdict._meta.selectedModel} (tier ${verdict._meta.tier}${cached})`);
   }
+  if (verdict.criteria && verdict.criteria.length > 0) {
+    const met = verdict.criteria.filter(item => item.met).length;
+    lines.push(`Criteria: ${met}/${verdict.criteria.length} met`);
+    for (const item of verdict.criteria) {
+      lines.push(`  ${item.met ? '✓' : '✗'} ${item.criterion}${item.why ? ` — ${item.why}` : ''}`);
+    }
+  }
   lines.push(`Reasoning: ${verdict.reasoning || '(none)'}`);
+
   return lines.join('\n');
+}
+
+/** The failing requirements, for the assertion message — a failure that names them needs no report. */
+function unmetLine(verdict: JudgeVerdict): string {
+  const unmet = (verdict.criteria ?? []).filter(item => !item.met);
+
+  return unmet.length === 0 ? '' : `\nUnmet: ${unmet.map(item => item.criterion).join('; ')}`;
 }
 
 /**
@@ -172,7 +187,7 @@ export const expectAi = baseExpect.extend({
       `${this.utils.matcherHint(assertionName, undefined, undefined, { isNot: this.isNot })}\n\n` +
       `Expected: ${this.isNot ? 'not ' : ''}${expected}\n` +
       `Received: ${actual}\n` +
-      `Reasoning: ${verdict.reasoning}`;
+      `Reasoning: ${verdict.reasoning}${unmetLine(verdict)}`;
 
     return { pass, message, name: assertionName, expected, actual };
   },
@@ -188,7 +203,7 @@ export const expectAi = baseExpect.extend({
       `${this.utils.matcherHint(assertionName, undefined, String(threshold), { isNot: this.isNot })}\n\n` +
       `Expected score: ${this.isNot ? '< ' : '>= '}${threshold}\n` +
       `Received score: ${verdict.score}\n` +
-      `Reasoning: ${verdict.reasoning}`;
+      `Reasoning: ${verdict.reasoning}${unmetLine(verdict)}`;
 
     return { pass, message, name: assertionName, expected: threshold, actual: verdict.score };
   },
@@ -241,7 +256,7 @@ export const expectAi = baseExpect.extend({
       `${this.utils.matcherHint(assertionName, undefined, undefined, { isNot: this.isNot })}\n\n` +
       `Expected: ${this.isNot ? 'not ' : ''}${expectedText}\n` +
       `Received: ${actual}\n` +
-      `Reasoning: ${verdict.reasoning}`;
+      `Reasoning: ${verdict.reasoning}${unmetLine(verdict)}`;
 
     return { pass, message, name: assertionName, expected: expectedText, actual };
   },

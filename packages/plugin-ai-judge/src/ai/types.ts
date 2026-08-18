@@ -12,14 +12,30 @@ export type ProviderKind = 'ollama' | 'openai' | 'anthropic' | (string & {});
 /** How the concrete model for a call was chosen (for the diagnostic trace). */
 export type SelectionSource = 'input.model' | 'input.tier' | 'env.JUDGE_MODEL' | 'auto';
 
+/**
+ * One atomic requirement read out of the rubric and graded on its own. A yes/no check per requirement
+ * is what the score is computed from, and what makes a failure name the criterion that failed.
+ * @example { criterion: 'States the store opens at 9am', met: false, why: 'said 6pm' }
+ */
+export interface Criterion {
+  /** The requirement, as the judge restated it from the rubric. */
+  criterion: string;
+  /** Whether the material satisfies it. */
+  met: boolean;
+  /** Short evidence for the call. */
+  why?: string;
+}
+
 /** Structured verdict returned by the judge model. */
 export interface JudgeVerdict {
   /** Whether the bot response satisfies the rubric. */
   pass: boolean;
-  /** Quality score 0-100. */
+  /** Quality score 0-100 — the share of met criteria whenever the judge returned a checklist. */
   score: number;
   /** Short justification for the verdict. */
   reasoning: string;
+  /** Per-requirement checklist, empty when the rubric holds nothing separable (or in compare mode). */
+  criteria?: Criterion[];
   /** Routing trace, attached only when JudgeInput.verbose is set. */
   _meta?: JudgeMeta;
 }

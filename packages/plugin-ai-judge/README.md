@@ -30,6 +30,19 @@ test('bot states the opening hours', async () => {
 - `toScoreAtLeast(n)` — score threshold only.
 - `toMatchImage(rubric)` — judge a screenshot against a visual rubric.
 
+## The score is a checklist, not an opinion
+
+The judge splits the rubric into atomic requirements, answers each yes/no with its evidence, and the score is the share it met — so a partial answer lands on 67 rather than on whatever number a model picks for "pretty good", and the failure names the requirement that failed. Every requirement must be met to pass; `minScore` is there for partial credit. Requirements count equally on purpose: asked to weight them, a model weights the same rubric differently on the next run.
+
+```text
+Error: expect(received).toPassRubric(expected)
+Received: fail (score 67)
+Unmet: mention the store is closed on Sunday
+  ✓ state the store opens at 9am — The text explicitly states 'We open at 9am'
+  ✓ state it closes at 6pm — The text explicitly states 'and close at 6pm'
+  ✗ mention the store is closed on Sunday — The text does not mention Sunday
+```
+
 ## Pick a model — `JUDGE_MODEL` (+ its key) in `env/environments.json` → `common`
 
 The model id's **prefix** routes it to a provider:
