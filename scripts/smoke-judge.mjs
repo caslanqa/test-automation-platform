@@ -192,14 +192,23 @@ try {
     fail('a harvested dataset should grade off the cache that produced it', replay.output);
   }
 
-  // 4. `npm run judge:calibrate -- mine.json` appends after the script's own path: the last one must win.
-  const override = await runCli([DATASET, harvested], {
+  // 4. `npm run judge:calibrate -- mine.json` appends after the script's own path: the last one must win. And
+  // `--json`'s own argument is a .json too, so grading the report file instead of the dataset is the trap here.
+  const report = path.join(work, 'report.json');
+  const override = await runCli([DATASET, harvested, '--json', report], {
     port: truthful.port,
     cwd: work,
     cache: 'on',
   });
   if (!override.output.includes(`labelled cases from ${harvested}`)) {
     fail('a dataset given after the default path must be the one graded', override.output);
+  }
+  const written = JSON.parse(fs.readFileSync(report, 'utf8'));
+  if (written.dataset !== harvested || written.reports[0].results.length !== cases.length) {
+    fail(
+      '--json must record which dataset ran and every case in it',
+      JSON.stringify(written).slice(0, 300),
+    );
   }
 } finally {
   truthful.close();

@@ -51,6 +51,11 @@ test("a dataset given after the npm script's own path wins", () => {
   assert.equal(pickDataset(['tests/ai-judge/calibration.json']), 'tests/ai-judge/calibration.json');
   assert.equal(pickDataset(['--harvest', 'out.json'], 'out.json'), undefined);
   assert.equal(pickDataset(['--model', 'local/x']), undefined);
+  // A flag's own .json path must not be graded instead of the dataset.
+  assert.equal(
+    pickDataset(['mine.json', '--json', 'report.json'], undefined, 'report.json'),
+    'mine.json',
+  );
 });
 
 test('a dataset loads from either shape and resolves its images', () => {

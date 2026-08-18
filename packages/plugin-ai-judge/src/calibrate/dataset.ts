@@ -49,12 +49,16 @@ export function loadDataset(file: string): CalibrationCase[] {
 /**
  * The dataset to grade: the LAST `.json` argument wins. The npm script carries the default path, and
  * `npm run judge:calibrate -- mine.json` appends the user's after it — taking the first match graded the
- * default file and said nothing about it.
+ * default file and said nothing about it. `exclude` takes the paths that belong to flags (`--harvest`,
+ * `--json`), which are `.json` too and would otherwise be graded instead of the dataset.
  * @example pickDataset(['tests/ai-judge/calibration.json', 'mine.json']); // 'mine.json'
  */
-export function pickDataset(argv: string[], exclude?: string): string | undefined {
+export function pickDataset(
+  argv: string[],
+  ...exclude: Array<string | undefined>
+): string | undefined {
   const matches = argv.filter(
-    arg => !arg.startsWith('--') && arg.endsWith('.json') && arg !== exclude,
+    arg => !arg.startsWith('--') && arg.endsWith('.json') && !exclude.includes(arg),
   );
 
   return matches[matches.length - 1];

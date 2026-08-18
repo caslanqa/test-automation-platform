@@ -108,7 +108,8 @@ function renderVerdict(verdict: JudgeVerdict): string {
       lines.push(
         verdict._meta.calls === 0
           ? 'Cost: 0 calls (replayed from cache)'
-          : `Cost: ${verdict._meta.calls} call${verdict._meta.calls === 1 ? '' : 's'}, ${seconds}s`,
+          : // Time spent judging, summed over the calls — a panel votes concurrently, so this is not elapsed time.
+            `Cost: ${verdict._meta.calls} call${verdict._meta.calls === 1 ? '' : 's'}, ${seconds}s of judging`,
       );
     }
   }

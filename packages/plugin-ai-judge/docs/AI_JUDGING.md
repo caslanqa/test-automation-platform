@@ -136,8 +136,9 @@ What it does, and why each part is that way:
 - **Gates on `MAX_FALSE_PASS: 0` first.** Accuracy moves on its own: `qwen3.5:4b` scored 89 % on one uncached run
   of the shipped set and 95 % on the next, with the miss landing on a different case. False passes were 0 in both —
   that is the number to hold at zero, with accuracy and kappa as looser floors.
-- **The full report is uploaded and summarised even when the gate fails**, because that is the run whose numbers
-  someone needs.
+- **Both reports are uploaded and summarised even when the gate fails**, because that is the run whose numbers
+  someone needs: the text for a human, and `--json` (dataset, timestamp, per-case rows) for comparing against last
+  month's run — "which case started failing" without re-running anything.
 - **No dataset path is hardcoded.** The `judge:calibrate` script already carries it, and that path is rewritten for
   a project scaffolded with `--tests-dir`.
 
@@ -158,6 +159,11 @@ three uncached calls: **67, 50, 50**.
 
 Both take a **strict majority**, so a tie fails: judges disagreeing is not evidence the material is right. The
 score is the median of the votes and the split lands in the report (`Votes: 2/3 agreed on fail`).
+
+Votes are judged **concurrently**, so a panel costs one round trip of wall-clock rather than one per member —
+measured against a gateway that sleeps a second per call, three votes take 1.0 s, not 3.0 s. Local votes still
+queue behind the model gate, which keeps a single Ollama model resident. The report's `Cost:` line therefore states
+time spent judging, summed across the calls, not time elapsed.
 
 Spend it where a mistake is expensive. On the calibration set, voting bought no accuracy (15/15 single-sample,
 15/15 with three samples, 15/15 with a two-model jury) — it bought a stable score on the one case whose score

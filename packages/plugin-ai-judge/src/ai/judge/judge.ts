@@ -186,18 +186,18 @@ export async function judgeResponse(input: JudgeInput): Promise<JudgeVerdict> {
     return judgeOnce(input, 0);
   }
 
-  const verdicts: JudgeVerdict[] = [];
-  for (const model of voters) {
-    for (let sample = 0; sample < samples; sample++) {
-      // verbose while voting: the aggregate needs each voter's model to name the panel.
-      verdicts.push(
-        await judgeOnce(
-          { ...input, ...(model === undefined ? {} : { model }), verbose: true },
-          sample,
-        ),
-      );
-    }
-  }
+  const ballots = voters.flatMap(model =>
+    Array.from({ length: samples }, (_unused, sample) => ({ model, sample })),
+  );
+  // Concurrent on purpose: a three-model cloud panel judged in sequence spends three round trips inside one
+  // assertion's timeout. Local votes still serialize — the Ollama gate holds a single model resident — and
+  // `Promise.all` keeps the ballot order, so the panel's report reads the same either way.
+  const verdicts = await Promise.all(
+    // verbose while voting: the aggregate needs each voter's model to name the panel.
+    ballots.map(({ model, sample }) =>
+      judgeOnce({ ...input, ...(model === undefined ? {} : { model }), verbose: true }, sample),
+    ),
+  );
 
   const aggregate = aggregateVerdicts(verdicts);
 

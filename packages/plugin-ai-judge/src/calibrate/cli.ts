@@ -14,6 +14,7 @@ const USAGE = `[ai-judge] judge:calibrate — measure a judge model against huma
   --model <id>          judge with this model; repeat to compare several (default: auto-routing)
   --samples <n>         judge each case n times and take the majority
   --jury <a,b,c>        judge each case with every model listed and take the majority
+  --json <out.json>     also write the reports as JSON, for tracking drift run over run
   --min-accuracy <n>    fail when accuracy is below n (0-1 or a percentage)
   --min-kappa <n>       fail when Cohen's kappa is below n
   --max-false-pass <n>  fail when more than n cases passed that a human failed
@@ -94,7 +95,7 @@ async function main(argv: string[]): Promise<number> {
     return harvest(harvestTo);
   }
 
-  const file = pickDataset(argv, harvestTo);
+  const file = pickDataset(argv, harvestTo, values(argv, '--json')[0]);
   if (file === undefined) {
     console.error(`[ai-judge] name a dataset file.\n${USAGE}`);
     return 2;
@@ -130,6 +131,18 @@ async function main(argv: string[]): Promise<number> {
       }),
     );
     print(reports[reports.length - 1]);
+  }
+
+  // Written before the gates are applied: the run that breached one is the run whose numbers get compared
+  // against last night's, so it must produce a report too.
+  const jsonTo = values(argv, '--json')[0];
+  if (jsonTo !== undefined && jsonTo.length > 0 && !jsonTo.startsWith('--')) {
+    fs.mkdirSync(path.dirname(path.resolve(jsonTo)), { recursive: true });
+    fs.writeFileSync(
+      jsonTo,
+      `${JSON.stringify({ dataset: file, ranAt: new Date().toISOString(), reports }, null, 2)}\n`,
+    );
+    console.info(`[ai-judge] wrote ${jsonTo}`);
   }
 
   // Gates are per model: a fleet comparison should fail if any candidate is below the bar.

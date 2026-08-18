@@ -56,7 +56,8 @@ export function aggregateVerdicts(verdicts: JudgeVerdict[]): JudgeVerdict {
             selectedModel: [...new Set(models)].join(', ') || representative._meta.selectedModel,
             votes: verdicts.length,
             agreement: agreeing.length / verdicts.length,
-            // What the panel cost as a whole, not what one voter cost.
+            // What the panel cost as a whole, not what one voter cost. `latencyMs` therefore sums the votes
+            // even though they ran concurrently: it is time spent judging, not time elapsed.
             cached: verdicts.every(verdict => verdict._meta?.cached === true),
             calls: sum(verdicts, verdict => verdict._meta?.calls),
             latencyMs: sum(verdicts, verdict => verdict._meta?.latencyMs),
