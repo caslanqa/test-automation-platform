@@ -29,6 +29,21 @@ test('bot states the opening hours', async () => {
 - `toPassRubric({ minScore })` — pass/fail against a rubric with a 0–100 score.
 - `toScoreAtLeast(n)` — score threshold only.
 - `toMatchImage(rubric)` — judge a screenshot against a visual rubric.
+- `toBeGroundedIn(context)` — every claim in the response must come from the sources.
+
+## Three questions, one call
+
+`rubric` grades against criteria. `referenceImage` + `image` compares two screenshots. `context` checks **grounding**: each factual claim in the response becomes a criterion, met only when the sources support it — a claim that is true in the world but absent from the sources fails, and an omission never does. A `referenceAnswer` makes rubric grading easier (substance, never wording), and a `conversation` judges the last assistant turn inside the exchange it came from. Everything the system under test or a retrieval step produced — response, context, transcript — is quoted to the judge as data; the rubric and reference answer are not.
+
+```ts
+await expect({ userMessage, botResponse }).toBeGroundedIn(retrievedChunks);
+await expect({
+  conversation,
+  rubric: 'The final answer stays consistent with the stock stated earlier.',
+}).toPassRubric();
+```
+
+Grounding asks the most of the judge. Measured on the shipped calibration set: `qwen3.5:9b` scored 19/19, while `qwen3.5:4b` graded coverage instead of support and produced one false pass and one false fail — both on grounded cases. Run `judge:calibrate` before trusting a small model with it.
 
 ## The score is a checklist, not an opinion
 

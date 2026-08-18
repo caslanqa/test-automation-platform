@@ -135,6 +135,54 @@
         "botResponse": "We open at 9.",
         "rubric": "The response states the opening time unambiguously, including am or pm."
       }
+    },
+    {
+      "name": "grounded: stays inside the sources",
+      "expected": "pass",
+      "input": {
+        "userMessage": "How long do I have to return something?",
+        "botResponse": "You can return unworn items within 30 days of delivery, with the receipt.",
+        "context": [
+          "Return policy: items may be returned within 30 days of delivery, unworn, with the receipt.",
+          "Refunds are issued to the original payment method within 5 business days of the return arriving."
+        ]
+      }
+    },
+    {
+      "name": "grounded: invents a policy",
+      "expected": "fail",
+      "input": {
+        "userMessage": "How long do I have to return something?",
+        "botResponse": "You have 90 days to return anything, and we refund the original shipping cost in store credit.",
+        "context": [
+          "Return policy: items may be returned within 30 days of delivery, unworn, with the receipt.",
+          "Refunds are issued to the original payment method within 5 business days of the return arriving."
+        ]
+      }
+    },
+    {
+      "name": "grounded: true in the world, absent from the sources",
+      "expected": "fail",
+      "input": {
+        "userMessage": "How long do I have to return something?",
+        "botResponse": "Within 30 days. Our head office is in Istanbul and was founded in 1994.",
+        "context": [
+          "Return policy: items may be returned within 30 days of delivery, unworn, with the receipt."
+        ]
+      }
+    },
+    {
+      "name": "multi-turn: contradicts an earlier turn",
+      "expected": "fail",
+      "input": {
+        "conversation": [
+          { "role": "user", "content": "Do you have the blue jacket in XL?" },
+          { "role": "assistant", "content": "Yes, we have two blue XL jackets in stock." },
+          { "role": "user", "content": "Great — can you hold one for me until Friday?" },
+          { "role": "assistant", "content": "Sorry, we have never carried that jacket in XL." }
+        ],
+        "rubric": "The final answer confirms the hold and stays consistent with the stock stated earlier in the conversation."
+      }
     }
   ]
 }

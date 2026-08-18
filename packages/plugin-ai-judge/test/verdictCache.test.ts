@@ -54,6 +54,20 @@ test('repeat samples of one input get their own keys, and sample 0 keeps the old
   assert.notEqual(cacheKey('local/qwen3.5:9b', INPUT, 2), cacheKey('local/qwen3.5:9b', INPUT, 1));
 });
 
+test('context, a reference answer and a conversation all take part in the key', () => {
+  const base = cacheKey('m', INPUT);
+  assert.notEqual(base, cacheKey('m', { ...INPUT, context: 'Opening hours: 9am.' }));
+  assert.notEqual(base, cacheKey('m', { ...INPUT, referenceAnswer: 'We open at 9am.' }));
+  assert.notEqual(
+    base,
+    cacheKey('m', { ...INPUT, conversation: [{ role: 'user', content: 'hi' }] }),
+  );
+  assert.notEqual(
+    cacheKey('m', { ...INPUT, context: 'a' }),
+    cacheKey('m', { ...INPUT, context: 'b' }),
+  );
+});
+
 test('images take part in the key', () => {
   assert.notEqual(
     cacheKey('m', { rubric: 'r', image: Buffer.from('one') }),

@@ -126,11 +126,11 @@ function overridesOf(options: PassRubricOptions | MatchImageOptions): JudgeOverr
   };
 }
 
-/** The failing requirements, for the assertion message — a failure that names them needs no report. */
-function unmetLine(verdict: JudgeVerdict): string {
+/** The failing criteria, for the assertion message — a failure that names them needs no report. */
+function unmetLine(verdict: JudgeVerdict, label = 'Unmet'): string {
   const unmet = (verdict.criteria ?? []).filter(item => !item.met);
 
-  return unmet.length === 0 ? '' : `\nUnmet: ${unmet.map(item => item.criterion).join('; ')}`;
+  return unmet.length === 0 ? '' : `\n${label}: ${unmet.map(item => item.criterion).join('; ')}`;
 }
 
 /**
@@ -197,6 +197,10 @@ function combineSwapped(first: JudgeVerdict, swapped: JudgeVerdict): JudgeVerdic
  * @example
  * // Negative case.
  * await expectAi({ userMessage, botResponse, rubric }).not.toPassRubric();
+ *
+ * @example
+ * // Hallucination check: every claim must come from the retrieved context.
+ * await expectAi({ userMessage, botResponse }).toBeGroundedIn(retrievedChunks);
  */
 export const expectAi = baseExpect.extend({
   /** Assert the material satisfies the rubric (optionally also meeting a minimum score). */
@@ -215,6 +219,50 @@ export const expectAi = baseExpect.extend({
       `Expected: ${this.isNot ? 'not ' : ''}${expected}\n` +
       `Received: ${actual}\n` +
       `Reasoning: ${verdict.reasoning}${unmetLine(verdict)}`;
+
+    return { pass, message, name: assertionName, expected, actual };
+  },
+
+  /**
+   * Assert every factual claim in the response is supported by `context` — the hallucination check for
+   * a RAG or knowledge-base bot. Each claim becomes a criterion, so a failure names the unsupported
+   * one; `minScore` accepts a share of supported claims instead of all of them. This is the mode that
+   * asks most of the judge — a 4B model graded coverage instead of support and produced both a false
+   * pass and a false fail where a 9B model scored every case right — so calibrate yours.
+   * @example await expectAi({ botResponse }).toBeGroundedIn(retrievedChunks);
+   */
+  async toBeGroundedIn(
+    received: AiExpectArg,
+    context: string | string[],
+    options: PassRubricOptions = {},
+  ) {
+    const assertionName = 'toBeGroundedIn';
+    if (isVerdict(received)) {
+      throw new Error(
+        '[expectAi] toBeGroundedIn needs a JudgeInput carrying the response to check, not a verdict.',
+      );
+    }
+
+    const verdict = await judgeAndReport({ ...received, context }, overridesOf(options));
+    const scoreOk = options.minScore === undefined || verdict.score >= options.minScore;
+    // Positive-sense result; Playwright inverts it for `.not` — do not flip here.
+    const pass = verdict.pass && scoreOk;
+
+    const supported = (verdict.criteria ?? []).filter(item => item.met).length;
+    const claims = verdict.criteria?.length ?? 0;
+    const expected =
+      options.minScore === undefined
+        ? 'every claim supported by the context'
+        : `claims supported by the context (score >= ${options.minScore})`;
+    const actual =
+      claims === 0
+        ? `${verdict.pass ? 'grounded' : 'ungrounded'} (score ${verdict.score})`
+        : `${supported}/${claims} claims supported (score ${verdict.score})`;
+    const message = () =>
+      `${this.utils.matcherHint(assertionName, undefined, undefined, { isNot: this.isNot })}\n\n` +
+      `Expected: ${this.isNot ? 'not ' : ''}${expected}\n` +
+      `Received: ${actual}\n` +
+      `Reasoning: ${verdict.reasoning}${unmetLine(verdict, 'Unsupported')}`;
 
     return { pass, message, name: assertionName, expected, actual };
   },

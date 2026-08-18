@@ -16,6 +16,8 @@ import {
   buildUserText,
   collectImages,
   createNonce,
+  modeOf,
+  responseUnderTest,
 } from './judgePrompt.js';
 import { cacheKey, readCached, writeCached } from './verdictCache.js';
 import { VerdictParseError } from './verdictParser.js';
@@ -26,18 +28,26 @@ function errText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** Require something to judge against: a rubric (rubric mode) or a reference image (compare mode). */
+/** Require something to judge against, and the material each mode needs to judge. */
 function validateJudgeInput(input: JudgeInput): void {
   const hasRubric = input.rubric !== undefined && input.rubric.length > 0;
   const hasReference = input.referenceImage !== undefined;
-  if (!hasRubric && !hasReference) {
+  const hasContext = input.context !== undefined;
+  if (!hasRubric && !hasReference && !hasContext) {
     throw new Error(
-      '[ai-judge] provide a `rubric` (rubric mode) or a `referenceImage` (compare mode) — neither was given.',
+      '[ai-judge] provide a `rubric` (rubric mode), a `referenceImage` (compare mode) or a `context` ' +
+        '(grounded mode) — none was given.',
     );
   }
   if (hasReference && input.image === undefined) {
     throw new Error(
       '[ai-judge] compare mode needs an actual `image` to compare against `referenceImage`.',
+    );
+  }
+  if (hasContext && responseUnderTest(input) === undefined) {
+    throw new Error(
+      '[ai-judge] grounded mode needs the answer under test — pass `botResponse`, or a `conversation` ' +
+        'whose last assistant turn is it.',
     );
   }
 }
@@ -70,7 +80,11 @@ async function judgeWithRepair(
 /** One judgement of the material. `sample` separates repeat samples in the cache; 0 is the first. */
 async function judgeOnce(input: JudgeInput, sample: number): Promise<JudgeVerdict> {
   const nonce = createNonce();
-  const systemPrompt = buildSystemPrompt(input.referenceImage !== undefined, nonce);
+  const systemPrompt = buildSystemPrompt(
+    modeOf(input),
+    nonce,
+    input.referenceAnswer !== undefined && input.referenceAnswer.length > 0,
+  );
   const userText = buildUserText(input, nonce);
   const images = collectImages(input);
   const complexity = analyzeComplexity(input, aiJudgeConfig);

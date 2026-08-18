@@ -62,13 +62,23 @@ export interface JudgeMeta {
   agreement?: number;
 }
 
+/** One turn of a multi-turn exchange, for judging an answer in the context it was given in. */
+export interface ConversationTurn {
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+}
+
+/** Which question the judge is answering about the material. */
+export type JudgeMode = 'rubric' | 'compare' | 'grounded';
+
 /**
- * Input for a single judging call. Two modes:
- *  - RUBRIC mode: provide `rubric` (optionally with an `image`); the material is judged against the
- *    text criteria.
- *  - COMPARE mode: provide `referenceImage` plus an `image`; the judge checks whether the actual
- *    image matches the expected reference (`rubric` becomes optional focusing guidance).
- * At least one of `rubric` / `referenceImage` must be present.
+ * Input for a single judging call. Three modes:
+ *  - RUBRIC mode: provide `rubric` (optionally with an `image` or a `referenceAnswer`); the material is
+ *    judged against the text criteria.
+ *  - COMPARE mode: provide `referenceImage` plus an `image`; the judge checks whether the actual image
+ *    matches the expected reference (`rubric` becomes optional focusing guidance).
+ *  - GROUNDED mode: provide `context`; every factual claim in the response must be supported by it.
+ * At least one of `rubric` / `referenceImage` / `context` must be present.
  */
 export interface JudgeInput {
   /** The message the user sent to the chatbot (optional; omit or '' when not relevant). */
@@ -77,6 +87,25 @@ export interface JudgeInput {
   botResponse?: string;
   /** Criteria the material must satisfy. Required in rubric mode; optional guidance in compare mode. */
   rubric?: string;
+  /**
+   * An answer that would satisfy the rubric, used as a reference for substance — not as text to match.
+   * Grading against a known-good answer is markedly easier than grading in the abstract.
+   * @example { rubric: 'States the opening time.', referenceAnswer: 'We open at 9am.' }
+   */
+  referenceAnswer?: string;
+  /**
+   * Source material the response must stay inside — retrieved documents, a knowledge-base article, the
+   * page text. Turns the call into a grounding check: each factual claim becomes a criterion, met only
+   * when this supports it. Treated as untrusted data, since in a RAG app it is.
+   * @example { botResponse, context: retrievedChunks }
+   */
+  context?: string | string[];
+  /**
+   * The exchange leading up to the answer under test. The last assistant turn is the material when
+   * `botResponse` is omitted, and the earlier turns are what the judge reads it against.
+   * @example { conversation: [{ role: 'user', content: 'Any XL?' }, { role: 'assistant', content: 'Yes.' }], rubric }
+   */
+  conversation?: ConversationTurn[];
   /**
    * Explicit model override for this call (bypasses tier/auto selection). A missing local model
    * is a hard error here — naming a model means you want exactly that one.

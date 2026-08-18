@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 
 import type { JudgeInput, JudgeVerdict } from '../types.js';
-import { PROMPT_VERSION, collectImages, imageToBase64 } from './judgePrompt.js';
+import { PROMPT_VERSION, collectImages, imageToBase64, modeOf } from './judgePrompt.js';
 
 const OFF = new Set(['off', '0', 'false', 'no']);
 
@@ -30,10 +30,13 @@ export function cacheKey(modelId: string, input: JudgeInput, sample = 0): string
     JSON.stringify([
       PROMPT_VERSION,
       modelId,
+      modeOf(input), // same material, different question
       input.rubric ?? '',
+      input.referenceAnswer ?? '',
       input.userMessage ?? '',
       input.botResponse ?? '',
-      input.referenceImage !== undefined, // rubric vs compare mode: same material, different question
+      input.context ?? '',
+      input.conversation ?? '',
       sample === 0 ? '' : sample, // keeps a single-sample key identical to what it was before voting
     ]),
   );

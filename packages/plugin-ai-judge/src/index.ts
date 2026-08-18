@@ -1,9 +1,9 @@
 /**
  * @pwtap/plugin-ai-judge — LLM-as-judge matchers for Playwright.
  *
- * Extends `expect` with `toPassRubric` / `toScoreAtLeast` / `toMatchImage`, judged by a model you
- * choose (Ollama, any OpenAI-compatible endpoint, or native Claude). Merged into the project's
- * `expect` via the barrel, and also exported as `expectAi` for explicit use.
+ * Extends `expect` with `toPassRubric` / `toScoreAtLeast` / `toMatchImage` / `toBeGroundedIn`, judged by
+ * a model you choose (Ollama, any OpenAI-compatible endpoint, or native Claude). Merged into the
+ * project's `expect` via the barrel, and also exported as `expectAi` for explicit use.
  *
  * @example
  * import { expect } from '@fixtures';
@@ -18,9 +18,11 @@ export type {
 } from './matchers.js';
 
 export type {
+  ConversationTurn,
   Criterion,
   JudgeInput,
   JudgeMeta,
+  JudgeMode,
   JudgeVerdict,
   ModelProfile,
   ModelTier,
