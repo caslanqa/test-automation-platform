@@ -28,5 +28,14 @@ export type {
 } from './ai/types.js';
 export { judgeResponse } from './aiJudge.js';
 
+export { calibrate, kappa } from './calibrate/calibrate.js';
+export type {
+  CalibrateOptions,
+  CalibrationCase,
+  CalibrationReport,
+  CaseResult,
+} from './calibrate/calibrate.js';
+export { loadDataset } from './calibrate/dataset.js';
+
 export { JudgeHttpError, type AIProvider } from './ai/providers/provider.js';
 export { registerProvider } from './ai/providers/registry.js';

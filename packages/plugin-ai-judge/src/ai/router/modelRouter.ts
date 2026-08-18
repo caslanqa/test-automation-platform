@@ -133,13 +133,16 @@ function cloudFallback(
 
 /**
  * Dynamically assign a tier to an installed local model by ranking on parameter size:
- * simple → smallest, complex → largest, medium → median. Vision-filtered when required. Returns
- * null when no compatible local model exists (caller then falls back to cloud).
+ * simple → smallest, complex → largest, medium → median. Models fine-tuned to evaluate
+ * (config.judgeModelHints) take the whole pool when any is installed, and the size buckets then apply
+ * among those. Vision-filtered when required. Returns null when no compatible local model exists
+ * (caller then falls back to cloud).
  */
 function dynamicLocal(
   tier: ModelTier,
   needsVision: boolean,
   registry: RegistrySnapshot,
+  config: AIJudgeConfig,
 ): ModelProfile | null {
   let locals = registry.models.filter(model => model.provider === 'ollama');
   if (needsVision) {
@@ -147,6 +150,13 @@ function dynamicLocal(
   }
   if (locals.length === 0) {
     return null;
+  }
+
+  const tuned = locals.filter(model =>
+    config.judgeModelHints.some(hint => model.id.toLowerCase().includes(hint.toLowerCase())),
+  );
+  if (tuned.length > 0) {
+    locals = tuned;
   }
 
   const ranked = [...locals].sort((a, b) => (a.paramsB ?? 0) - (b.paramsB ?? 0));
@@ -186,7 +196,7 @@ function resolveTier(
     }
   }
 
-  const local = dynamicLocal(tier, needsVision, registry);
+  const local = dynamicLocal(tier, needsVision, registry, config);
   if (local !== null) {
     return [local];
   }

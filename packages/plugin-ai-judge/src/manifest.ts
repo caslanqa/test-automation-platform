@@ -13,7 +13,10 @@ export const manifest = {
   id: 'ai-judge',
   name: '@pwtap/plugin-ai-judge',
   devDependencies: {},
-  scripts: {},
+  scripts: {
+    'judge:calibrate':
+      'node node_modules/@pwtap/plugin-ai-judge/dist/calibrate/cli.js tests/ai-judge/calibration.json',
+  },
   envKeys: {
     JUDGE_MODEL: '',
     JUDGE_OLLAMA_BASE_URL: 'http://127.0.0.1:11434/v1',
@@ -43,6 +46,8 @@ export const manifest = {
     '',
     'Verdicts are cached in `.judge/cache` keyed by model + material, so a re-run costs nothing',
     '(`JUDGE_CACHE=off` to re-judge); a call is bounded by `JUDGE_TIMEOUT_MS`.',
+    '`npm run judge:calibrate` grades `tests/ai-judge/calibration.json` — your own labelled examples —',
+    'and reports accuracy, Cohen’s kappa and false passes, so a judge model is chosen with evidence.',
     '',
     '```ts',
     'await expect({ userMessage, botResponse, rubric }).toPassRubric({ minScore: 80 });',

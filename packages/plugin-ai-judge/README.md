@@ -59,6 +59,20 @@ The model id's **prefix** routes it to a provider:
 
 `anthropic/` is **native** (your own Anthropic key). To reach Claude _through_ OpenRouter instead, use `openrouter/anthropic/claude-3.5-sonnet` — the prefixes don't collide.
 
+## Measure the judge — `npm run judge:calibrate`
+
+A judge nobody measured is a test nobody validated. Put your own labelled examples in `tests/ai-judge/calibration.json` (`expected` is the verdict a **human** gives), and the command grades them with one or more models and reports accuracy, Cohen's kappa and — the number that matters in a suite — how many cases the judge **passed that a human failed**. Compare candidates in one run with repeated `--model`, and gate CI with `--min-accuracy` / `--min-kappa` / `--max-false-pass` (non-zero exit when a gate fails). Verdicts come from the same cache as a test run, so re-running an unchanged dataset is free.
+
+```bash
+npm run judge:calibrate -- --model local/qwen3.5:4b --model anthropic/claude-opus-4-8 --max-false-pass 0
+# local/qwen3.5:4b: 93% accuracy (14/15), kappa 0.86, false pass 1, false fail 0
+#   FALSE PASS  contradicts itself — judged 100/100: …
+```
+
+## Judge with a model built to judge
+
+When any installed Ollama model matches `judgeModelHints` in `config/aiJudge.config.ts` (`selene`, `prometheus`, `glider`, `flow-judge`, …), the router picks tiers from those alone — an 8B judge-tuned model out-grades a much larger generalist, and ranking local models by size alone left it unused. `ollama pull` one and it takes over; with none installed, nothing changes.
+
 ## Determinism, cost and safety
 
 Every verdict is cached under `.judge/cache`, keyed by model + material, so a re-run replays the same judgement for free — `JUDGE_CACHE=off` re-judges from scratch. A single request is bounded by `JUDGE_TIMEOUT_MS` (default `180000`), and rate limits (429) and 5xx are retried with backoff instead of failing the test. The response under test is quoted to the judge as data inside a per-call `<material-…>` tag, so a bot reply that instructs the judge to pass gets graded, not obeyed. The judge is asked for its reasoning **before** the score, and constrained to the verdict schema where the backend supports it (Ollama `format`, OpenAI-compatible `response_format`).
