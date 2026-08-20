@@ -23,6 +23,7 @@ import path from 'node:path';
 
 import { resolveJury, resolveModel } from '../escalate/client.js';
 import { applyEscalation, escalate } from '../escalate/escalate.js';
+import { confirmFlake, DEFAULT_PROBE_RUNS } from '../heal/confirmFlake.js';
 import { proposeForFinding } from '../heal/propose.js';
 import { readRuns, RUNS_DIR } from '../history/runStore.js';
 import { loadQuarantine, type QuarantineEntry } from '../quarantine/file.js';
@@ -41,6 +42,11 @@ const USAGE = `heal — failure triage, flake detection and quarantine
       Classify every failure in the most recent run: flaky / locator-drift / true-fail / env-infra.
       --escalate asks a model about the failures that stayed 'unknown'. Off by default, and it can never
       change a class the evidence already decided, nor raise confidence into the act band.
+
+  heal triage --confirm-flake <testKey> [--runs 5]
+      Run one failing test repeatedly with retries OFF and report what it actually did. The answer when
+      a config sets retries to 0 — there is no in-run flake signal to read, and raising your retries to
+      manufacture one is not this tool's decision to make.
 
   heal gate [--max-quarantine N] [--total-tests N] [--no-ratchet] [--runs-dir <dir>]
       CI gate. Exits 1 on a quarantine violation or an unshielded failure.
@@ -127,6 +133,44 @@ async function commandTriage(projectDir: string, argv: string[]): Promise<number
     return 1;
   }
   const findings = triageRun(projectDir, run, runs, { window: flagNumber(argv, '--window', 20) });
+
+  const confirmKey = flagValue(argv, '--confirm-flake');
+  if (confirmKey !== undefined) {
+    const finding = findings.find(entry => entry.test.testKey.startsWith(confirmKey));
+    if (finding === undefined) {
+      err(`[heal] no failing test with key '${confirmKey}' in the last run.`);
+      return 1;
+    }
+    const title = finding.test.titlePath[finding.test.titlePath.length - 1] ?? '';
+    const runsWanted = flagNumber(argv, '--runs', DEFAULT_PROBE_RUNS) ?? DEFAULT_PROBE_RUNS;
+    out(`[heal] running '${title}' ${runsWanted}× with retries off…`);
+    const probe = await confirmFlake({
+      projectDir,
+      file: finding.test.file,
+      title,
+      project: finding.test.project === '' ? undefined : finding.test.project,
+      runs: runsWanted,
+    });
+    out(
+      `[heal] ${probe.passed} passed, ${probe.failed} failed over ${probe.runs} separate runs — ${probe.verdict}.`,
+    );
+    if (probe.verdict === 'flaky') {
+      out(
+        '[heal] Measured, not inferred. This is quarantine-eligible evidence: `heal quarantine add` will take it.',
+      );
+    } else if (probe.verdict === 'consistent-fail') {
+      out('[heal] It fails every time, so it is not a flake. Triage says what it is instead.');
+      if (probe.firstFailureOutput !== undefined) {
+        err('[heal] the first failure said:');
+        err(probe.firstFailureOutput);
+      }
+    } else {
+      out(
+        '[heal] It passed every time in isolation, so the failure needs the rest of the suite — order or shared state, not the test alone.',
+      );
+    }
+    return 0;
+  }
 
   // The escalation tier, and the only place it is reachable from: the failures the deterministic pass
   // could not name. Asking about the others would spend money to be told what we already knew, and the

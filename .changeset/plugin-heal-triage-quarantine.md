@@ -194,3 +194,52 @@ A custom provider now serves the healer as well, by passing an `endpoint` alongs
 `HEAL_MODEL` falls back to `JUDGE_MODEL`, so a project that already configured the judge gets this with
 zero new environment keys. A failed call is deliberately not counted as a vote — one unreachable
 endpoint must not manufacture the tie that suppresses a real majority.
+
+**Mobile, and the discovery that made it testable.** An Appium or Maestro suite now gets the whole
+engine: run history, `testKey`, both fingerprints, quarantine, the gates, the metrics and the
+calibration are shared unchanged, because the seam is Playwright's reporter rather than the browser. A
+mobile "element not found" is classified by the **same** `presence-timeout` kind a web one is, which is
+what parity actually means here.
+
+The plan called for a post-run probe against a booted device. That cannot run in CI — and the
+consequence it did not name is that none of mobile repair could have been tested, so every refusal in it
+would have been a claim rather than an assertion. Instead `@pwtap/mobile-core` captures the element tree
+into a `mobile-hierarchy` attachment when a test fails, and mobile repair becomes the same shape as web
+repair: read a file the run left behind. Thirty-eight new tests, none needing a device.
+
+The error vocabulary was taken from installed sources rather than invented, and **each pattern names
+where it came from** — `webdriver@9.30.0` for the three "element not found" shapes, the `WebDriverError:`
+wrapper, the invalid-selector rewrite and the stale-element name; this repo's own adapters for the rest.
+An Appium upgrade that changes a message now breaks our CI loudly instead of silently reclassifying
+every mobile failure in a user's project.
+
+Three corrections the real sources forced. Every mobile failure arrives wrapped as
+`[mobile-inspector] "tap" failed: <driver message>`, so patterns written against the bare message would
+have matched nothing in production while passing any unit test that skipped the wrapper. `does not
+support` was too loose for a capability gap — it also matches a driver message containing the phrase, and
+reading a missing element as a capability gap tells a human to change the test when the app had moved. And
+`element not interactable` is not a presence timeout but its opposite: the locator **resolved**, so a
+repair would repoint a correct locator at some other element that happens to be tappable. It,
+`stale-element` and `driver-unsupported` each carry a veto saying so, which also removes `locator-drift`
+from the escalation tier's candidate set.
+
+Two mobile-only refusals: never heal to a coordinate (it passes today and taps empty space after any
+layout change) and never heal through an out-of-app warning (that locator cannot resolve on replay at
+all). A mobile proposal is **always advisory** — verifying one means re-running on the device that
+produced the failure, which this process cannot assume is attached, so `--apply` refuses it and says why.
+
+The plan's `./heal` subpath on `@pwtap/mobile-core` was dropped: everything the mobile target needs is
+already public on its main entry, so the subpath would have added a versioned cross-package contract for
+zero capability, in the direction the plan itself forbids. The target lives here behind an optional peer.
+
+**`heal triage --confirm-flake <testKey>`** measures flakiness instead of inferring it. The strongest
+signal is a retry that passed, and the core scaffold sets `retries: 0` locally — so there is none. The
+manifest deliberately does not raise `retries`: that is the user's config, and doubling local wall-clock
+for a diagnostic is not our decision. The probe runs the test N times in **separate processes** with
+retries off, because `--repeat-each` keeps module state alive and module state is exactly what a
+first-run-only failure is made of. A `consistent-fail` prints the first failure's output, since "it fails
+every time" without a reason sends the reader back to run it themselves.
+
+`TAXONOMY_VERSION` moves to 2 for the three new kinds. It participates in both fingerprints, so existing
+history starts new clusters rather than silently merging with the old ones — which is the behaviour that
+version exists for.

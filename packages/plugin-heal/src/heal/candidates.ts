@@ -22,9 +22,19 @@
 import { flatten, landmarkPath, type AriaNode } from './ariaSnapshot.js';
 import type { LocatorIntent } from './intent.js';
 
-export type CandidateStrategy = 'role' | 'roleInLandmark' | 'placeholder' | 'text' | 'roleOrdinal';
+export type CandidateStrategy =
+  | 'role'
+  | 'roleInLandmark'
+  | 'placeholder'
+  | 'text'
+  | 'roleOrdinal'
+  // Mobile, from `@pwtap/mobile-core`'s own strategy names. `point` is listed so a coordinate candidate
+  // can be *named* in a refusal; nothing may ever heal to one.
+  | 'accessibilityId'
+  | 'resourceId'
+  | 'point';
 
-export interface HealCandidate {
+export interface HealCandidate<TNode = AriaNode> {
   strategy: CandidateStrategy;
   /** The replacement expression, ready to substitute into the spec. */
   code: string;
@@ -33,8 +43,12 @@ export interface HealCandidate {
   confidence: 'high' | 'medium' | 'low';
   unique: boolean;
   warnings: string[];
-  /** The node this candidate points at, so equivalence can be checked against it. */
-  node: AriaNode;
+  /**
+   * The element this candidate points at, so equivalence can be checked against it. Generic because the
+   * mobile target carries a `MobileNode` here — the ranking, the scoring and everything downstream are
+   * identical, and only the thing being pointed at differs.
+   */
+  node: TNode;
 }
 
 /** Base scores, in the platform's own order of preference. */

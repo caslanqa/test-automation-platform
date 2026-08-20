@@ -83,6 +83,16 @@ const KIND_WEIGHTS: Record<ErrorKind, Partial<Record<TriageClass, number>>> = {
   network: { 'env-infra': 80 },
   'browser-crash': { 'env-infra': 85 },
   'fixture-error': { 'env-infra': 65 },
+  // Mobile. The element was there and then was not — the tree changed while the command was in
+  // flight, which is what a race looks like from the driver's side.
+  'stale-element': { flaky: 70 },
+  // Mobile. Found but unusable: an overlay, an animation still running, or a control the app has
+  // disabled. Equal weights because those readings are genuinely equally likely, and the margin then
+  // reports it as the close call it is. Never drift — the locator resolved.
+  'not-interactable': { flaky: 30, 'true-fail': 30 },
+  // Mobile. The driver said outright that it cannot perform this gesture. As certain as a value
+  // mismatch, and equally not a defect anything can repair.
+  'driver-unsupported': { 'true-fail': 90 },
   // The weakest signal there is: something took too long and said nothing else.
   'test-timeout': {},
   unknown: {},
@@ -94,6 +104,12 @@ const APP_MOVED_FAVOURS: Partial<Record<ErrorKind, TriageClass>> = {
   'presence-timeout': 'locator-drift',
   'action-timeout': 'locator-drift',
   'value-mismatch': 'true-fail',
+  // An unchanged repository plus an element that will not accept input means the app disabled it.
+  'not-interactable': 'true-fail',
+  'stale-element': 'flaky',
+  // Nothing about the repository bears on a driver's capabilities; without this entry the generic
+  // "something outside changed" branch would nudge it toward drift.
+  'driver-unsupported': 'true-fail',
 };
 
 const ZERO: Record<TriageClass, number> = {
@@ -148,6 +164,15 @@ export function classify(input: TriageInput): Triage {
   // A value matcher that reported both sides has compared them. Never heal that, whatever else says.
   if (failure.kind === 'value-mismatch') {
     vetoes.push('value-mismatch: the expected value is the test doing its job');
+  }
+  // The driver found the element and then failed for another reason. Whatever is wrong, the locator
+  // is not — so there is nothing here a replacement could fix, and offering one would repoint a
+  // correct locator at some other element that happens to be interactable.
+  if (failure.kind === 'not-interactable' || failure.kind === 'stale-element') {
+    vetoes.push('locator-resolved: the element was found, so the locator is not the problem');
+  }
+  if (failure.kind === 'driver-unsupported') {
+    vetoes.push('driver-unsupported: a capability gap is a human decision, not a repair');
   }
   if (input.hadGlobalErrors === true) {
     add('env-infra', 25, 'this run reported an error outside any test, so the harness was unwell');
@@ -275,7 +300,9 @@ export function classify(input: TriageInput): Triage {
  */
 export function candidateClasses(triage: Pick<Triage, 'vetoes'>): TriageClass[] {
   const blocked = triage.vetoes.some(veto =>
-    /^(value-mismatch|never-passed|test-file-edited|source-edited)/.test(veto),
+    /^(value-mismatch|never-passed|test-file-edited|source-edited|locator-resolved|driver-unsupported)/.test(
+      veto,
+    ),
   );
   return blocked
     ? ['flaky', 'true-fail', 'env-infra']

@@ -215,3 +215,36 @@ export {
   type UntrustedEvidence,
 } from './escalate/prompt.js';
 export { majorityClass, type PanelResult } from './escalate/vote.js';
+
+// --- mobile (optional peer on @pwtap/mobile-core) ----------------------------------------------
+export {
+  DEFAULT_PROBE_RUNS,
+  confirmFlake,
+  type ConfirmFlakeResult,
+  type ConfirmFlakeTarget,
+} from './heal/confirmFlake.js';
+export { parseMobileIntent, readLiteral, type MobileIntent } from './heal/mobile/intent.js';
+export {
+  proposeMobileRepair,
+  type MobileProposeOptions,
+  type MobileProposeOutcome,
+} from './heal/mobile/propose.js';
+export {
+  HIERARCHY_ATTACHMENT,
+  MIN_MOBILE_SCORE,
+  analyseWithKit,
+  flattenNodes,
+  loadMobileKit,
+  mobileTargets,
+  proveMobile,
+  readHierarchy,
+  renderLocator,
+  type CapturedHierarchy,
+  type MobileAnalysis,
+} from './heal/mobile/target.js';
+export type {
+  MobileCandidateLike,
+  MobileKit,
+  MobileLocatorLike,
+  MobileNodeLike,
+} from './heal/mobile/types.js';

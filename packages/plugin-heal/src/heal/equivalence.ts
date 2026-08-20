@@ -37,8 +37,8 @@ export type EquivalenceVerdict = 'proven' | 'likely' | 'moved' | 'refused';
 
 export interface Equivalence {
   verdict: EquivalenceVerdict;
-  /** Which of the intent's signals the candidate matches. */
-  matched: Array<'role' | 'name'>;
+  /** Which of the intent's signals the candidate matches. The mobile target states its own three. */
+  matched: Array<'role' | 'name' | 'accessibilityId' | 'resourceId' | 'text'>;
   /** How many elements the candidate resolves to in the snapshot. */
   uniqueMatches: number;
   /** The candidate's landmark chain, for the report. */

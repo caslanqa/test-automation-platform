@@ -17,7 +17,7 @@ This is Phase 2 of three. Phase 1 shipped the agentic V&V plugin (`docs/agentic-
 ships a mobile MCP server. **Phase 2 depends on neither**: agents are a nicer front end over this
 CLI, never a way to reach a verdict it cannot.
 
-## What is built (steps 1–7 of 8)
+## What is built (all 8 steps)
 
 | Step | Contents                                                                                        |
 | ---- | ----------------------------------------------------------------------------------------------- |
@@ -251,6 +251,55 @@ CLI only escalates findings that are already `unknown`: asking about the others 
 told what we knew, and the invariant would discard the answer anyway. The smoke asserts the stronger
 form — the model is never _asked_ about a decided failure.
 
+## Step 8: the plan needed a device, and then it did not
+
+The plan's mobile design rested on a post-run **probe**: reconnect to the device, read the hierarchy,
+rank replacements. That has a cost the plan named — it cannot run in CI — and a consequence it did not:
+**none of mobile repair could have been tested at all**, so every refusal in it would have been a claim
+rather than an assertion.
+
+The web path does not probe. It reads an ARIA snapshot Playwright already wrote at the moment of
+failure. Mobile has no such artifact and the session is closed in the fixture's teardown seconds later —
+so `@pwtap/mobile-core` now writes one: on failure, and only on failure, it captures the element tree
+into a `mobile-hierarchy` attachment.
+
+That inverts the economics of the whole step. Mobile repair becomes the same shape as web repair — read
+a file the run left behind — and everything except "does a real driver return a usable tree" (already
+covered by `mobile-inspector`'s device test) is verifiable with a hand-written fixture tree. Thirty-eight
+new tests, none of them needing a device.
+
+The objection that rules out a capture fixture on the web does not apply here. `mobileApp` is not an
+auto-fixture: only a test that asked for it instantiates it, and by teardown the driver is already
+connected. A green run pays one status comparison.
+
+## Step 8: no `./heal` subpath on mobile-core, and why
+
+The plan put `mobileTarget` behind a new `./heal` export on `@pwtap/mobile-core`. That was written
+believing it needed mobile-core internals — but `locatorCandidates`, `countMatches`, `findNodeByKey`
+and `assignNodeIdentity` are **already public on the main entry**. The subpath would therefore have
+bought nothing while costing a cross-package contract to version, in the direction the plan itself
+forbids (mobile-core must never know the healer exists).
+
+So `mobileTarget` lives in `plugin-heal`, with `@pwtap/mobile-core` as an optional peer — the pattern
+step 7 already established for the judge. Same argument as ADR-H4: do not split for zero capability.
+
+## Step 8: two corrections the real sources forced
+
+**The error vocabulary was not what the plan wrote.** Every mobile failure reaches the reporter wrapped
+by `mobile-core/src/fixture.ts:167` as `[mobile-inspector] "tap" failed: <driver message>`, so patterns
+written against a bare driver message would have matched nothing in production while passing any unit
+test that skipped the wrapper. Every pattern is now tested through it.
+
+**"does not support" was too loose.** As a capability-gap marker it also matches a _driver_ message
+containing the phrase — and reading a missing element as a capability gap tells a human to change the
+test when the application had moved. It is anchored on the two exact throw sites instead.
+
+**`element not interactable` is not a presence timeout.** The plan grouped it with the missing-element
+patterns. It is the opposite: the locator **resolved**, so a repair would repoint a correct locator at
+some other element that happens to be tappable. It, `stale-element` and `driver-unsupported` all carry a
+veto saying the locator is not the problem — which also removes `locator-drift` from the escalation
+tier's candidate set, so a model cannot reintroduce it.
+
 ## The classifier
 
 **Rule 0 outranks everything: a retry that passed means `flaky`.** A locator that resolved on attempt
@@ -315,6 +364,21 @@ the difference between evidence and a guess.
 - **ADR-H15 — Calibration is offline.** No model, no browser, no network, no run of the suite: the case
   file carries the evidence `classify()` consumes. A gate that needs the world to be reachable is a
   gate that gets disabled, which is `plugin-ai-judge`'s reason for the same shape.
+
+### Step 8 decisions
+
+- **ADR-H20 — The failing mobile test captures its own screen.** A `mobile-hierarchy` attachment written
+  in the fixture's teardown replaces the planned device probe. It makes mobile repair testable without a
+  device, and it costs a green run one comparison because `mobileApp` is never auto-instantiated.
+- **ADR-H21 — No `./heal` subpath on `@pwtap/mobile-core`.** Everything the mobile target needs is
+  already public on the main entry, so a subpath would add a versioned cross-package contract for zero
+  capability. The target lives in `plugin-heal` behind an optional peer.
+- **ADR-H22 — A mobile proposal is always advisory.** Verification means re-running on the device that
+  produced the failure, which this process cannot assume is attached. Stated as a refusal rather than
+  worked around.
+- **ADR-H23 — The heal manifest never touches `retries`.** It is the user's config, and doubling local
+  wall-clock for a diagnostic is not our decision. `heal triage --confirm-flake` measures instead, in
+  separate processes so module state cannot mask a first-run-only failure.
 
 ### Step 7 decisions
 

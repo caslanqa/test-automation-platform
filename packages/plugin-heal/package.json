@@ -46,7 +46,8 @@
   },
   "peerDependencies": {
     "@playwright/test": ">=1.61.0",
-    "@pwtap/plugin-ai-judge": ">=0.2.0"
+    "@pwtap/plugin-ai-judge": ">=0.2.0",
+    "@pwtap/mobile-core": ">=1.4.0"
   },
   "scripts": {
     "build": "tsc -b",
@@ -54,6 +55,9 @@
   },
   "peerDependenciesMeta": {
     "@pwtap/plugin-ai-judge": {
+      "optional": true
+    },
+    "@pwtap/mobile-core": {
       "optional": true
     }
   }

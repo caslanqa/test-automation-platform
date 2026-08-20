@@ -42,9 +42,14 @@ export interface Proposal {
   title: string;
   triage: Triage;
   intent: LocatorIntent;
-  /** The full ranked list, so a reviewer can see what else was on the table. */
-  candidates: HealCandidate[];
-  chosen?: HealCandidate;
+  /**
+   * The full ranked list, so a reviewer can see what else was on the table. Loosely typed on the node
+   * because a mobile proposal carries a `MobileNode` there and every other field is identical.
+   */
+  candidates: Array<HealCandidate<unknown>>;
+  chosen?: HealCandidate<unknown>;
+  /** Which engine produced this. `mobile` reads a captured hierarchy where `web` reads an ARIA snapshot. */
+  target?: 'web' | 'mobile';
   equivalence?: Equivalence;
   verification?: RerunResult;
   edit?: CodeEdit;

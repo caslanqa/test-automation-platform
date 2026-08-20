@@ -19,7 +19,7 @@ export const RUN_SCHEMA = 1;
  * Bumped whenever a pattern in `triage/errorTaxonomy.ts` changes. It participates in both
  * fingerprints, so a taxonomy change starts new clusters instead of silently merging old and new.
  */
-export const TAXONOMY_VERSION = 1;
+export const TAXONOMY_VERSION = 2;
 
 /**
  * What kind of failure this is, structurally. Derived from the error text and the failing step —
@@ -42,6 +42,22 @@ export type ErrorKind =
   | 'browser-crash'
   /** The deepest erroring step was a fixture or hook — setup failed, the test never really ran. */
   | 'fixture-error'
+  /**
+   * Mobile: the element was found and then vanished before the command reached it
+   * (`stale element reference`). A race by construction — the tree changed mid-command.
+   */
+  | 'stale-element'
+  /**
+   * Mobile: the element resolved but could not be acted on (`element not interactable`). The locator
+   * is therefore **correct**, which is why this can never be drift: an overlay, an animation still
+   * running, or a genuinely disabled control.
+   */
+  | 'not-interactable'
+  /**
+   * Mobile: the test asked for a gesture the connected driver does not implement. A capability gap,
+   * never a defect in the application and never healable.
+   */
+  | 'driver-unsupported'
   /** `Test timeout of Nms exceeded.` with nothing more specific. The weakest signal there is. */
   | 'test-timeout'
   /** Recognised as a failure, but not as any of the above. */

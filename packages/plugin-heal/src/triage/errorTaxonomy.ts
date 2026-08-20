@@ -70,6 +70,68 @@ const NETWORK_SIGNS = [
   'socket hang up',
 ];
 
+/**
+ * Mobile patterns, and where every one of them comes from.
+ *
+ * The web patterns above were captured by generating real Playwright failures. That is not possible for
+ * these without a booted device, so they were taken from the **installed sources** instead, which is the
+ * next most authoritative thing and is recorded here so a reader can check rather than trust:
+ *
+ * - `webdriver@9.30.0` `build/index.js:1418` — the three "element not found" shapes Appium, Internet
+ *   Explorer and the JSONWire fallback each produce.
+ * - `webdriver@9.30.0` `build/index.js:2016` — every driver error's message is literally
+ *   `WebDriverError: <server message> when running "<cmd>" with method "<METHOD>"`, so the prefix is a
+ *   reliable "this came from the driver, not from the app" marker.
+ * - `webdriver@9.30.0` `build/index.js:2072,2079,2292` — the invalid-selector rewrite, the stale
+ *   element name, and the `invalid session id` retry check.
+ * - This repo's own adapters: `plugin-maestro/src/inspector.ts:471,481`,
+ *   `plugin-maestro/src/core/McpClient.ts`, `plugin-maestro/src/core/appInstaller.ts`, and
+ *   `mobile-core/src/types.ts:410` (`UnsupportedActionError`).
+ *
+ * Keyed on the message rather than on the Playwright project name, deliberately: a user may rename the
+ * `appium` project, and these strings identify themselves.
+ */
+const MOBILE_MISSING_SIGNS = [
+  'no such element',
+  'An element could not be located on the page using the given search parameters.',
+  'unable to find element',
+  // Maestro's own wait, which reports the same fact in its own words.
+  'waitFor timed out — element never became visible',
+];
+
+/** The driver, the device or the tooling around them — never the test and never the app. */
+const MOBILE_INFRA_SIGNS = [
+  'invalid session id',
+  'A session is either terminated or not started',
+  'Could not proxy command',
+  'Failed to create session',
+  "'maestro mcp' is not running",
+  'Failed to connect to 127.0.0.1',
+  'adb install failed',
+  'simctl install failed',
+  'app download failed',
+  'app artifact not found',
+  'no .app bundle found inside',
+];
+
+/**
+ * The test asked for something the driver cannot do. A human decision, never a repair.
+ *
+ * Anchored on the exact sentences the two throw sites produce rather than on a phrase like
+ * "does not support". Every mobile failure arrives wrapped as
+ * `[mobile-inspector] "tap" failed: <driver message>`, so a loose phrase would also match a *driver*
+ * error that happened to contain it — and misreading a missing element as a capability gap would tell a
+ * human to change the test when the app had moved.
+ */
+const MOBILE_UNSUPPORTED_PATTERNS = [
+  // mobile-core/src/types.ts:410 — UnsupportedActionError.
+  /driver "[^"]+" does not support "[^"]+" actions/,
+  // plugin-maestro/src/inspector.ts:471.
+  /is not supported by the Maestro driver/,
+  // plugin-maestro/src/inspector.ts:507 — an action the adapter has no branch for at all.
+  /unhandled action:/,
+];
+
 const CRASH_SIGNS = [
   'Target page, context or browser has been closed',
   'Target crashed',
@@ -132,6 +194,36 @@ export function classifyError(input: ClassifyErrorInput): ErrorFacts {
     timeoutMs: timeoutText === undefined ? undefined : Number(timeoutText),
   };
   const kind = (k: ErrorKind): ErrorFacts => ({ kind: k, ...facts });
+
+  // Mobile infrastructure first, for the same reason web crashes come first: a dead session says
+  // nothing about the test's own correctness, and its message often still names an element.
+  if (MOBILE_INFRA_SIGNS.some(sign => text.includes(sign))) {
+    return kind('browser-crash');
+  }
+  // A capability gap. Checked before the element patterns because its message names an action, and
+  // before the fixture check because it is thrown from inside the fixture's own action path — which
+  // would otherwise read it as setup breaking rather than as the test asking for the impossible.
+  if (MOBILE_UNSUPPORTED_PATTERNS.some(pattern => pattern.test(text))) {
+    return kind('driver-unsupported');
+  }
+  // Found, then gone before the command landed. The tree changed mid-command, which is a race.
+  if (text.includes('stale element reference')) {
+    return kind('stale-element');
+  }
+  // Found, but not usable. The locator is correct, so this must never be read as drift.
+  if (text.includes('element not interactable') || text.includes('element click intercepted')) {
+    return kind('not-interactable');
+  }
+  // A selector the driver refused outright — the test's own locator is malformed, and no replacement
+  // can be proven for a locator that never described anything.
+  if (/used with strategy ".*" is invalid!|invalid selector/.test(text)) {
+    return kind('value-mismatch');
+  }
+  // The element was not there. Mapped onto the SAME kind the web path uses, which is what makes the
+  // rest of the engine — weights, bands, vetoes, the equivalence gate — work on mobile unchanged.
+  if (MOBILE_MISSING_SIGNS.some(sign => text.includes(sign))) {
+    return kind('presence-timeout');
+  }
 
   // Environment first: these say nothing about the test's own correctness, so they must not be read
   // as a locator or a value problem just because a matcher happens to appear in the same message.

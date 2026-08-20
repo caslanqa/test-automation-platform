@@ -758,6 +758,36 @@ async function main() {
       gateway.close();
     }
 
+    // 12 -------------------------------------------------------------------------------------
+    // The answer for a config with retries off. The fixture's flaky spec fails exactly once, so a
+    // probe of three separate runs must see both outcomes — which is the measurement the in-run
+    // signal cannot make when there are no retries to read.
+    step('12: --confirm-flake measures flakiness instead of inferring it');
+    const flakyTest = latestRecord(dir).tests.find(entry =>
+      entry.titlePath.join(' ').includes('really flaky'),
+    );
+    assert(flakyTest !== undefined, 'the flaky spec should be in the record');
+
+    fs.rmSync(flag, { force: true });
+    // The probe spawns `playwright test` itself, so the fixture server and the one-shot flag have to be
+    // in the CLI's environment — not merely in this process's.
+    const probe = await heal(dir, ['triage', '--confirm-flake', flakyTest.testKey, '--runs', '3'], {
+      ...base,
+      HEAL_APP_VERSION: '2',
+    });
+    assert(probe.code === 0, `the probe should exit 0, got ${probe.code}\n${probe.stderr}`);
+    assert(
+      /1 passed, 2 failed|2 passed, 1 failed/.test(probe.stdout),
+      `three separate runs should show both outcomes, got:\n${probe.stdout}\n${probe.stderr}`,
+    );
+    assert(
+      /— flaky\./.test(probe.stdout) && /Measured, not inferred/.test(probe.stdout),
+      `the verdict should be flaky and say it was measured, got:\n${probe.stdout}`,
+    );
+
+    const missing = await heal(dir, ['triage', '--confirm-flake', 'nosuchkey']);
+    assert(missing.code === 1, `an unknown key must exit 1, got ${missing.code}`);
+
     step('OK');
   } finally {
     await app.close();

@@ -195,6 +195,59 @@ silent renewal: renewing is a commit with a reason, which is the point.
 
 Plus the other half: a failing run whose failures are not **all** quarantined fails the gate.
 
+## Mobile
+
+Everything above works on an Appium or Maestro suite. The engine's seam is Playwright's reporter, not
+the browser, so run history, `testKey`, the fingerprints, quarantine, the gates, the metrics and the
+calibration are shared unchanged — a mobile "element not found" is classified by the **same**
+`presence-timeout` kind a web one is.
+
+Three things are mobile-specific.
+
+**The error vocabulary.** Driver errors arrive wrapped as
+`[mobile-inspector] "tap" failed: WebDriverError: no such element when running …`, and each pattern in
+the taxonomy names the installed source it was taken from (`webdriver@9.30.0`, this repo's adapters).
+Two kinds exist only here, and both say _the locator was right_:
+
+| Kind                 | Meaning                                                               | Repairable |
+| -------------------- | --------------------------------------------------------------------- | ---------- |
+| `stale-element`      | Found, then gone before the command landed — a race                   | never      |
+| `not-interactable`   | Found, but blocked by an overlay, an animation, or a disabled control | never      |
+| `driver-unsupported` | The driver cannot perform that gesture at all                         | never      |
+
+**The screen.** Playwright writes an ARIA snapshot for a failing web test; there is no such thing for
+mobile, and the driver session is closed moments later. So `@pwtap/mobile-core` captures the element
+tree into a `mobile-hierarchy` attachment **when a test fails, and only then** — one call against a
+session that was about to be torn down. A green run pays one comparison. That attachment is what lets
+`heal propose` rank mobile replacements after the run, with no device and no second connection.
+
+**Two extra refusals.** Never heal to a coordinate (`strategy: 'point'` passes today and taps empty
+space after any layout change) and never heal through an out-of-app warning (a status-bar element
+cannot be acted on by a driver scoped to your app, so it would not resolve on replay at all).
+
+A mobile proposal is **always advisory**: verifying it means re-running the test on the device that
+produced the failure, and nothing here can assume that device is still attached. `--apply` refuses it,
+and says so.
+
+## Is it actually flaky? Measure it
+
+The strongest flake signal is a retry that passed — and the core scaffold sets
+`retries: process.env.CI ? 2 : 0`, so **locally there is no in-run signal at all**. Raising your
+retries to manufacture one is not this tool's decision to make, so it measures instead:
+
+```bash
+npx heal triage --confirm-flake <testKey> --runs 5
+```
+
+Five separate processes, retries off, no `--repeat-each` — module state persists inside one process,
+and module state is exactly what a first-run-only failure is made of. The answer is one of three:
+
+- **flaky** — it did both. Measured, not inferred, and quarantine-eligible evidence.
+- **consistent-fail** — it fails every time, so it is not a flake (and the first failure's output is
+  printed, because "it fails every time" without a reason sends you back to run it yourself).
+- **consistent-pass** — it passes in isolation, so the failure needs the rest of the suite: order or
+  shared state, not the test alone.
+
 ## When the evidence is not enough
 
 Some failures the deterministic classifier genuinely cannot name — a bare `Test timeout of 30000ms

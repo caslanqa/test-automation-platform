@@ -23,6 +23,8 @@ import { parseAriaSnapshot, snapshotFromErrorContext, type AriaNode } from './ar
 import { targetsFor, webLocatorCandidates, type HealCandidate } from './candidates.js';
 import { eligibleForAutofix, proveEquivalence } from './equivalence.js';
 import { parseLocatorIntent } from './intent.js';
+import { proposeMobileRepair } from './mobile/propose.js';
+import { readHierarchy } from './mobile/target.js';
 import { applyEdit, planEdit, writeProposal, type Proposal } from './patch.js';
 import { verifyCandidate } from './rerun.js';
 
@@ -124,6 +126,13 @@ export async function proposeForFinding(options: ProposeOptions): Promise<Propos
   const { projectDir, finding, apply = false, verify = true, sequence = 1 } = options;
   const { test, failure, triage } = finding;
 
+  // Which engine. Decided by what the run recorded rather than by the Playwright project's name: a
+  // captured hierarchy means the failure came through the mobile fixture, whatever the project is
+  // called, and a user is free to rename `appium`.
+  if (readHierarchy(projectDir, finding) !== undefined) {
+    return proposeMobileRepair({ projectDir, finding, sequence });
+  }
+
   // Gate 1: the class. Nothing else is ever examined, so a regression cannot be repaired even by
   // accident — there is no code path that generates a candidate for it.
   if (triage.class !== 'locator-drift') {
@@ -164,7 +173,7 @@ export async function proposeForFinding(options: ProposeOptions): Promise<Propos
     return {
       proposal: null,
       skipped:
-        'no ARIA snapshot was captured for this failure — Playwright writes one as the error-context attachment for matcher failures',
+        'no ARIA snapshot was captured for this failure — Playwright writes one as the error-context attachment for matcher failures, and a mobile run writes a mobile-hierarchy attachment instead',
     };
   }
   checked.push('an ARIA snapshot of the failing page was available');
@@ -173,6 +182,7 @@ export async function proposeForFinding(options: ProposeOptions): Promise<Propos
   const proposal: Proposal = {
     testKey: test.testKey,
     project: test.project,
+    target: 'web',
     file: failure.topFrame?.file ?? test.file,
     line: failure.topFrame?.line ?? test.line,
     title: test.titlePath.join(' › '),
