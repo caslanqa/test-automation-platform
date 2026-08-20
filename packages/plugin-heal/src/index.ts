@@ -40,7 +40,56 @@ export {
 export { testKey, titlePathAfterFile } from './history/testKey.js';
 
 export { callLogLines, displayMessage, normalizeMessage, stripAnsi } from './triage/ansi.js';
-export { classify, type Triage, type TriageClass, type TriageInput } from './triage/classify.js';
+export {
+  band,
+  classify,
+  type Triage,
+  type TriageClass,
+  type TriageInput,
+} from './triage/classify.js';
+export { changedFiles, touched, type ChangedFiles } from './triage/gitDiff.js';
+export { lastFailure, triageRun, type Finding, type TriageRunOptions } from './triage/run.js';
+
+export {
+  LANDMARK_ROLES,
+  flatten,
+  landmarkPath,
+  parseAriaSnapshot,
+  snapshotFromErrorContext,
+  type AriaNode,
+} from './heal/ariaSnapshot.js';
+export {
+  normalizeName,
+  targetsFor,
+  webLocatorCandidates,
+  type CandidateStrategy,
+  type HealCandidate,
+} from './heal/candidates.js';
+export {
+  MIN_CANDIDATE_SCORE,
+  eligibleForAutofix,
+  proveEquivalence,
+  type Equivalence,
+  type EquivalenceVerdict,
+} from './heal/equivalence.js';
+export { parseLocatorIntent, type LocatorIntent } from './heal/intent.js';
+export {
+  PROPOSALS_DIR,
+  planEdit,
+  unifiedDiff,
+  writeProposal,
+  type CodeEdit,
+  type Proposal,
+} from './heal/patch.js';
+export { proposeForFinding, type ProposeOptions, type ProposeOutcome } from './heal/propose.js';
+export {
+  DEFAULT_GREENS,
+  escapeTitle,
+  verifyCandidate,
+  verifyReporterPath,
+  type RerunResult,
+} from './heal/rerun.js';
+export { VERIFY_PREFIX, parseVerifyOutput, type VerifyLine } from './heal/verifyReporter.js';
 export { classifyError, type ClassifyErrorInput, type ErrorFacts } from './triage/errorTaxonomy.js';
 export {
   errorFingerprint,

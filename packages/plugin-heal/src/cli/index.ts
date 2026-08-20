@@ -17,14 +17,14 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { flakeStats } from '../history/flakeStats.js';
+import { proposeForFinding } from '../heal/propose.js';
 import { readRuns, RUNS_DIR } from '../history/runStore.js';
 import { loadQuarantine, type QuarantineEntry } from '../quarantine/file.js';
 import { gateQuarantine } from '../quarantine/gate.js';
 import { daysLeft, decideShield, isExpired } from '../quarantine/shield.js';
-import { band, classify, type Triage } from '../triage/classify.js';
-import { changedFiles, touched } from '../triage/gitDiff.js';
-import type { RunRecord, TestRecord } from '../types.js';
+import { band } from '../triage/classify.js';
+import { triageRun, type Finding } from '../triage/run.js';
+import type { RunRecord } from '../types.js';
 import { flagNumber, flagPresent, flagValue, positionals } from './args.js';
 
 const USAGE = `heal — failure triage, flake detection and quarantine
@@ -34,6 +34,10 @@ const USAGE = `heal — failure triage, flake detection and quarantine
 
   heal gate [--max-quarantine N] [--total-tests N] [--no-ratchet] [--runs-dir <dir>]
       CI gate. Exits 1 on a quarantine violation or an unshielded failure.
+
+  heal propose [--apply] [--no-verify] [--runs-dir <dir>]
+      For each locator-drift finding: rank replacements, try to prove one is the same element, run
+      it, and write a reviewable proposal. Nothing is applied without --apply AND a proven proof.
 
   heal quarantine list
       What is quarantined, and for how much longer.
@@ -46,54 +50,8 @@ const err = (line: string): void => {
   process.stderr.write(`${line}\n`);
 };
 
-interface Finding {
-  test: TestRecord;
-  triage: Triage;
-}
-
 function latestRun(runsDir: string): RunRecord | undefined {
   return readRuns(runsDir, { limit: 1 })[0];
-}
-
-/** Classify every unexpected or flaky test in `run`, using the rest of the runs as history. */
-function triageRun(
-  projectDir: string,
-  run: RunRecord,
-  runs: RunRecord[],
-  window: number,
-): Finding[] {
-  const changed = changedFiles(projectDir, run.baseRef);
-  const findings: Finding[] = [];
-
-  for (const test of run.tests) {
-    if (test.outcome !== 'unexpected' && test.outcome !== 'flaky') {
-      continue;
-    }
-    // The last attempt that actually failed is the one whose evidence describes the failure.
-    const failure = [...test.attempts].reverse().find(attempt => attempt.failure)?.failure;
-    const history = flakeStats(
-      runs.filter(candidate => candidate.runId !== run.runId),
-      test.testKey,
-      { window },
-    );
-    findings.push({
-      test,
-      triage: classify({
-        outcome: test.outcome,
-        failure,
-        history: history.runs === 0 ? undefined : history,
-        hadGlobalErrors: run.globalErrors.length > 0,
-        diffUnknown: !changed.known,
-        testFileChanged: changed.known ? touched(changed, test.file) : undefined,
-        topFrameFileChanged: changed.known ? touched(changed, failure?.topFrame?.file) : undefined,
-        infraFileChanged: changed.known
-          ? touched(changed, 'package-lock.json') || touched(changed, 'playwright.config.ts')
-          : undefined,
-        configRetries: run.configRetries,
-      }),
-    });
-  }
-  return findings;
 }
 
 const ICON: Record<string, string> = {
@@ -144,7 +102,7 @@ function commandTriage(projectDir: string, argv: string[]): number {
     );
     return 1;
   }
-  const findings = triageRun(projectDir, run, runs, flagNumber(argv, '--window', 20) ?? 20);
+  const findings = triageRun(projectDir, run, runs, { window: flagNumber(argv, '--window', 20) });
   printFindings(findings, run);
 
   const jsonPath = flagValue(argv, '--json');
@@ -278,13 +236,93 @@ function commandQuarantine(projectDir: string, argv: string[]): number {
   return 0;
 }
 
-export function run(argv: string[], projectDir = process.cwd()): number {
+async function commandPropose(projectDir: string, argv: string[]): Promise<number> {
+  const runsDir = path.resolve(projectDir, flagValue(argv, '--runs-dir') ?? RUNS_DIR);
+  const runs = readRuns(runsDir);
+  const run = runs[0];
+  if (run === undefined) {
+    err('[heal] no run records — run the suite once with the heal reporter configured.');
+    return 1;
+  }
+
+  const apply = flagPresent(argv, '--apply');
+  const verify = !flagPresent(argv, '--no-verify');
+  const findings = triageRun(projectDir, run, runs, { window: flagNumber(argv, '--window', 20) });
+  if (findings.length === 0) {
+    out('[heal] nothing to propose — no failures in the last run.');
+    return 0;
+  }
+
+  // Every test that was already red in this run, by title: the verification must not blame a
+  // sibling's pre-existing failure on the candidate.
+  const alreadyFailing = run.tests
+    .filter(test => test.outcome === 'unexpected' || test.outcome === 'flaky')
+    .map(test => test.titlePath[test.titlePath.length - 1] ?? '')
+    .filter(title => title !== '');
+
+  let examined = 0;
+  let written = 0;
+  let applied = 0;
+  for (const [index, finding] of findings.entries()) {
+    const title = finding.test.titlePath.join(' › ');
+    const outcome = await proposeForFinding({
+      projectDir,
+      finding,
+      apply,
+      verify,
+      sequence: index + 1,
+      alreadyFailing,
+    });
+
+    if (outcome.proposal === null) {
+      out(`  · ${title}`);
+      out(`      not examined — ${outcome.skipped ?? 'no reason recorded'}`);
+      continue;
+    }
+    examined += 1;
+    written += outcome.dir === undefined ? 0 : 1;
+    const proposal = outcome.proposal;
+    const verdict = proposal.equivalence?.verdict ?? 'no-candidate';
+    const mark = proposal.applied
+      ? '✓ applied'
+      : proposal.refusals.length === 0
+        ? '→ ready'
+        : '· proposed';
+    out(`  ${mark}  ${title}`);
+    out(`      ${proposal.intent.code}  →  ${proposal.chosen?.code ?? '(none)'}`);
+    out(
+      `      equivalence: ${verdict}${proposal.verification === undefined ? '' : `, greens ${proposal.verification.greens}`}`,
+    );
+    for (const refusal of proposal.refusals) {
+      out(`      refused: ${refusal}`);
+    }
+    if (outcome.dir !== undefined) {
+      out(`      ${path.relative(projectDir, outcome.dir)}`);
+    }
+    if (proposal.applied) {
+      applied += 1;
+    }
+  }
+
+  out('');
+  out(
+    `[heal] examined ${examined} of ${findings.length} failure(s); wrote ${written} proposal(s); applied ${applied}.`,
+  );
+  if (!apply && written > 0) {
+    out('[heal] nothing was changed. Review the proposal, then re-run with --apply.');
+  }
+  return 0;
+}
+
+export async function run(argv: string[], projectDir = process.cwd()): Promise<number> {
   const [command] = positionals(argv);
   switch (command) {
     case 'triage':
       return commandTriage(projectDir, argv);
     case 'gate':
       return commandGate(projectDir, argv);
+    case 'propose':
+      return commandPropose(projectDir, argv);
     case 'quarantine':
       return commandQuarantine(projectDir, argv.slice(argv.indexOf('quarantine') + 1));
     case undefined:

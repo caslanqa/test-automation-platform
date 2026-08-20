@@ -25,6 +25,7 @@ export const manifest = {
   devDependencies: {},
   scripts: {
     'heal:triage': 'heal triage',
+    'heal:propose': 'heal propose',
     'heal:gate': 'heal gate',
     'heal:quarantine': 'heal quarantine list',
   },
@@ -43,6 +44,7 @@ export const manifest = {
     '',
     '```bash',
     'npm run heal:triage      # classify this run: flaky / locator-drift / true-fail / env-infra',
+    'npm run heal:propose     # rank locator replacements, prove one, verify it — nothing applied',
     'npm run heal:gate        # CI gate: quarantine budget + unshielded failures',
     'npm run heal:quarantine  # what is quarantined, and for how much longer',
     '```',

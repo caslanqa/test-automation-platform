@@ -59,3 +59,35 @@ Two findings only a real run could produce, both now fixed and covered:
 like `playwrightProject` so idempotence and add/remove symmetry come from the existing marker
 machinery. A new `pwtap:plugins:reporters` region lands in the core template; a project scaffolded
 before it exists gets a paste block instead of a half-edit.
+
+**Locator repair, and the reason it refuses more than it applies.** `heal propose` ranks replacement
+locators, tries to prove one is the same element, runs it, and writes a reviewable proposal. Nothing is
+written to a spec without `--apply` **and** a proven proof.
+
+The candidates come from an ARIA snapshot **Playwright already captured at the failure** — the
+`error-context` attachment, whose path the reporter was already recording. That is the same perception
+the official healer gets through an MCP `browser_snapshot`, for free. The alternative the plan called
+for, an auto-fixture that captures the page on teardown, would have had to depend on `page`, and an
+`auto: true` fixture's dependencies are always instantiated — so every test in every project would have
+launched a browser, API projects included.
+
+**The plan contradicted itself here and the contradiction mattered.** It asked for a binary "two
+independent signals or refuse" while also expecting `locator('#login-button')` to be auto-repaired into
+`getByRole('button', { name: 'Log in' })`. Both cannot hold: that locator states one thing, and nothing
+in the code says the element was a button labelled "Log in". The verdict is therefore graded — `proven`,
+`likely`, `moved`, `refused` — and only `proven` may ever be applied. An identifier-only locator lands
+on `refused` with the ranked candidates still attached, because suggesting and proving are different
+acts and conflating them is exactly how a caught bug becomes a green test.
+
+A test caught a real safety hole while this was being built: with the same name in two containers, the
+ranking led with the wrong one and role+name then "proved" it — a `Continue` button in a dialog proven
+for a locator scoped to `form.signin`. A structural scope cannot constrain the class (that is what
+drifted) but it does constrain the kind of container, so the replacement must now be inside a `form`.
+
+Verification is three consecutive greens with `--retries=0` under `--workers=1`, then the whole file at
+the configured concurrency, and the matcher that failed must reappear as a step in a green attempt or
+the replacement may have made the test vacuous. Two measured details shaped that: **the JSON reporter
+emits `steps: []` for a passing test**, so the assertion check would have been permanently unreachable
+through it and needed its own reporter; and the whole-file check compares against the tests that were
+_already_ failing, because otherwise it refuses every repair made while a sibling is red for an
+unrelated reason — which is most real repair sessions.

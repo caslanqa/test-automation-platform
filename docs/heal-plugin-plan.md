@@ -17,7 +17,7 @@ This is Phase 2 of three. Phase 1 shipped the agentic V&V plugin (`docs/agentic-
 ships a mobile MCP server. **Phase 2 depends on neither**: agents are a nicer front end over this
 CLI, never a way to reach a verdict it cannot.
 
-## What is built (steps 1–4 of 8)
+## What is built (steps 1–5 of 8)
 
 | Step | Contents                                                                                       |
 | ---- | ---------------------------------------------------------------------------------------------- |
@@ -25,11 +25,11 @@ CLI, never a way to reach a verdict it cannot.
 | 2    | Error taxonomy, fingerprints, `classify`, `heal triage`                                        |
 | 3    | Quarantine, `heal gate`, the CI step                                                           |
 | 4    | `scripts/smoke-heal.mjs`                                                                       |
+| 5    | Candidate generation, the equivalence proof, the rerun protocol, patches, `heal propose`       |
 
-Deliberately **not** built yet: candidate generation, the equivalence proof, the rerun protocol and
-patch output (step 5); metrics and calibration (6); the LLM escalation tier (7); mobile parity (8).
-Steps 1–4 are a coherent product on their own — deterministic triage, history and a quarantine budget,
-with no model, no new browser automation and no speculative abstraction.
+Deliberately **not** built yet: metrics and calibration (6); the LLM escalation tier (7); mobile
+parity (8). Everything so far is deterministic and offline — no model anywhere, and the only browser
+work is the verification rerun, which is the shipped Playwright the project already has.
 
 ## Architecture
 
@@ -47,6 +47,62 @@ packages/plugin-heal/                zero runtime dependencies; @playwright/test
 In the **client** project: the reporter line (spliced into `playwright.config.ts`), `.heal/runs/`
 (gitignored, ephemeral) and `heal/quarantine.json` (committed policy). Triage, gates and metrics run
 out of band, from the CLI, so nothing costs a millisecond inside a test.
+
+## Step 5: where the candidates come from
+
+**Playwright already captures the page for us.** Every failure gets an `error-context` attachment, and
+inside it is an ARIA snapshot of the page _at the moment the matcher failed_ — the same perception the
+official healer obtains through an MCP `browser_snapshot` call. The reporter was already recording that
+attachment's path, so candidate generation needs no fixture, no probe run, no second browser and no new
+dependency.
+
+That is not merely convenient. The obvious alternative — the auto-fixture the original plan called for
+— would have to depend on `page`, and an `auto: true` fixture's dependencies are always instantiated,
+so **every test in every project would launch a browser**, including an API-only project. Reading a
+file Playwright already wrote costs nothing on a green run.
+
+The snapshot gives roles, accessible names, properties (`/placeholder`, `/url`) and the nesting that
+yields each element's landmark path. It cannot give test ids, classes or DOM paths — which costs
+nothing, because a drifted locator has lost its identifier by definition.
+
+## Step 5: the plan contradicted itself, and the fix is a graded proof
+
+The plan asked for a binary rule — "two independent signals or refuse" — and in the same breath
+expected `locator('#login-button')` to be auto-repaired into `getByRole('button', { name: 'Log in' })`.
+Both cannot hold. A test-id or CSS-id locator states exactly one thing, and nothing in the code says
+the element was a button labelled "Log in": that replacement is a reasonable human guess, not a proof.
+
+So the verdict is graded, and only the strongest is ever applied:
+
+| Verdict   | When                                                                                | Applied                 |
+| --------- | ----------------------------------------------------------------------------------- | ----------------------- |
+| `proven`  | two of the locator's signals match, the candidate is unique, any stated scope holds | eligible with `--apply` |
+| `likely`  | one signal matches and that name is unique page-wide                                | advisory                |
+| `moved`   | signals match but the candidate is outside the container the locator named          | advisory                |
+| `refused` | nothing shared to check, not unique, or below the score floor                       | never                   |
+
+An identifier-only locator therefore lands on `refused` **with the ranked candidates still attached** —
+the list a human would have written out by hand — and no claim that any of them was verified.
+
+**A safety hole found by a test, not by review.** With a name repeated in two containers, the ranking
+led with the wrong one and role+name then "proved" it: a `Continue` button in a dialog was proven for a
+locator scoped to `form.signin`. A structural scope cannot constrain the _class_ — that is what drifted
+— but it does constrain the _kind_ of container, so the replacement must now be inside a `form`.
+
+## Step 5: verification, and one more measured limit
+
+The rerun protocol is three consecutive greens with `--retries=0` under `--workers=1` (a heal validated
+by a retry is not validated), then the whole file at the configured concurrency, and the matcher that
+failed has to reappear as a step in a green attempt or the replacement may have made the test vacuous.
+
+That last check needed its own reporter, because **the JSON reporter emits `steps: []` for a passing
+test** — measured, and it would have left the check permanently unreachable, the same class of flaw as
+the mis-scaled classifier weights. The Reporter API does carry those steps, so
+`@pwtap/plugin-heal/verify-reporter` is the smallest thing that surfaces them.
+
+And the whole-file check compares against a **baseline of tests that were already failing**. Without
+that it refuses every repair made while a sibling is red for an unrelated reason, which is most real
+repair sessions; what it must detect is a candidate that _broke_ something.
 
 ## Three Playwright capabilities the design rests on, all verified against 1.61
 
@@ -124,6 +180,15 @@ the difference between evidence and a guess.
 - **ADR-H7 — Two fingerprints.** Site (place + kind) and error (plus values). The split is what lets a
   later phase detect a heal that pointed at the wrong element: "the same site later failed with a value
   mismatch" cannot be expressed if place and values share one hash.
+- **ADR-H9 — Candidates come from the error-context snapshot, not from a fixture.** An `auto` fixture
+  depending on `page` would launch a browser for every test in every project, API projects included.
+- **ADR-H10 — The equivalence proof is graded, and only `proven` may be applied.** An identifier-only
+  locator can never be proven; it still gets ranked candidates, because suggesting and proving are
+  different acts and conflating them is how a caught bug becomes a green test.
+- **ADR-H11 — A structural scope constrains the container's kind.** The class drifted, the tag did not,
+  and dropping it let a repeated name be proven against the wrong container.
+- **ADR-H12 — Verification uses our own reporter.** The JSON reporter drops steps for passing tests, so
+  "did the original assertion still run" is unanswerable through it.
 - **ADR-H8 — The reporter fails open, but not silently.** A malformed quarantine file, an unreadable
   record or a bug in our bookkeeping never changes a verdict. `HEAL_DEBUG=1` surfaces what was
   swallowed — a reporter that hides its own errors is undebuggable, which cost real time here.
@@ -153,10 +218,17 @@ npm run nfr           # asserts plugin-heal still declares nothing
 
 `smoke-heal.mjs` asserts, in order: a green run records and stays green; a second run keeps the same
 `testKey`; v2 breaks the run and triage reads the real error, reaching the act band for the identifier
-change; **the value change is `true-fail` and vetoed from any autofix**; the file-backed flaky spec is
-`flaky` and never drift; quarantine suppresses the exit status while the failure stays in the record;
-an expired entry turns the run red again; and the gate exits 1 naming the entry, both for an exceeded
-budget and for a failure nobody quarantined.
+change; `propose` **refuses to claim proof** for the identifier-only locator while still offering
+`getByRole('button', { name: 'Log in' })` among its candidates; `propose` **proves and verifies** the
+one case where the code stated two signals, with three greens and the original assertion still running,
+and restores the spec afterwards; **the value change is never examined at all**, and the expected value
+is still in the file; the flaky spec is never a repair candidate; quarantine suppresses the exit status
+while the failure stays in the record; an expired entry turns the run red again; and the gate exits 1
+naming the entry, both for an exceeded budget and for a failure nobody quarantined.
+
+The fixture makes those three cases distinguishable on purpose: between v1 and v2 the button loses its
+identifiers while keeping its role and name, the greeting's text changes, and a form's wrapper class is
+renamed under a role+name locator. A classifier that confuses any two of them has nowhere to hide.
 
 Verified by hand in a real scaffold as well: `create-pwtap add heal` splices the reporter between the
 markers, writes the three scripts and copies `docs/HEALING.md`; `remove heal` restores the config and

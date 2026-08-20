@@ -50,6 +50,67 @@ Confidence is the **margin** between the leading class and the runner-up, so a 4
 reports as the close call it is. With no cross-run history the classifier cannot exceed 70: it is
 reading one run, and saying so is the difference between evidence and a guess.
 
+## Proposing a repair
+
+```bash
+npx heal propose              # rank replacements, try to prove one, verify it, write a proposal
+npx heal propose --no-verify  # skip the reruns
+npx heal propose --apply      # write the edit — only ever for a PROVEN, verified candidate
+```
+
+Only `locator-drift` is examined. A `true-fail` is not "refused after consideration" — it never
+becomes a candidate at all, which is a stronger guarantee than a late veto.
+
+The candidates come from the **ARIA snapshot Playwright already captured at the failure** (the
+`error-context` attachment), so nothing re-runs your suite to look at the page. That snapshot carries
+roles, accessible names, properties like `/placeholder`, and the nesting that gives each element its
+landmark path. It cannot see test ids or classes — which costs nothing, because a drifted locator has
+lost its identifier by definition.
+
+### Is it the same element?
+
+A replacement that resolves and makes the assertion pass has proved nothing: it may be a _different_
+element that happens to satisfy the check. So the verdict depends on what your code stated about the
+element, and only the strongest verdict is ever applied.
+
+| Verdict   | When                                                                                                 | Applied?                |
+| --------- | ---------------------------------------------------------------------------------------------------- | ----------------------- |
+| `proven`  | two of the locator's signals (role, name) match, the candidate is unique, and any stated scope holds | eligible with `--apply` |
+| `likely`  | one signal matches and that name is unique page-wide                                                 | advisory only           |
+| `moved`   | the signals match but the candidate is outside the container the locator named                       | advisory only           |
+| `refused` | nothing shared to check against, not unique, or below the score floor                                | never                   |
+
+**`getByTestId('submit')` and `locator('#login-button')` can never be proven.** They state one thing,
+and that thing is exactly what vanished — nothing in the code says the element was a button labelled
+"Log in". You still get the ranked candidates, because that list is what a human would have written
+out by hand; what you do not get is a claim that any of them was verified to be the same element.
+
+A structural scope still constrains the _kind_ of container: `locator('form.signin').getByRole(…)`
+requires the replacement to be inside a `form`. Without that guard, a name repeated in a form and a
+dialog could be "proven" against the wrong one.
+
+### Verification
+
+Before anything is applied, the candidate is run:
+
+- three consecutive greens with **`--retries=0`** and `--workers=1` — a heal validated by a retry is
+  not validated, and one green proves nothing about order or timing (`HEAL_GREENS` to change it);
+- then the whole file at the configured concurrency, to catch order dependence;
+- and the matcher that originally failed must appear as a step in a green attempt, or the replacement
+  may have made the test vacuous.
+
+A sibling that was **already** failing is not held against the candidate. Only tests that were
+passing before the edit and fail after it count as broken by it.
+
+The spec is restored after a verification run unless `--apply` was given and everything held, so a
+failed verification never leaves an edit nobody approved.
+
+### What a proposal looks like
+
+`.heal/proposals/<testKey>-<n>/` holds `report.md` (start here), `provenance.json` (the machine-readable
+record: triage, from, to, proof, verification, every candidate considered, and every check that passed
+or refused) and `patch.diff` when there is an edit to make.
+
 ## Run history
 
 Records land in `.heal/runs/` (gitignored), newest 50 kept. That is where a flake rate comes from, so

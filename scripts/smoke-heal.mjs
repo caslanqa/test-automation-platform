@@ -78,6 +78,13 @@ test('true regression: the greeting says something else', async ({ page }) => {
   await expect(page.locator('p')).toHaveText('Welcome, Ada');
 });
 
+test('provable drift: a structural wrapper renamed under a role+name locator', async ({ page }) => {
+  await page.goto(APP);
+  // Two signals in the code — role and accessible name — plus a structural scope that is the thing
+  // that drifted. That is the only shape in which a replacement can be PROVEN to be the same element.
+  await expect(page.locator('form.signin').getByRole('button', { name: 'Continue' })).toBeVisible();
+});
+
 test('really flaky: fails once, then passes', async ({ page }) => {
   // A retry runs in a FRESH worker process, so a module-level counter resets and this would never
   // go flaky. The flag has to outlive the process.
@@ -85,7 +92,12 @@ test('really flaky: fails once, then passes', async ({ page }) => {
   const firstAttempt = !fs.existsSync(flag);
   if (firstAttempt) fs.writeFileSync(flag, '1');
   await page.goto(APP);
-  await expect(page.locator('button')).toHaveText(firstAttempt ? 'Nope' : 'Log in');
+  // Named rather than a bare tag selector: the fixture has two buttons, so locator('button')
+  // would be a strict-mode violation instead of the intermittent failure this spec produces.
+  // (No backticks in here — this whole spec text lives inside a template literal.)
+  await expect(page.getByRole('button', { name: 'Log in' })).toHaveText(
+    firstAttempt ? 'Nope' : 'Log in',
+  );
 });
 `;
 
@@ -208,7 +220,7 @@ async function main() {
 
     let record = latestRecord(dir);
     assert(record.status === 'passed', `recorded status should be passed, was ${record.status}`);
-    assert(record.tests.length === 3, `expected 3 tests, recorded ${record.tests.length}`);
+    assert(record.tests.length === 4, `expected 4 tests, recorded ${record.tests.length}`);
     assert(record.commit !== undefined, 'the commit should be recorded from the real repository');
     const driftKey = findTest(record, 'locator drift').testKey;
     assert(typeof driftKey === 'string' && driftKey.length === 16, 'a test key should be recorded');
@@ -281,10 +293,121 @@ async function main() {
       'a flake must never be eligible for a locator rewrite',
     );
 
+    // 4a -------------------------------------------------------------------------------------
+    step('4a: propose refuses to claim proof when the code stated only an identifier');
+    let propose = await heal(dir, ['propose', '--no-verify']);
+    assert(propose.code === 0, `propose should exit 0, got ${propose.code}\n${propose.stderr}`);
+
+    const proposals = () =>
+      fs.existsSync(path.join(dir, '.heal/proposals'))
+        ? fs.readdirSync(path.join(dir, '.heal/proposals')).sort()
+        : [];
+    const provenanceFor = needle => {
+      for (const name of proposals()) {
+        const file = path.join(dir, '.heal/proposals', name, 'provenance.json');
+        if (!fs.existsSync(file)) continue;
+        const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+        if (parsed.title.includes(needle))
+          return { dir: path.join(dir, '.heal/proposals', name), ...parsed };
+      }
+      return undefined;
+    };
+
+    const identifierOnly = provenanceFor('locator drift');
+    assert(identifierOnly !== undefined, 'the identifier-only drift should get a proposal');
+    assert(
+      identifierOnly.proof.verdict === 'refused',
+      `a locator that stated only a test id cannot be proven, got '${identifierOnly.proof.verdict}'`,
+    );
+    // Two independent reasons, and both are true: the page's elements are indistinguishable from a
+    // locator that named none of them, and even the leader cannot be shown to be the same element.
+    assert(
+      identifierOnly.refusals.some(r => r.includes('no-shared-signal')),
+      `the refusal must say nothing could be checked against, got: ${JSON.stringify(identifierOnly.refusals)}`,
+    );
+    assert(
+      identifierOnly.refusals.some(r => r.includes('ambiguous')),
+      `and that the candidates were indistinguishable, got: ${JSON.stringify(identifierOnly.refusals)}`,
+    );
+    // It still offers the ranked candidates — refusing to PROVE is not refusing to help.
+    assert(
+      identifierOnly.candidatesConsidered.some(
+        c => c.code === "getByRole('button', { name: 'Log in' })",
+      ),
+      `the ranked candidates should include the obvious replacement, got: ${JSON.stringify(
+        identifierOnly.candidatesConsidered.map(c => c.code),
+      )}`,
+    );
+    assert(identifierOnly.applied === false, 'nothing may be applied for a refused proof');
+
+    // 4b -------------------------------------------------------------------------------------
+    step('4b: propose PROVES the case where the code stated two signals, and verifies it');
+    propose = await heal(dir, ['propose']);
+    assert(propose.code === 0, `propose should exit 0, got ${propose.code}\n${propose.stderr}`);
+
+    const provable = provenanceFor('provable drift');
+    assert(provable !== undefined, 'the provable drift should get a proposal');
+    assert(
+      provable.proof.verdict === 'proven',
+      `role and name both matching should prove it, got '${provable.proof.verdict}': ${JSON.stringify(
+        provable.proof.reasons,
+      )}`,
+    );
+    assert(
+      provable.proof.matched.includes('role') && provable.proof.matched.includes('name'),
+      `both signals should be recorded, got ${JSON.stringify(provable.proof.matched)}`,
+    );
+    assert(
+      provable.to.code === "getByRole('button', { name: 'Continue' })",
+      `unexpected replacement: ${provable.to?.code}`,
+    );
+    assert(
+      provable.verification?.greens === 3 && provable.verification.assertionRan === true,
+      `three greens and the original assertion still running, got ${JSON.stringify(provable.verification)}`,
+    );
+    assert(
+      fs.existsSync(path.join(provable.dir, 'patch.diff')),
+      'a proven, verified candidate should produce a patch',
+    );
+    assert(
+      provable.applied === false,
+      'still nothing applied — --apply was not given, and advisory is the default',
+    );
+    // The spec on disk is untouched: propose restores the file after verifying.
+    assert(
+      fs
+        .readFileSync(path.join(dir, 'tests/app.spec.ts'), 'utf8')
+        .includes("locator('form.signin')"),
+      'propose must restore the spec after a verification run',
+    );
+
+    // 5 --------------------------------------------------------------------------------------
+    step('5: the value change is never even examined, let alone repaired');
+    assert(
+      provenanceFor('true regression') === undefined,
+      'a true-fail must never get a repair proposal — it is not a candidate at all',
+    );
+    assert(
+      /not examined — true-fail/.test(propose.stdout),
+      `propose should say why it skipped the regression, got:\n${propose.stdout}`,
+    );
+    const specText = fs.readFileSync(path.join(dir, 'tests/app.spec.ts'), 'utf8');
+    assert(
+      specText.includes("toHaveText('Welcome, Ada')"),
+      'the expected value must still be the original — rewriting it would hide the bug',
+    );
+
+    // 6b -------------------------------------------------------------------------------------
+    step('6b: a flake is not a repair candidate either');
+    assert(
+      provenanceFor('really flaky') === undefined,
+      'a flake must never be offered a locator rewrite',
+    );
+
     // 7 --------------------------------------------------------------------------------------
     step('7: quarantine suppresses the exit status without deleting coverage');
     const failing = latestRecord(dir).tests.filter(test => test.outcome === 'unexpected');
-    assert(failing.length === 2, `expected 2 unexpected failures, got ${failing.length}`);
+    assert(failing.length === 3, `expected 3 unexpected failures, got ${failing.length}`);
     writeQuarantine(
       dir,
       failing.map(test => quarantineEntry(test, iso(1))),
@@ -299,7 +422,8 @@ async function main() {
     );
     // Coverage is intact: the tests ran and their failures are still in the record.
     assert(
-      latestRecord(dir).tests.filter(test => test.outcome === 'unexpected').length === 2,
+      latestRecord(dir).tests.filter(test => test.outcome === 'unexpected').length ===
+        failing.length,
       'a quarantined test must still run and still record its failure — that is the whole point',
     );
 
