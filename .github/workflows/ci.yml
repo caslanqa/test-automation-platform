@@ -47,6 +47,12 @@ jobs:
         run: npm test
       - name: Smoke — scaffold a core-only project and verify it builds
         run: npm run smoke
+      # Claude Code has no conditional component loading, so "no mobile plugin installed, no mobile agent" is a
+      # property of OUR renderer and nothing else. This asserts it in both directions against a real scaffold, plus
+      # the stdout contract a marketplace `command` source depends on — one line, absolute, exit 0 — which a single
+      # stray console.info on the render path would break silently for every user.
+      - name: Smoke — the rendered agent plugin and its capability gating
+        run: npm run smoke:agents
       # The AI judge's calibration path is shipped tooling — a CLI, a labelled dataset, the metrics CI gates on —
       # and nothing here can reach a real model: there is no Ollama on a runner and no key in this repo. A local
       # fake gateway answers instead, which is also the only way to assert that a gate FIRES: it flips one verdict

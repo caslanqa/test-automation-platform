@@ -1,4 +1,6 @@
+import { recordProject } from '../agents/project.js';
 import { removePlugins } from '../plugin-apply.js';
+import { log } from '../util/log.js';
 
 export interface RemoveCommandOptions {
   clientDir: string;
@@ -11,4 +13,8 @@ export async function removeCommand(opts: RemoveCommandOptions): Promise<void> {
     throw new Error('remove: name at least one plugin, e.g. `npx create-pwtap remove maestro`');
   }
   await removePlugins({ clientDir: opts.clientDir, pluginIds: opts.pluginIds });
+  recordProject(opts.clientDir);
+  log.info(
+    '  Claude Code: the agents for this plugin disappear on the next session (or run `/reload-plugins`).',
+  );
 }

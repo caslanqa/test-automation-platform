@@ -1,0 +1,16 @@
+{
+  "//": "Destroying a pwtap marker region is this platform's own predicted failure mode — MarkerError and the 'print a paste block instead of a half-edit' path in plugin-apply.ts exist for it. So one hook, advisory, always exit 0.",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/check-markers.mjs\""
+          }
+        ]
+      }
+    ]
+  }
+}

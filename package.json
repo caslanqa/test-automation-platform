@@ -33,7 +33,8 @@
     "typecheck:perf-templates": "tsc -p packages/plugin-perf/templates/perf/tsconfig.json",
     "typecheck:tests": "tsc -p tsconfig.tests.json",
     "typecheck:ui": "npm run typecheck:ui --workspace=@pwtap/mobile-inspector",
-    "version-packages": "changeset version"
+    "version-packages": "changeset version",
+    "smoke:agents": "node scripts/smoke-agents.mjs"
   },
   "lint-staged": {
     "*.{ts,tsx,js,mjs,cjs}": [

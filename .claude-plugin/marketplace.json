@@ -1,0 +1,22 @@
+{
+  "name": "pwtap",
+  "description": "Agentic tooling for @pwtap Playwright test-automation projects",
+  "owner": {
+    "name": "CaslanQA",
+    "url": "https://github.com/caslanqa/test-automation-platform"
+  },
+  "plugins": [
+    {
+      "name": "pwtap",
+      "description": "SDLC verification & validation agents for a @pwtap Playwright suite, rendered for the plugins your project actually has",
+      "category": "testing",
+      "tags": ["playwright", "testing", "qa", "mobile", "verification"],
+      "source": {
+        "source": "command",
+        "command": "npx -y @pwtap/create claude-plugin-path",
+        "timeout": 180,
+        "mode": "copy"
+      }
+    }
+  ]
+}
