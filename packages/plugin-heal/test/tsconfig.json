@@ -1,0 +1,14 @@
+{
+  // Editor + `npm run typecheck:tests` project for this package's tests. The package's own tsconfig includes
+  // `src/**` only — deliberately, so tests never land in a published `dist/` — which would otherwise leave
+  // every test file project-less and stripped of its `node` types. Never emits.
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "types": ["node", "@playwright/test"]
+  },
+  "include": ["**/*.ts"]
+}

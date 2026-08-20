@@ -34,7 +34,8 @@
     "typecheck:tests": "tsc -p tsconfig.tests.json",
     "typecheck:ui": "npm run typecheck:ui --workspace=@pwtap/mobile-inspector",
     "version-packages": "changeset version",
-    "smoke:agents": "node scripts/smoke-agents.mjs"
+    "smoke:agents": "node scripts/smoke-agents.mjs",
+    "smoke:heal": "node scripts/smoke-heal.mjs"
   },
   "lint-staged": {
     "*.{ts,tsx,js,mjs,cjs}": [

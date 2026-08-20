@@ -53,6 +53,13 @@ jobs:
       # stray console.info on the render path would break silently for every user.
       - name: Smoke — the rendered agent plugin and its capability gating
         run: npm run smoke:agents
+      # The classifier reads real Playwright error strings, so it is coupled to someone else's output and
+      # a silent reclassification after an upgrade is the failure mode. This runs a real browser against
+      # two committed fixture versions where one change is a pure identifier change and the other a pure
+      # value change — and requires that the value change is NOT treated as healable, which is the whole
+      # difference between this engine and the official healer.
+      - name: Smoke — failure triage, quarantine shielding and the gate
+        run: npm run smoke:heal
       # The AI judge's calibration path is shipped tooling — a CLI, a labelled dataset, the metrics CI gates on —
       # and nothing here can reach a real model: there is no Ollama on a runner and no key in this repo. A local
       # fake gateway answers instead, which is also the only way to assert that a gate FIRES: it flips one verdict

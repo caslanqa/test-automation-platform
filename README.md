@@ -72,6 +72,7 @@ This repository is an npm-workspaces monorepo.
 | [`@pwtap/plugin-appium`](packages/plugin-appium)       | Mobile testing with Appium (XCUITest, UiAutomator2).                                        | ✅         |
 | [`@pwtap/plugin-db`](packages/plugin-db)               | Database testing — Knex SQL (Postgres/MySQL/MariaDB/SQLite) and MongoDB.                    | ✅         |
 | [`@pwtap/plugin-perf`](packages/plugin-perf)           | Performance — in-suite vitals and budgets, plus k6 load scenarios.                          | ✅         |
+| [`@pwtap/plugin-heal`](packages/plugin-heal)           | Failure triage, flake detection and quarantine — advisory, never rewrites an assertion.     | ✅         |
 | `@pwtap/core-template`                                 | The editable core source that `@pwtap/create` bundles. Private — never published.           | —          |
 | `@pwtap/plugin-desktop` · `-security`                  | Desktop / security engines.                                                                 | 🚧 planned |
 

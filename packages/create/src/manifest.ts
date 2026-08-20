@@ -50,6 +50,13 @@ export interface PluginManifest {
     project: string;
     globalTeardown?: string;
   };
+  /**
+   * One entry spliced into `playwright.config.ts`'s `reporter` array. Shaped like
+   * {@link PluginManifest.playwrightProject} so add/remove symmetry is inherited: `uniq` is the
+   * removal match key (the analogue of `gateVar`) and `line` is the literal, indented as it should
+   * appear in the array.
+   */
+  reporter?: { uniq: string; line: string };
   examples?: Array<{ src: string; dest: string }>;
   docs?: Array<{ src: string; dest: string }>;
   readmeSection?: string;

@@ -1,0 +1,50 @@
+{
+  "name": "@pwtap/plugin-heal",
+  "version": "0.1.0",
+  "description": "Failure triage, flake detection and locator-drift healing for Playwright — advisory by default: it classifies before it changes anything, and it never rewrites an assertion",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/caslanqa/test-automation-platform.git",
+    "directory": "packages/plugin-heal"
+  },
+  "engines": {
+    "node": ">=22.23"
+  },
+  "bin": {
+    "heal": "./bin/heal.mjs"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./manifest": {
+      "types": "./dist/manifest.d.ts",
+      "default": "./dist/manifest.js"
+    },
+    "./reporter": {
+      "types": "./dist/reporter.d.ts",
+      "default": "./dist/reporter.js"
+    }
+  },
+  "files": [
+    "dist",
+    "bin",
+    "templates",
+    "docs"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "peerDependencies": {
+    "@playwright/test": ">=1.61.0"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "prepack": "node ../../scripts/clean.mjs . && npm run build"
+  }
+}

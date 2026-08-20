@@ -1,0 +1,12 @@
+{
+  // Zero runtime dependencies is this package's budget, and `scripts/nfr-check.mjs` prints the closure of
+  // every runtime package on every CI run, so a regression is visible on sight. `@playwright/test` is a peer:
+  // the reporter runs inside the client's own test runner, never as a dependency of ours.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "types": ["node", "@playwright/test"]
+  },
+  "include": ["src/**/*.ts"]
+}

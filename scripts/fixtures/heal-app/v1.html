@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>heal fixture v1</title>
+  </head>
+  <body>
+    <!--
+      v1 → v2 changes exactly two things, and they are deliberately different KINDS of change:
+
+      1. the button keeps its role and its accessible name but loses its test id and its id
+         — a pure identifier change, which is the locator-drift case;
+      2. the greeting's TEXT changes — a pure value change, which is the true-fail case.
+
+      Nothing else differs, so a classifier that confuses the two has nowhere to hide.
+    -->
+    <button data-testid="submit" id="login-button">Log in</button>
+    <p id="greeting">Welcome, Ada</p>
+  </body>
+</html>

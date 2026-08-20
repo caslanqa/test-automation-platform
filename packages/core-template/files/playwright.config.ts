@@ -36,6 +36,10 @@ export default defineConfig({
     ['json', { outputFile: 'test-results/results.json' }],
     ['allure-playwright', { detail: true, outputFolder: 'allure-results', suiteTitle: false }],
     ['list'],
+    // Plugin reporters are spliced in below by `create-pwtap add|remove`. Keep these markers — the
+    // tool rewrites only between them.
+    // pwtap:plugins:reporters
+    // pwtap:plugins:reporters:end
   ],
   outputDir: 'test-results/',
 

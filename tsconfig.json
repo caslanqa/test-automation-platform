@@ -28,6 +28,9 @@
     },
     {
       "path": "packages/plugin-perf"
+    },
+    {
+      "path": "packages/plugin-heal"
     }
   ]
 }
