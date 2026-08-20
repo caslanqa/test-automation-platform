@@ -262,6 +262,26 @@ export function classify(input: TriageInput): Triage {
   return { class: winner, confidence, reasons, vetoes, scores };
 }
 
+/**
+ * Classes the evidence leaves open, for the escalation tier to intersect a model's answer with.
+ *
+ * Derived rather than stored, so it cannot go stale against the vetoes it reads. Every repair-blocking
+ * veto rules out exactly one class — `locator-drift`, because that is the only class a repair acts on —
+ * so this is where "a model cannot turn a value mismatch into something repairable" is enforced. That is
+ * the same direction `falseHeal` is gated at zero for, and it must hold whatever a page's text says.
+ *
+ * @example
+ * candidateClasses(triage).includes('locator-drift'); // false once a value mismatch was seen
+ */
+export function candidateClasses(triage: Pick<Triage, 'vetoes'>): TriageClass[] {
+  const blocked = triage.vetoes.some(veto =>
+    /^(value-mismatch|never-passed|test-file-edited|source-edited)/.test(veto),
+  );
+  return blocked
+    ? ['flaky', 'true-fail', 'env-infra']
+    : ['flaky', 'locator-drift', 'true-fail', 'env-infra'];
+}
+
 /** The action band a confidence falls into, matching `mobile-core`'s 75/45 house style at the top end. */
 export function band(confidence: number): 'act' | 'advise' | 'ask' {
   if (confidence >= 85) {

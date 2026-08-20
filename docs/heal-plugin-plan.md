@@ -17,7 +17,7 @@ This is Phase 2 of three. Phase 1 shipped the agentic V&V plugin (`docs/agentic-
 ships a mobile MCP server. **Phase 2 depends on neither**: agents are a nicer front end over this
 CLI, never a way to reach a verdict it cannot.
 
-## What is built (steps 1–6 of 8)
+## What is built (steps 1–7 of 8)
 
 | Step | Contents                                                                                        |
 | ---- | ----------------------------------------------------------------------------------------------- |
@@ -27,10 +27,11 @@ CLI, never a way to reach a verdict it cannot.
 | 4    | `scripts/smoke-heal.mjs`                                                                        |
 | 5    | Candidate generation, the equivalence proof, the rerun protocol, patches, `heal propose`        |
 | 6    | The heal log, metrics, the committed flake baseline, calibration, and the two nightly workflows |
+| 7    | The optional LLM escalation tier, and the four rules that make it unable to authorise anything  |
 
-Deliberately **not** built yet: the LLM escalation tier (7); mobile parity (8). Everything so far is
-deterministic and offline — no model anywhere, and the only browser work is the verification rerun,
-which is the shipped Playwright the project already has.
+Deliberately **not** built yet: mobile parity (8). Everything except step 7 is deterministic and
+offline, step 7 is off by default, and the only browser work is the verification rerun — the shipped
+Playwright the project already has.
 
 ## Architecture
 
@@ -210,6 +211,46 @@ truth remains `heal revert --reason`.
 The mask rate is detected three ways and the report labels each as ground truth or heuristic, because a
 reader who mistakes "somebody edited that line" for "this heal hid a bug" learns to ignore the number.
 
+## Step 7: the plan was wrong about `registerProvider`, and the reason matters
+
+The plan expected a custom provider registered through `plugin-ai-judge`'s `registerProvider` to serve
+the healer automatically. It cannot: `AIProvider.judge` returns a `JudgeVerdict` (pass / score /
+reasoning), and a failure class is not one. Anthropic has the same problem — its provider goes through
+`@anthropic-ai/sdk`, which the healer must not depend on.
+
+So the seam moved one layer down. `plugin-ai-judge` now exports its **transport and routing** —
+`judgeFetch`, `judgeTimeoutMs`, `kindForModel`, `stripPrefix`, `extractJsonObject` — plus a new
+`endpointForKind`, and the healer composes the three wire formats itself (`/chat/completions`,
+Ollama's `/api/chat`, Anthropic's `/v1/messages`, about 60 lines total, no SDK).
+
+`endpointForKind` was added rather than copying four gateway URLs into the healer, and that is the
+lazier choice as well as the safer one: a second table drifts, and a drifted base URL is a confusing
+404 for whoever set `groq/…` in their config. A custom provider now serves the healer too, by passing
+an `endpoint` alongside itself — the plan's intent, through a seam that can actually carry it.
+
+## Step 7: what constrains a model, and where it is written
+
+Four rules, all in code, because the material being classified contains the tested page's own text and
+**a prompt is not a security boundary**:
+
+| Rule                                                           | Where             | What it stops                             |
+| -------------------------------------------------------------- | ----------------- | ----------------------------------------- |
+| A deterministic class other than `unknown` is never overridden | `applyEscalation` | A regression being talked into a repair   |
+| The answer is intersected with `candidateClasses(triage)`      | `applyEscalation` | A value mismatch becoming `locator-drift` |
+| `confidence = min(confidence, 84)`                             | `applyEscalation` | Any escalated class reaching the act band |
+| A tie is `unknown`                                             | `majorityClass`   | A split panel counting as a finding       |
+
+`candidateClasses` is derived from the vetoes rather than stored, so it cannot go stale: every
+repair-blocking veto (`value-mismatch`, `never-passed`, `test-file-edited`, `source-edited`) removes
+exactly `locator-drift`, which is the only class a repair acts on. That is the same direction
+`falseHeal` is gated at zero for.
+
+Two smaller decisions worth recording. A **failed call is not a vote** — counting an unreachable
+endpoint as `unknown` would let one 401 manufacture the tie that suppresses a real majority. And the
+CLI only escalates findings that are already `unknown`: asking about the others would spend money to be
+told what we knew, and the invariant would discard the answer anyway. The smoke asserts the stronger
+form — the model is never _asked_ about a decided failure.
+
 ## The classifier
 
 **Rule 0 outranks everything: a retry that passed means `flaky`.** A locator that resolved on attempt
@@ -274,6 +315,20 @@ the difference between evidence and a guess.
 - **ADR-H15 — Calibration is offline.** No model, no browser, no network, no run of the suite: the case
   file carries the evidence `classify()` consumes. A gate that needs the world to be reachable is a
   gate that gets disabled, which is `plugin-ai-judge`'s reason for the same shape.
+
+### Step 7 decisions
+
+- **ADR-H17 — The seam is the transport, not `AIProvider`.** `AIProvider.judge` returns a
+  `JudgeVerdict`, so a classification cannot travel through it. `plugin-ai-judge` exports its retrying
+  fetch, its prefix routing, its JSON extractor and a new `endpointForKind`; the healer composes the
+  three wire formats. One table of gateway URLs, one model-naming scheme, no SDK in the healer.
+- **ADR-H18 — Nothing an LLM says can authorise a code change.** Four rules in code: determinism is
+  never overridden, the answer is intersected with the classes the evidence leaves open, confidence is
+  capped at 84 (one below the act band), and a split panel is `unknown`. Asserted by unit tests that
+  attack each rule and by a smoke against a gateway that answers `locator-drift` to everything.
+- **ADR-H19 — `JUDGE_MODEL` is the last fallback for `HEAL_MODEL`.** A project that already configured
+  the AI judge gets escalation with zero new environment keys, and one that has not stays deterministic
+  with no message per failure.
 - **ADR-H16 — `heal revert` records; it does not edit code.** Undoing the edit is `git revert`, which
   is better at it. What git cannot do is say _why_ it was undone, and that reason is the only ground
   truth the mask rate has.

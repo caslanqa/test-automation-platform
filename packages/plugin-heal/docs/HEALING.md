@@ -195,6 +195,42 @@ silent renewal: renewing is a commit with a reason, which is the point.
 
 Plus the other half: a failing run whose failures are not **all** quarantined fails the gate.
 
+## When the evidence is not enough
+
+Some failures the deterministic classifier genuinely cannot name — a bare `Test timeout of 30000ms
+exceeded.` with no history says almost nothing. For those, and **only** those, a model can be asked:
+
+```bash
+export HEAL_MODEL=groq/llama-3.3-70b     # or reuse JUDGE_MODEL — no new key needed
+npm run heal:triage -- --escalate
+```
+
+It is off by default, requires `@pwtap/plugin-ai-judge` (an optional peer, for its transport and its
+gateway table), and everything still works without it: no key, no local model, no network — the
+classification is deterministic and every exit code, gate and quarantine decision is unchanged.
+
+**Four rules, in code rather than in the prompt.** A prompt is not a security boundary, and the material
+being classified includes the tested page's own text:
+
+| Rule                                                           | Consequence                                                       |
+| -------------------------------------------------------------- | ----------------------------------------------------------------- |
+| A deterministic class other than `unknown` is never overridden | A regression cannot be talked into being repairable               |
+| An answer outside the candidate set is discarded               | A value mismatch removes `locator-drift` from that set entirely   |
+| Confidence is capped at **84**                                 | 85 is the floor for acting, so an escalated class can only advise |
+| A split panel yields `unknown`                                 | Judges disagreeing is not evidence                                |
+
+Together: **a model in this system can never authorise a code change.** `scripts/smoke-heal.mjs`
+asserts it against a gateway that answers `locator-drift` to everything — the regression's class does
+not move, and the model is never even asked about it.
+
+The page's error message, call log, expected/received values and locator are quoted inside
+`<material-NONCE>` with a fresh nonce per call, exactly as the AI judge wraps a chatbot response, and
+the answer is validated against the closed five-class set before anything reads it.
+
+A panel is `HEAL_JURY=local/qwen3:8b,groq/llama-3.3-70b,anthropic/claude-opus-4-8` — one vote each
+(`HEAL_SAMPLES` for repeats), asked concurrently, plurality wins, and a tie is `unknown`. Answers are
+cached in `.heal/cache`; `HEAL_CACHE=off` re-asks, which is what the nightly drift check sets.
+
 ## Was the healing any good?
 
 `heal metrics` answers it from `heal/heal-log.jsonl` — the committed, append-only record of every heal

@@ -48,7 +48,7 @@ export class VerdictParseError extends Error {
  * `<think>…</think>`, prose before the JSON, or a trailing "Hope this helps!". An unterminated
  * `<think>` keeps its content — cutting to the end of the string would throw away the verdict too.
  */
-function extractJsonObject(raw: string): string | undefined {
+export function extractJsonObject(raw: string): string | undefined {
   const text = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/<\/?think>/gi, '');
   const start = text.indexOf('{');
   if (start === -1) {

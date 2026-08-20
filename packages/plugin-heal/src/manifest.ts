@@ -10,6 +10,11 @@
  * **No env keys.** What to triage is a run that already happened, and the policy lives in a
  * committed file. Nothing here is deployment configuration.
  *
+ * The escalation tier is the apparent exception and is not one: it reads `HEAL_MODEL`, falling back to
+ * `JUDGE_MODEL`, and injecting either would turn an opt-in tier into a default. A project that already
+ * configured the AI judge gets escalation with **zero new keys**, which is the whole reason the fallback
+ * exists; a project that has not stays fully deterministic.
+ *
  * Untyped, like every other plugin's manifest in this repo: `@pwtap/create` is a devDependency-only
  * scaffolder with no published type surface, so the authority is `packages/create/src/manifest.ts`
  * and a drift shows up as an injection that silently does nothing — which is what
@@ -65,6 +70,10 @@ export const manifest = {
     'npm run heal:gate        # CI gate: quarantine budget + unshielded failures',
     'npm run heal:quarantine  # what is quarantined, and for how much longer',
     '```',
+    '',
+    'Everything above is deterministic — no model, no network. `npm run heal:triage -- --escalate` can',
+    'ask a model about the failures that stayed `unknown` (set `HEAL_MODEL`, or reuse `JUDGE_MODEL`), and',
+    'it can never change a class the evidence already decided nor reach the confidence that acts.',
     '',
     'A **value mismatch is never healed**. If `Expected: "Welcome, Ada"` meets',
     '`Received: "Welcome, Grace"`, the test is doing its job and triage says `true-fail` — changing the',

@@ -85,6 +85,16 @@ test('provable drift: a structural wrapper renamed under a role+name locator', a
   await expect(page.locator('form.signin').getByRole('button', { name: 'Continue' })).toBeVisible();
 });
 
+test('unresolvable: a bare timeout with nothing to go on', async ({ page }) => {
+  // Gated, so the four assertions above keep their exact failure counts. A test timeout carries no
+  // taxonomy weight at all, which is what makes it the one case the deterministic pass answers
+  // 'unknown' — and therefore the only case escalation is ever allowed to look at.
+  test.skip(process.env.HEAL_UNRESOLVABLE !== '1', 'only for the escalation step');
+  test.setTimeout(1200);
+  await page.goto(APP);
+  await page.waitForTimeout(5000);
+});
+
 test('really flaky: fails once, then passes', async ({ page }) => {
   // A retry runs in a FRESH worker process, so a module-level counter resets and this would never
   // go flaky. The flag has to outlive the process.
@@ -135,6 +145,56 @@ function createProject(port) {
   return dir;
 }
 
+/**
+ * A fake OpenAI-compatible gateway that answers by model name, so one server can act as a whole panel.
+ *
+ * It also records every request, which is how the strongest assertion is made: not merely that a model's
+ * answer was discarded, but that the model was never asked about a failure the evidence already decided.
+ */
+function startGateway() {
+  const asked = [];
+  const classFor = model => {
+    if (model.includes('drift')) return 'locator-drift';
+    if (model.includes('truefail')) return 'true-fail';
+    if (model.includes('env')) return 'env-infra';
+    if (model.includes('flaky')) return 'flaky';
+    return 'unknown';
+  };
+  const server = http.createServer((request, response) => {
+    let body = '';
+    request.on('data', chunk => (body += chunk));
+    request.on('end', () => {
+      let parsed;
+      try {
+        parsed = JSON.parse(body);
+      } catch {
+        response.writeHead(400);
+        return response.end('not json');
+      }
+      const model = String(parsed.model ?? '');
+      asked.push({ model, prompt: JSON.stringify(parsed.messages) });
+      const answer = classFor(model);
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: `<think>pretending to reason</think>{"reasoning":"the fake gateway always says ${answer}","class":"${answer}"}`,
+              },
+            },
+          ],
+        }),
+      );
+    });
+  });
+  return new Promise(resolve =>
+    server.listen(0, '127.0.0.1', () =>
+      resolve({ port: server.address().port, asked, close: () => server.close() }),
+    ),
+  );
+}
+
 // --- running -----------------------------------------------------------------------------------
 
 /** Async, never spawnSync: the fixture server lives in this process and must stay answerable. */
@@ -149,7 +209,11 @@ function spawnAsync(command, args, options) {
 const runSuite = (dir, env) =>
   spawnAsync('npx', ['playwright', 'test'], { cwd: dir, env: { ...process.env, ...env } });
 
-const heal = (dir, args) => spawnAsync(process.execPath, [HEAL_BIN, ...args], { cwd: dir });
+const heal = (dir, args, env) =>
+  spawnAsync(process.execPath, [HEAL_BIN, ...args], {
+    cwd: dir,
+    ...(env === undefined ? {} : { env: { ...process.env, ...env } }),
+  });
 
 const runFiles = dir => {
   const runsDir = path.join(dir, '.heal', 'runs');
@@ -220,7 +284,13 @@ async function main() {
 
     let record = latestRecord(dir);
     assert(record.status === 'passed', `recorded status should be passed, was ${record.status}`);
-    assert(record.tests.length === 4, `expected 4 tests, recorded ${record.tests.length}`);
+    assert(record.tests.length === 5, `expected 5 tests, recorded ${record.tests.length}`);
+    // A skipped test IS recorded — the reporter records what ran, and 'skipped' is an outcome. What
+    // matters is that it is never triaged, which the failure counts below depend on.
+    assert(
+      findTest(record, 'unresolvable').outcome === 'skipped',
+      'the gated case must be skipped until the escalation step turns it on',
+    );
     assert(record.commit !== undefined, 'the commit should be recorded from the real repository');
     const driftKey = findTest(record, 'locator drift').testKey;
     assert(typeof driftKey === 'string' && driftKey.length === 16, 'a test key should be recorded');
@@ -549,6 +619,144 @@ async function main() {
       partial.stderr.includes(uncovered),
       `the gate must name the uncovered test '${uncovered}', got:\n${partial.stderr}`,
     );
+
+    // 11 -------------------------------------------------------------------------------------
+    // The escalation tier. Last, because it is the only step that needs a second server, and its
+    // conclusions do not feed anything above it.
+    step('11: a model may advise on what we could not name, and can authorise nothing');
+    const gateway = await startGateway();
+    const escalateEnv = {
+      ...base,
+      HEAL_APP_VERSION: '2',
+      HEAL_UNRESOLVABLE: '1',
+      JUDGE_GATEWAY_BASE_URL: `http://127.0.0.1:${gateway.port}/v1`,
+      JUDGE_API_KEY: 'fake',
+      // Emptied explicitly: assertion 11a is about the DEFAULT state, and a developer who has
+      // JUDGE_MODEL set in their own shell would otherwise silently skip it.
+      HEAL_MODEL: '',
+      JUDGE_MODEL: '',
+      HEAL_JURY: '',
+      // A drift check must re-ask, and so must this: with the cache on, the panel steps below would
+      // replay each other's answers and the tie would never happen.
+      HEAL_CACHE: 'off',
+    };
+
+    try {
+      writeQuarantine(dir, []);
+      fs.rmSync(flag, { force: true });
+      await runSuite(dir, escalateEnv);
+
+      const readJson = () => JSON.parse(fs.readFileSync(path.join(dir, 'triage.json'), 'utf8'));
+      const find = (report, needle) =>
+        report.findings.find(finding => finding.title.includes(needle));
+
+      // 11a: with no model configured, --escalate says so and changes nothing. This is the default.
+      const bare = await heal(dir, ['triage', '--escalate', '--json', 'triage.json'], escalateEnv);
+      assert(bare.code === 0, `--escalate with no model must not fail, got ${bare.code}`);
+      assert(
+        /needs a model/.test(bare.stderr),
+        `it should say what to configure, got:\n${bare.stderr}`,
+      );
+      const before = readJson();
+      assert(
+        find(before, 'unresolvable')?.class === 'unknown',
+        `the timeout case should be unknown deterministically, got ${find(before, 'unresolvable')?.class}`,
+      );
+
+      // 11b: the model's answer is accepted for the unknown — and capped below the act band.
+      const advised = await heal(
+        dir,
+        ['triage', '--escalate', '--model', 'vote-drift', '--json', 'triage.json'],
+        escalateEnv,
+      );
+      assert(
+        advised.code === 0,
+        `escalated triage should exit 0, got ${advised.code}\n${advised.stderr}`,
+      );
+      const after = readJson();
+      const unresolved = find(after, 'unresolvable');
+      assert(
+        unresolved.class === 'locator-drift',
+        `the model's class should be adopted for an unknown, got ${unresolved.class}\n${JSON.stringify(unresolved.reasons, null, 1)}\n${advised.stderr}`,
+      );
+      assert(
+        unresolved.confidence <= 84 && unresolved.band !== 'act',
+        `an escalated class must stay below the act band, got ${unresolved.confidence} (${unresolved.band})`,
+      );
+      assert(
+        unresolved.vetoes.some(veto => veto.startsWith('escalated:')),
+        `an escalated class must carry its own veto, got ${JSON.stringify(unresolved.vetoes)}`,
+      );
+
+      // 11c: THE assertion. The gateway answers 'locator-drift' to everything, including a real
+      // regression — and the regression's class does not move. Stronger than discarding the answer:
+      // the model was never asked, because the evidence had already decided.
+      const regression = find(after, 'true regression');
+      assert(
+        regression.class === 'true-fail',
+        `a model must not be able to reclassify a regression, got ${regression.class}`,
+      );
+      assert(
+        !gateway.asked.some(call => call.prompt.includes('true regression')),
+        'a failure the evidence already decided must never be sent to a model at all',
+      );
+
+      // And the material that WAS sent is quoted as data, under a per-call nonce.
+      const sent = gateway.asked.find(call => call.prompt.includes('unresolvable'));
+      assert(sent !== undefined, 'the unknown should have been escalated');
+      assert(
+        /<material-[0-9a-f]{8}>/.test(sent.prompt),
+        'the page material must be wrapped, so the guard in the system prompt applies to it',
+      );
+
+      // 11d: a repair still refuses it. An advisory class cannot reach the bar that acts.
+      const refused = await heal(dir, ['propose', '--no-verify'], escalateEnv);
+      assert(refused.code === 0, `propose should exit 0, got ${refused.code}`);
+      assert(
+        /not examined — unknown|below the 85 needed to act/.test(refused.stdout),
+        `an escalated class must not be repairable:\n${refused.stdout}`,
+      );
+
+      // 11e: a panel. Two votes for one class and one against is a plurality; one each is a tie, and a
+      // tie is not a finding.
+      const plurality = await heal(
+        dir,
+        [
+          'triage',
+          '--escalate',
+          '--jury',
+          'vote-flaky-a,vote-flaky-b,vote-env-c',
+          '--json',
+          'triage.json',
+        ],
+        escalateEnv,
+      );
+      assert(plurality.code === 0, `a panel run should exit 0, got ${plurality.code}`);
+      const won = find(readJson(), 'unresolvable');
+      assert(won.class === 'flaky', `two of three votes should carry it, got ${won.class}`);
+      assert(
+        won.reasons.some(reason => /agreement 0\.67/.test(reason)),
+        `the split must be visible to the reader, got ${JSON.stringify(won.reasons)}`,
+      );
+
+      const tied = await heal(
+        dir,
+        [
+          'triage',
+          '--escalate',
+          '--jury',
+          'vote-flaky-a,vote-env-b,vote-truefail-c',
+          '--json',
+          'triage.json',
+        ],
+        escalateEnv,
+      );
+      assert(tied.code === 0, `a tied panel should still exit 0, got ${tied.code}`);
+      const split = find(readJson(), 'unresolvable');
+      assert(split.class === 'unknown', `a three-way split is not a finding, got ${split.class}`);
+    } finally {
+      gateway.close();
+    }
 
     step('OK');
   } finally {

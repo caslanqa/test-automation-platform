@@ -2,7 +2,7 @@
  * `heal` — the CLI. Deterministic, offline, and the whole contract CI needs.
  *
  * ```
- * heal triage    [--json <path>] [--runs-dir <dir>] [--window N]
+ * heal triage    [--json <path>] [--runs-dir <dir>] [--window N] [--escalate] [--model <id>]
  * heal gate      [--max-quarantine N] [--total-tests N] [--no-ratchet]
  * heal quarantine list
  * heal baseline [--update]
@@ -21,6 +21,8 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { resolveJury, resolveModel } from '../escalate/client.js';
+import { applyEscalation, escalate } from '../escalate/escalate.js';
 import { proposeForFinding } from '../heal/propose.js';
 import { readRuns, RUNS_DIR } from '../history/runStore.js';
 import { loadQuarantine, type QuarantineEntry } from '../quarantine/file.js';
@@ -35,8 +37,10 @@ import { commandBaseline, commandMetrics, commandRevert } from './metrics.js';
 
 const USAGE = `heal — failure triage, flake detection and quarantine
 
-  heal triage [--json <path>] [--runs-dir <dir>] [--window N]
+  heal triage [--json <path>] [--runs-dir <dir>] [--window N] [--escalate] [--model <id>] [--jury a,b]
       Classify every failure in the most recent run: flaky / locator-drift / true-fail / env-infra.
+      --escalate asks a model about the failures that stayed 'unknown'. Off by default, and it can never
+      change a class the evidence already decided, nor raise confidence into the act band.
 
   heal gate [--max-quarantine N] [--total-tests N] [--no-ratchet] [--runs-dir <dir>]
       CI gate. Exits 1 on a quarantine violation or an unshielded failure.
@@ -112,7 +116,7 @@ function printFindings(findings: Finding[], run: RunRecord): void {
   }
 }
 
-function commandTriage(projectDir: string, argv: string[]): number {
+async function commandTriage(projectDir: string, argv: string[]): Promise<number> {
   const runsDir = path.resolve(projectDir, flagValue(argv, '--runs-dir') ?? RUNS_DIR);
   const runs = readRuns(runsDir);
   const run = runs[0];
@@ -123,6 +127,34 @@ function commandTriage(projectDir: string, argv: string[]): number {
     return 1;
   }
   const findings = triageRun(projectDir, run, runs, { window: flagNumber(argv, '--window', 20) });
+
+  // The escalation tier, and the only place it is reachable from: the failures the deterministic pass
+  // could not name. Asking about the others would spend money to be told what we already knew, and the
+  // invariant would discard the answer anyway.
+  if (flagPresent(argv, '--escalate')) {
+    const model = resolveModel(flagValue(argv, '--model'));
+    const jury = resolveJury(flagValue(argv, '--jury'));
+    if (model === undefined && jury.length === 0) {
+      err(
+        '[heal] --escalate needs a model: set HEAL_MODEL, JUDGE_MODEL, or pass --model. Classification stays deterministic.',
+      );
+    } else {
+      const unknowns = findings.filter(finding => finding.triage.class === 'unknown');
+      out(
+        `[heal] escalating ${unknowns.length} unresolved failure(s) to ${jury.length > 0 ? jury.join(', ') : model}…`,
+      );
+      for (const finding of unknowns) {
+        const escalated = await escalate({
+          projectDir,
+          finding,
+          model: flagValue(argv, '--model'),
+          jury: flagValue(argv, '--jury'),
+        });
+        finding.triage = applyEscalation(finding.triage, escalated);
+      }
+    }
+  }
+
   printFindings(findings, run);
 
   const jsonPath = flagValue(argv, '--json');
@@ -338,7 +370,7 @@ export async function run(argv: string[], projectDir = process.cwd()): Promise<n
   const [command] = positionals(argv);
   switch (command) {
     case 'triage':
-      return commandTriage(projectDir, argv);
+      return await commandTriage(projectDir, argv);
     case 'gate':
       return commandGate(projectDir, argv);
     case 'propose':

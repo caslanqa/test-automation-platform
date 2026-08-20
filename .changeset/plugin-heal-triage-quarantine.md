@@ -160,3 +160,37 @@ Two nightly workflows are copied in on install and never overwritten, both skipp
 rather than failing red until there is something to read: `heal-calibration.yml` grades the classifier
 and measures the applied heals, and `heal-history.yml` folds the runs and opens a pull request with the
 new counters. A counter change that lands without review is a quarantine decision nobody made.
+
+**An optional escalation tier, and the four rules that make it safe.** `heal triage --escalate` can ask
+a model about the failures the deterministic classifier left as `unknown` — a bare
+`Test timeout of 30000ms exceeded.` with no history says almost nothing, and that is the case this
+exists for. It is off by default, it requires `@pwtap/plugin-ai-judge` as an optional peer, and with no
+model configured nothing changes: no import, no network, no message per failure, and every exit code,
+gate and quarantine decision identical.
+
+The material being classified contains the tested page's own text, so **the rules are in code, not in
+the prompt**: a deterministic class other than `unknown` is never overridden; the answer is intersected
+with the classes the evidence leaves open, and every repair-blocking veto removes `locator-drift` from
+that set; confidence is capped at 84, one below the act band; and a split panel is `unknown`, because
+judges disagreeing is not evidence. Together, **a model in this system can never authorise a code
+change** — asserted by unit tests that attack each rule individually and by a smoke against a gateway
+that answers `locator-drift` to every question. The regression's class does not move, and the model is
+never even asked about it.
+
+The page's message, call log, expected/received values and locator are quoted inside `<material-NONCE>`
+with a fresh nonce per call — the same discipline `judgePrompt.ts` uses for a chatbot response, for the
+same threat — and the reply is validated against the closed five-class set before anything reads it.
+
+**The plan was wrong about one thing, and the correction improved the seam.** It expected a provider
+registered through `registerProvider` to serve the healer automatically. It cannot: `AIProvider.judge`
+returns a `JudgeVerdict`, and a failure class is not one — the same reason Anthropic could not be reached
+that way without pulling `@anthropic-ai/sdk` into every heal installation. So `@pwtap/plugin-ai-judge`
+now exports its transport and routing (`judgeFetch`, `judgeTimeoutMs`, `kindForModel`, `stripPrefix`,
+`extractJsonObject`) plus a new `endpointForKind`, and the healer composes the three wire formats itself.
+Exposing the endpoint table rather than copying four gateway URLs is both the lazier and the safer
+choice: a second copy drifts, and a drifted base URL is a confusing 404 for whoever configured `groq/…`.
+A custom provider now serves the healer as well, by passing an `endpoint` alongside itself.
+
+`HEAL_MODEL` falls back to `JUDGE_MODEL`, so a project that already configured the judge gets this with
+zero new environment keys. A failed call is deliberately not counted as a vote — one unreachable
+endpoint must not manufacture the tie that suppresses a real majority.

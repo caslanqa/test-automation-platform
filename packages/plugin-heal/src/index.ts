@@ -43,6 +43,7 @@ export { testKey, titlePathAfterFile } from './history/testKey.js';
 export { callLogLines, displayMessage, normalizeMessage, stripAnsi } from './triage/ansi.js';
 export {
   band,
+  candidateClasses,
   classify,
   type Triage,
   type TriageClass,
@@ -175,3 +176,42 @@ export {
   type LabelledCase,
 } from './calibrate/dataset.js';
 export { REVIEW_NOTE, harvestCases, type HarvestOptions } from './calibrate/harvest.js';
+
+// --- escalation (optional, off by default) -----------------------------------------------------
+export {
+  CACHE_DIR,
+  cacheEnabled,
+  cacheKey,
+  readCached,
+  writeCached,
+  type CacheKeyInput,
+} from './escalate/cache.js';
+export {
+  askModel,
+  loadJudgeKit,
+  resolveJury,
+  resolveModel,
+  resolveSamples,
+  type AskResult,
+  type JudgeKit,
+} from './escalate/client.js';
+export {
+  MAX_ESCALATED_CONFIDENCE,
+  applyEscalation,
+  escalate,
+  type EscalateOptions,
+  type EscalationRecord,
+} from './escalate/escalate.js';
+export { extractJsonObject, parseTriageReply, type TriageReply } from './escalate/parse.js';
+export {
+  CLASSES,
+  HEAL_PROMPT_VERSION,
+  REPAIR_HINT,
+  TRIAGE_SCHEMA,
+  buildSystemPrompt,
+  buildUserText,
+  createNonce,
+  type TrustedEvidence,
+  type UntrustedEvidence,
+} from './escalate/prompt.js';
+export { majorityClass, type PanelResult } from './escalate/vote.js';

@@ -43,3 +43,23 @@ export type { HarvestResult, HarvestedCase } from './calibrate/harvest.js';
 
 export { JudgeHttpError, type AIProvider } from './ai/providers/provider.js';
 export { registerProvider } from './ai/providers/registry.js';
+
+/**
+ * Transport and routing, for pwtap tools that ask a model a question whose answer is not a
+ * `JudgeVerdict`.
+ *
+ * `@pwtap/plugin-heal`'s escalation tier asks for a failure class, so it cannot go through
+ * {@link AIProvider} — but retries, `Retry-After` handling, per-attempt deadlines, prefix routing and
+ * brace-balanced JSON extraction are the same problems, already solved here and load-bearing. Reusing
+ * them means one table of gateway URLs and one naming scheme (`local/…`, `groq/…`, `anthropic/…`)
+ * across the platform, rather than a second set that drifts.
+ */
+export { extractJsonObject } from './ai/judge/verdictParser.js';
+export { judgeFetch, judgeTimeoutMs } from './ai/providers/provider.js';
+export {
+  endpointForKind,
+  kindForModel,
+  providerForKind,
+  stripPrefix,
+  type JudgeEndpoint,
+} from './ai/providers/registry.js';

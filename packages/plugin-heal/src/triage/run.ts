@@ -7,7 +7,7 @@
  * const findings = triageRun(projectDir, latest, allRuns);
  * findings.filter(f => f.triage.class === 'locator-drift');
  */
-import { flakeStats } from '../history/flakeStats.js';
+import { flakeStats, type FlakeStats } from '../history/flakeStats.js';
 import type { AttemptRecord, FailureRecord, RunRecord, TestRecord } from '../types.js';
 import { classify, type Triage } from './classify.js';
 import { changedFiles, touched } from './gitDiff.js';
@@ -17,6 +17,10 @@ export interface Finding {
   /** The failure from the last attempt that actually failed. */
   failure?: FailureRecord;
   triage: Triage;
+  /** The history the classification was made from. Undefined when there was none. */
+  history?: FlakeStats;
+  /** What the diff said, when git could answer. Kept so a report or an escalation can state it. */
+  diff?: { testFileChanged: boolean; sourceFileChanged: boolean; base?: string };
 }
 
 /** The last attempt that failed is the one whose evidence describes the failure. */
@@ -47,6 +51,14 @@ export function triageRun(
     findings.push({
       test,
       failure,
+      history: history.runs === 0 ? undefined : history,
+      diff: changed.known
+        ? {
+            testFileChanged: touched(changed, test.file),
+            sourceFileChanged: touched(changed, failure?.topFrame?.file),
+            base: changed.base,
+          }
+        : undefined,
       triage: classify({
         outcome: test.outcome,
         failure,
