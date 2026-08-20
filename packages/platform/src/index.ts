@@ -53,4 +53,4 @@ export {
   startSimRecording,
   stopIosAutomation,
 } from './device/ios.js';
-export { acquireDeviceLock, deviceLockKey } from './device/lock.js';
+export { acquireDeviceLock, deviceLockKey, type DeviceLockOptions } from './device/lock.js';

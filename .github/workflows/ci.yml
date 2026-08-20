@@ -66,6 +66,14 @@ jobs:
       # on purpose and requires a non-zero exit naming the case.
       - name: Smoke — the judge's calibration workflow end to end
         run: npm run smoke:judge
+      # The MCP server is hand-rolled JSON-RPC over stdio (ADR-015), and the class of bug that costs the most
+      # there is framing: a stream delivers bytes, not messages, and a wrong assumption produces a server that
+      # works on a fast machine and hangs on a slow one. Unit tests cover the framing; this runs the real shipped
+      # binary as a real child process and talks to it with the MCP client this repo already ships. No device and
+      # no network — the project it serves has no mobile plugin installed, which is the most common first contact
+      # and the place a stack trace would be worst.
+      - name: Smoke — the mobile MCP server over real stdio
+        run: npm run smoke:mcp
       # Linux only, and deliberately: k6 is a Go binary running its own JavaScript engine, so the scenarios behave
       # identically on either runner, while `brew install k6` costs minutes of macOS CI time for no extra signal.
       # The first version of this step had no `if:` and ran the apt commands on macos-latest, where

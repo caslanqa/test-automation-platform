@@ -183,7 +183,8 @@ fs.writeFileSync(
 fs.writeFileSync(path.join(fake, 'index.js'), 'export default {};\n');
 fs.writeFileSync(
   path.join(fake, 'manifest.js'),
-  "export const manifest = { id: 'appium', name: '@pwtap/plugin-appium', devDependencies: {}, scripts: {}, envKeys: {} };\n",
+  "export const manifest = { id: 'appium', name: '@pwtap/plugin-appium', devDependencies: {}, scripts: {}, envKeys: {}, " +
+    "mcp: [{ name: 'mobile', package: '@pwtap/mobile-inspector', entry: 'bin/mcp.mjs', shared: true }] };\n",
 );
 
 console.log('[smoke] re-rendering — the mobile pieces must appear, and only those…');
@@ -205,11 +206,74 @@ for (const stillAbsent of [
 const mobileSkill = fs.readFileSync(path.join(second, 'skills/mobile-locators/SKILL.md'), 'utf8');
 assert(/^description: \S/m.test(mobileSkill), 'mobile-locators has no usable description');
 
+// The MCP server is DERIVED from the installed manifests, which is what makes add/remove symmetry free
+// — there is nothing in the user's repository to undo. It must also refuse to declare a server whose
+// package is not installed: a configuration entry the client cannot spawn fails on every session start.
+console.log('[smoke] the declared MCP server is skipped while its package is missing…');
+assert(
+  !has(second, '.mcp.json'),
+  'a server was declared for @pwtap/mobile-inspector, which is not installed in this project',
+);
+
+console.log('[smoke] faking the inspector too — now the server must be declared…');
+const inspector = path.join(project, 'node_modules', '@pwtap', 'mobile-inspector');
+fs.mkdirSync(path.join(inspector, 'bin'), { recursive: true });
+// The `exports` map is not decoration: the real package has one, and a package with an `exports` map
+// does NOT export its own `package.json`. The first version of the resolution probe asked for
+// `<pkg>/package.json` and therefore failed for exactly the packages that are correctly configured —
+// which this smoke did not catch, because the fake had no map. It has one now.
+fs.writeFileSync(
+  path.join(inspector, 'package.json'),
+  `${JSON.stringify(
+    {
+      name: '@pwtap/mobile-inspector',
+      version: '0.0.0-smoke',
+      type: 'module',
+      exports: { '.': './index.js', './mcp': './index.js' },
+    },
+    null,
+    2,
+  )}\n`,
+);
+fs.writeFileSync(path.join(inspector, 'index.js'), 'export default {};\n');
+fs.writeFileSync(path.join(inspector, 'bin', 'mcp.mjs'), '// smoke\n');
+
+const withMcp = render(project);
+assert(has(withMcp, '.mcp.json'), '.mcp.json was not emitted for a resolvable server');
+const mcp = JSON.parse(fs.readFileSync(path.join(withMcp, '.mcp.json'), 'utf8'));
+assert(mcp.mcpServers?.mobile !== undefined, `unexpected server config: ${JSON.stringify(mcp)}`);
+assert(mcp.mcpServers.mobile.command === 'node', 'a .bin shim is not spawnable as an MCP command');
+assert(
+  fs.existsSync(mcp.mcpServers.mobile.args[0]),
+  `the emitted entry does not exist: ${mcp.mcpServers.mobile.args[0]}`,
+);
+assert(
+  mcp.mcpServers.mobile.args[1] === '${CLAUDE_PROJECT_DIR}',
+  'the project directory must be passed explicitly — the server resolves adapters from it',
+);
+assert(
+  mcp.mcpServers.mobile.env.PWTAP_MCP_ALLOW_ACTIONS === '${user_config.ALLOW_ACTIONS}',
+  'acting must be gated behind the plugin setting',
+);
+
+// A declared entry the package does not ship must be skipped too: resolution proves the package is
+// installed, not that the file inside it exists, and a configuration entry the client cannot spawn
+// fails on every session start.
+fs.rmSync(path.join(inspector, 'bin', 'mcp.mjs'));
+assert(
+  !has(render(project), '.mcp.json'),
+  'a server was declared for an entry file that does not exist',
+);
+fs.writeFileSync(path.join(inspector, 'bin', 'mcp.mjs'), '// smoke\n');
+
 console.log('[smoke] removing the fake plugin — the mobile pieces must go…');
 fs.rmSync(fake, { recursive: true, force: true });
 const third = render(project);
 assert(!has(third, 'agents/mobile-vv.md'), 'mobile-vv survived removing the plugin');
 assert(!has(third, 'skills/mobile-locators'), 'mobile-locators survived removing the plugin');
+// Add/remove symmetry, for free: the plugin that declared the server is gone, so the next render does
+// not describe it. Nothing had to be un-injected from anywhere.
+assert(!has(third, '.mcp.json'), '.mcp.json survived removing the plugin that declared it');
 
 console.log('[smoke] asserting idempotence — two renders, byte-identical…');
 const digest = dir =>

@@ -779,7 +779,9 @@ class AppiumInspectorDriver implements MobileInspectorDriver {
   async connect(options: ConnectOptions): Promise<DriverSession> {
     assertPlatformSupported(options.platform);
     const progress = options.onProgress ?? ((): void => undefined);
-    const release = await acquireDeviceLock(deviceLockKey(options.platform, options.device));
+    const release = await acquireDeviceLock(deviceLockKey(options.platform, options.device), {
+      timeoutMs: options.timeoutMs,
+    });
     let server: AppiumServerHandle | undefined;
     // Declared out here so the failure path below can remove it; only a session's `close` used to.
     let outputDir: string | undefined;

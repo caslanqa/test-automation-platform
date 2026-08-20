@@ -109,7 +109,15 @@ export class McpClient {
   }
 
   /** Send a JSON-RPC request and await its response (matched by id), rejecting after `timeoutMs`. */
-  private request(method: string, params: object, timeoutMs: number): Promise<unknown> {
+  /**
+   * Send one request and await its reply.
+   *
+   * Public because this is a general JSON-RPC client and `request` is its primary operation — the two
+   * wrappers below cover the calls Maestro needs, not the calls MCP has. `scripts/smoke-mcp.mjs` uses it
+   * for `tools/list`, which is how our own server is checked with our own client rather than a second
+   * one written for the test.
+   */
+  request(method: string, params: object, timeoutMs = 30_000): Promise<unknown> {
     if (this.exited) {
       return Promise.reject(new Error("[mobile] 'maestro mcp' is not running"));
     }

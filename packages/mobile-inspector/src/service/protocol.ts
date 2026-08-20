@@ -293,7 +293,7 @@ export function parseClientMessage(raw: unknown): ClientMessage | null {
  * on trust, so a non-string `device` reached the device resolver and a client could supply `onProgress` — a
  * callback the *service* injects — as data, which the adapter would then try to call (ADR-010).
  */
-function parseConnectOptions(value: object): ConnectOptions | null {
+export function parseConnectOptions(value: object): ConnectOptions | null {
   const options = value as Record<string, unknown>;
   if (options.platform !== 'android' && options.platform !== 'ios') {
     return null;
@@ -334,7 +334,7 @@ function isPoint(value: unknown): boolean {
 }
 
 /** A locator must set at least one strategy, and every strategy it does set must be well typed. */
-function isLocator(value: unknown): boolean {
+export function isLocator(value: unknown): boolean {
   if (typeof value !== 'object' || value === null) {
     return false;
   }
@@ -372,7 +372,7 @@ function isLocator(value: unknown): boolean {
 }
 
 /** A gesture target is either a locator or an explicit device-pixel point. */
-function isTarget(value: unknown): boolean {
+export function isTarget(value: unknown): boolean {
   return isPoint(value) || isLocator(value);
 }
 
@@ -460,7 +460,7 @@ const ACTION_VALIDATORS: Record<MobileAction['kind'], (action: ActionFields) => 
   aiAssert: a => typeof a.rubric === 'string' && a.rubric.length > 0 && isOptionalString(a.name),
 };
 
-function isMobileAction(value: unknown): value is MobileAction {
+export function isMobileAction(value: unknown): value is MobileAction {
   if (typeof value !== 'object' || value === null) {
     return false;
   }
@@ -470,6 +470,17 @@ function isMobileAction(value: unknown): value is MobileAction {
   }
   return ACTION_VALIDATORS[action.kind as MobileAction['kind']](action);
 }
+
+/**
+ * The validators above are exported for the MCP server, which faces the same trust boundary this file
+ * was written for (ADR-010): an argument arriving from outside the process, describing an action a
+ * driver will perform on a real device. Sharing them is what keeps the two boundaries from drifting —
+ * a second copy would be a second place to forget a field.
+ *
+ * `isLocator` deliberately lets `native` through as an adapter-specific escape hatch, which is right for
+ * a human-authored test and wrong for a model-supplied locator. The MCP boundary rejects `native`
+ * itself rather than tightening this, because the SSE client legitimately needs it.
+ */
 
 /** Re-exported so the UI (which only imports from `protocol.ts`) doesn't need a separate types import. */
 export type { MobilePlatform };

@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Playwright Test Automation Platform — npm-workspaces monorepo (UI + API core; opt-in plugins)",
+  "description": "Playwright Test Automation Platform \u2014 npm-workspaces monorepo (UI + API core; opt-in plugins)",
   "author": "CaslanQA",
   "license": "MIT",
   "engines": {
@@ -25,7 +25,7 @@
     "prepare": "husky",
     "release": "changeset publish",
     "nfr": "node scripts/nfr-check.mjs",
-    "test:device": "node --import ./scripts/test-hooks.mjs --test-timeout=600000 --test \"packages/mobile-inspector/test/inspector.device.test.ts\"",
+    "test:device": "node --import ./scripts/test-hooks.mjs --test-timeout=600000 --test \"packages/mobile-inspector/test/inspector.device.test.ts\" \"packages/mobile-inspector/test/mcp.device.test.ts\"",
     "smoke": "node scripts/smoke-scaffold.mjs",
     "smoke:judge": "node scripts/smoke-judge.mjs",
     "smoke:k6": "node scripts/smoke-k6.mjs",
@@ -35,7 +35,8 @@
     "typecheck:ui": "npm run typecheck:ui --workspace=@pwtap/mobile-inspector",
     "version-packages": "changeset version",
     "smoke:agents": "node scripts/smoke-agents.mjs",
-    "smoke:heal": "node scripts/smoke-heal.mjs"
+    "smoke:heal": "node scripts/smoke-heal.mjs",
+    "smoke:mcp": "node scripts/smoke-mcp.mjs"
   },
   "lint-staged": {
     "*.{ts,tsx,js,mjs,cjs}": [

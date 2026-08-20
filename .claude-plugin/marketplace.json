@@ -16,6 +16,26 @@
         "command": "npx -y @pwtap/create claude-plugin-path",
         "timeout": 180,
         "mode": "copy"
+      },
+      "userConfig": {
+        "ALLOW_ACTIONS": {
+          "title": "Let the agent touch the device",
+          "type": "boolean",
+          "default": false,
+          "description": "Let the mobile MCP server tap, type and swipe on the device. Off by default: mobile_perform stays listed and refuses, naming this switch."
+        },
+        "IDLE_MS": {
+          "title": "Idle timeout (ms)",
+          "type": "number",
+          "default": 600000,
+          "description": "Close an unused device session after this many milliseconds. The ceiling is a blocked device lock, so the right value depends on whether you also run mobile tests on this machine."
+        },
+        "DEVICE": {
+          "title": "Default device",
+          "type": "string",
+          "default": "",
+          "description": "Default device name for mobile_connect, e.g. Pixel_7_API_34. Leave blank to use whichever device is booted."
+        }
       }
     }
   ]

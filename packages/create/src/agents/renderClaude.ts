@@ -16,6 +16,7 @@
  * result.emitted; // ['agents/vv-lead.md', 'skills/spec-conventions/SKILL.md', …]
  */
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 
 import type { ProjectCapabilities } from './capabilities.js';
@@ -216,6 +217,82 @@ function readme(result: ReadmeInput, capabilities: ProjectCapabilities | null): 
   ].join('\n');
 }
 
+/**
+ * `.mcp.json` for the servers the installed plugins declare.
+ *
+ * **Existence is checked by resolution, not by declaration** — the same probe `loadPluginManifest` and
+ * `loadDriverFrom` use. A manifest naming a server whose package was never installed must not produce a
+ * configuration entry, because the client would then fail to spawn it on every session. This is what
+ * stands in for the conditional component loading Claude Code does not have.
+ *
+ * `${CLAUDE_PROJECT_DIR}` is passed as an explicit argument rather than trusted as the working
+ * directory: the server resolves the project's mobile adapters out of *that* directory's node_modules,
+ * and pointing it at the wrong one reports no drivers at all — a silent, confusing failure.
+ *
+ * Returns undefined when nothing resolves, so a core-only project gets no file at all.
+ */
+function renderMcpServers(
+  capabilities: ProjectCapabilities | null,
+  warn: (message: string) => void,
+): string | undefined {
+  if (capabilities === null) {
+    return undefined;
+  }
+  const require = createRequire(path.join(capabilities.projectDir, 'package.json'));
+  const servers: Record<string, unknown> = {};
+
+  for (const manifest of Object.values(capabilities.plugins)) {
+    for (const server of manifest.mcp ?? []) {
+      // Dedupe by name: both mobile plugins declare the same one, and two entries would be two
+      // processes fighting over one device lock.
+      if (servers[server.name] !== undefined) {
+        continue;
+      }
+      // The BARE specifier, never `<pkg>/package.json`: a package with an `exports` map does not export
+      // its own manifest, so that probe fails for exactly the packages that are correctly configured.
+      // Found by rendering against a real installed project rather than by reading the resolver's rules.
+      let entry: string;
+      try {
+        require.resolve(server.package);
+        entry = path.join(
+          capabilities.projectDir,
+          'node_modules',
+          ...server.package.split('/'),
+          ...server.entry.split('/'),
+        );
+      } catch {
+        warn(
+          `${manifest.name} declares the '${server.name}' MCP server, but ${server.package} is not installed here — skipping it`,
+        );
+        continue;
+      }
+      // `entry` is a path rather than an export, so resolution alone does not prove it is there. A
+      // configuration entry the client cannot spawn fails on every session start.
+      if (!fs.existsSync(entry)) {
+        warn(
+          `${manifest.name} declares '${server.name}' at ${server.entry}, which ${server.package} does not ship — skipping it`,
+        );
+        continue;
+      }
+      servers[server.name] = {
+        // `node` plus an absolute path, never `node_modules/.bin/…`: a `.bin` entry is a shell shim on
+        // POSIX and a `.cmd` on Windows, and an MCP `command` is not run through a shell.
+        command: 'node',
+        args: [entry, '${CLAUDE_PROJECT_DIR}'],
+        env: {
+          PWTAP_MCP_IDLE_MS: '${user_config.IDLE_MS}',
+          PWTAP_MCP_ALLOW_ACTIONS: '${user_config.ALLOW_ACTIONS}',
+          PWTAP_MCP_DEVICE: '${user_config.DEVICE}',
+        },
+      };
+    }
+  }
+
+  return Object.keys(servers).length === 0
+    ? undefined
+    : `${JSON.stringify({ mcpServers: servers }, null, 2)}\n`;
+}
+
 export function renderClaudePlugin(options: RenderOptions): RenderResult {
   const { defs, capabilities, outDir, version, extras = [], standalone = false } = options;
   const tokens = capabilities?.tokens ?? new Set(['core']);
@@ -280,6 +357,13 @@ export function renderClaudePlugin(options: RenderOptions): RenderResult {
       relativeDestination(def),
       serializeFrontmatter(frontmatterFor(def, ownedAndPresent, standalone), body),
     );
+  }
+
+  // The MCP servers the installed plugins declare, derived rather than injected. Nothing is written to
+  // the user's repository for this, so `create-pwtap remove maestro` un-declares the server by itself.
+  const mcpJson = renderMcpServers(capabilities, warn);
+  if (!standalone && mcpJson !== undefined) {
+    files.set('.mcp.json', mcpJson);
   }
 
   for (const [source, destination] of extras) {

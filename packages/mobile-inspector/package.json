@@ -1,7 +1,7 @@
 {
   "name": "@pwtap/mobile-inspector",
   "version": "2.2.0",
-  "description": "Mobile test recorder for the Playwright Test Automation Platform — local service, browser UI and code generator. A dev tool: the runtime contracts live in @pwtap/mobile-core",
+  "description": "Mobile test recorder for the Playwright Test Automation Platform \u2014 local service, browser UI and code generator. A dev tool: the runtime contracts live in @pwtap/mobile-core",
   "type": "module",
   "license": "MIT",
   "repository": {
@@ -18,6 +18,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./mcp": {
+      "types": "./dist/mcp/index.d.ts",
+      "default": "./dist/mcp/index.js"
     }
   },
   "files": [
@@ -29,7 +33,8 @@
     "access": "public"
   },
   "bin": {
-    "mobile-inspect": "./bin/inspect.mjs"
+    "mobile-inspect": "./bin/inspect.mjs",
+    "mobile-mcp": "./bin/mcp.mjs"
   },
   "peerDependencies": {
     "@playwright/test": ">=1.61.0"

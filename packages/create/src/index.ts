@@ -6,6 +6,7 @@ import { addCommand } from './commands/add.js';
 import { claudePluginPathCommand } from './commands/claudePluginPath.js';
 import { createProject } from './commands/create.js';
 import { initAgentsCommand } from './commands/initAgents.js';
+import { mcpCommand } from './commands/mcp.js';
 import { removeCommand } from './commands/remove.js';
 import { KNOWN_PLUGINS } from './registry.js';
 import { readJson } from './util/fs.js';
@@ -19,7 +20,7 @@ const coreManifestPath = path.join(pkgRoot, 'core-manifest.json');
 const agentsDir = path.join(pkgRoot, 'agents');
 
 /** Verbs, as opposed to the default `create <dir>`. A verb missing here becomes a directory name. */
-const VERBS = ['add', 'remove', 'claude-plugin-path', 'init-agents'] as const;
+const VERBS = ['add', 'remove', 'claude-plugin-path', 'init-agents', 'mcp'] as const;
 
 /** Our own version, so a rendered plugin says which renderer produced it. */
 function ownVersion(): string {
@@ -84,6 +85,10 @@ async function main(): Promise<void> {
       projectDir: flagValue(argv, '--project') ?? process.cwd(),
       loop: flagValue(argv, '--loop') ?? 'all',
     });
+    return;
+  }
+  if (command === 'mcp') {
+    await mcpCommand({ clientDir: flagValue(argv, '--project') ?? process.cwd() });
     return;
   }
   if (command === 'claude-plugin-path') {
