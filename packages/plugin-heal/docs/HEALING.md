@@ -111,6 +111,26 @@ failed verification never leaves an edit nobody approved.
 record: triage, from, to, proof, verification, every candidate considered, and every check that passed
 or refused) and `patch.diff` when there is an edit to make.
 
+## Flake history that outlives an artifact
+
+`.heal/runs/` is gitignored and machine-local, and in CI it survives only as an artifact — retention is
+90 days by default and one day on some plans. A flake rate has to outlast that.
+
+```bash
+npm run heal:baseline -- --update    # fold the runs into heal/flake-baseline.json, committed
+```
+
+The fold is additive and **idempotent**: every run is recorded by id, so re-running the job, or running
+it on two machines that each saw part of the history, adds each run exactly once.
+
+Committing the aggregate rather than the runs keeps the file small, readable and blameable — and buys
+the thing no store would: `git log -p heal/flake-baseline.json` answers "when did this test start
+flaking" with no database at all.
+
+Without it the classifier has no cross-run history. It says so rather than guessing — it names the gap
+and caps its confidence at 70, below the act band — but a healer that cannot tell a race from a
+regression is the failure mode this plugin exists to avoid.
+
 ## Run history
 
 Records land in `.heal/runs/` (gitignored), newest 50 kept. That is where a flake rate comes from, so
@@ -175,6 +195,73 @@ silent renewal: renewing is a commit with a reason, which is the point.
 
 Plus the other half: a failing run whose failures are not **all** quarantined fails the gate.
 
+## Was the healing any good?
+
+`heal metrics` answers it from `heal/heal-log.jsonl` — the committed, append-only record of every heal
+that was applied. Append-only is the point: a heal that turns out to have hidden a bug is the most
+important line in the file, and a format that let it be edited away would make the one metric that
+matters unauditable.
+
+```bash
+npm run heal:metrics    # precision, mask rate, quarantine shape, flake-rate direction
+```
+
+| Metric             | What it says                                                       | Gated                                             |
+| ------------------ | ------------------------------------------------------------------ | ------------------------------------------------- |
+| `precision`        | Heals whose site stopped failing, over the ten runs after each one | at 0.9, and only once 10 heals exist              |
+| **`maskRate`**     | Heals that may have hidden something                               | **at zero**                                       |
+| `recall`           | Applied over drift-shaped failures                                 | **never** — the denominator is our own classifier |
+| `medianTimeToHeal` | First failure to repair                                            | no                                                |
+| `flakeRateTrend`   | Recent flake rate against the window before it                     | no                                                |
+
+**The mask rate is the number that matters**, because one masked bug costs more than every heal ever
+saved. It is detected three ways and the report labels each:
+
+1. `reverted-as-masking` — **ground truth**. A human ran `heal revert <id> --reason masked-bug`.
+2. `value-mismatch-at-the-healed-line` — heuristic, and the strongest one available. The same test
+   later failed a _value_ assertion at the exact line a heal edited, which is what pointing at the
+   wrong element looks like from the outside.
+3. `heal-no-longer-in-place` — heuristic. The locator the heal wrote is no longer in the spec, so
+   somebody took it back out.
+
+A heuristic is not a finding. Read each one and record what it actually was:
+
+```bash
+heal revert 9f2c1a --reason masked-bug --note "the button was disabled, not moved"
+```
+
+`heal revert` records; it does not touch your code. Undoing the edit is `git revert`, which is better
+at it — what git cannot do is tell the metrics _why_ it was undone.
+
+### Grading the classifier
+
+`heal/triage-cases.json` is a labelled set of failures and the class a human says each one is. The
+plugin ships a starter set; grow it from your own failures:
+
+```bash
+npx heal calibrate --harvest    # draft cases from the recorded runs, uncertainty first
+npm run heal:calibrate          # grade — offline: no model, no browser, no network
+```
+
+A drafted case's `expected` is the classifier's own answer. **Review and correct each one** — a case
+that agrees by construction grades nothing.
+
+| Gate                     | Default | What it protects                                                               |
+| ------------------------ | ------- | ------------------------------------------------------------------------------ |
+| `--min-accuracy`         | 85      | Five classes with a real `unknown` base rate; 90 on a small set gates on noise |
+| `--min-kappa`            | 0.7     | "Substantial" on Landis-Koch. Accuracy alone is inflated by the dominant class |
+| **`--max-false-heal`**   | **0**   | A regression classified as repairable is how a green suite becomes a lie       |
+| **`--max-missing-veto`** | **0**   | The class is advice; the veto is what actually blocks a repair                 |
+
+`falseBug` — the opposite mistake — is reported and deliberately **not** gated. Over-reporting a
+regression is noisy, not dangerous, and gating both directions equally would push the classifier
+toward repairing more.
+
+A case may demand a veto as well as a class, and several of the shipped ones do. When a human has just
+edited the failing spec, the evidence still reads as drift and the classifier still says so — what
+stops a repair is `test-file-edited`, not the label. Grading only the label would let a refactor drop
+that guard while calibration stayed green.
+
 ## CI
 
 ```yaml
@@ -182,6 +269,15 @@ Plus the other half: a failing run whose failures are not **all** quarantined fa
 - run: npx heal gate
 - run: npx heal triage --json .heal/triage.json
 ```
+
+Two workflows are copied into `.github/workflows/` on install, once, and never overwritten:
+
+- **`heal-calibration.yml`** — nightly. Grades the classifier against your cases and measures the
+  applied heals. Offline, so it costs nothing and cannot be blocked by a provider outage.
+- **`heal-history.yml`** — nightly. Folds the run records CI produced into `heal/flake-baseline.json`
+  and opens a pull request. See below.
+
+Both skip with a `::notice::` rather than failing red until there is something for them to read.
 
 Two things worth knowing about the exit status:
 

@@ -17,19 +17,20 @@ This is Phase 2 of three. Phase 1 shipped the agentic V&V plugin (`docs/agentic-
 ships a mobile MCP server. **Phase 2 depends on neither**: agents are a nicer front end over this
 CLI, never a way to reach a verdict it cannot.
 
-## What is built (steps 1–5 of 8)
+## What is built (steps 1–6 of 8)
 
-| Step | Contents                                                                                       |
-| ---- | ---------------------------------------------------------------------------------------------- |
-| 1    | Reporter, run history, `testKey`, and `create`'s `reporter` manifest field + injector + marker |
-| 2    | Error taxonomy, fingerprints, `classify`, `heal triage`                                        |
-| 3    | Quarantine, `heal gate`, the CI step                                                           |
-| 4    | `scripts/smoke-heal.mjs`                                                                       |
-| 5    | Candidate generation, the equivalence proof, the rerun protocol, patches, `heal propose`       |
+| Step | Contents                                                                                        |
+| ---- | ----------------------------------------------------------------------------------------------- |
+| 1    | Reporter, run history, `testKey`, and `create`'s `reporter` manifest field + injector + marker  |
+| 2    | Error taxonomy, fingerprints, `classify`, `heal triage`                                         |
+| 3    | Quarantine, `heal gate`, the CI step                                                            |
+| 4    | `scripts/smoke-heal.mjs`                                                                        |
+| 5    | Candidate generation, the equivalence proof, the rerun protocol, patches, `heal propose`        |
+| 6    | The heal log, metrics, the committed flake baseline, calibration, and the two nightly workflows |
 
-Deliberately **not** built yet: metrics and calibration (6); the LLM escalation tier (7); mobile
-parity (8). Everything so far is deterministic and offline — no model anywhere, and the only browser
-work is the verification rerun, which is the shipped Playwright the project already has.
+Deliberately **not** built yet: the LLM escalation tier (7); mobile parity (8). Everything so far is
+deterministic and offline — no model anywhere, and the only browser work is the verification rerun,
+which is the shipped Playwright the project already has.
 
 ## Architecture
 
@@ -142,6 +143,73 @@ reason.
 Both were invisible to `tsc`, eslint and the unit tests. The first was invisible even to a live run
 until `HEAL_DEBUG` existed, which is why it exists.
 
+## Step 6: the plan's second mask detector could not work, and what replaced it
+
+The plan asked for: _"the same `siteFingerprint` later failed with a value mismatch"_. That cannot
+happen. The site fingerprint includes the locator code, and healing changes exactly that — so a failure
+after a heal necessarily carries a **different** site fingerprint, and the detector would have been
+permanently silent while looking correct in review.
+
+The comparison that does hold is the same test failing with `kind === 'value-mismatch'` at the same
+`topFrame.file` and `line` the heal edited. That is the observable form of "we repointed a locator and
+a value assertion there began to disagree", which is what pointing at the wrong element looks like from
+the outside. ADR-H7's split still carries the detector — the discrimination it needs is _place versus
+values_, and the place is now the line rather than the hash.
+
+`test/metrics.test.ts` pins both directions: it fires at the healed line and stays silent one line away.
+
+## Step 6: the dataset had to grade vetoes, not only classes
+
+Three of the sixteen starter cases exposed a real gap. The plan assigned the diff-correlation rules
+small nudges toward `true-fail` (+25 for an edited spec, +20 for an edited page object, +20 for a test
+that has never passed), written when the weights were relative. Step 4 rescaled the weights to absolute
+confidence points, where `presence-timeout` contributes 60 to `locator-drift` — so those nudges can no
+longer change the winner.
+
+Two readings were available, and the wrong one is tempting. Raising the nudges would make the label
+`true-fail`, but that label is a claim about the _application_, and when a human edits a spec the
+application did not change. What actually protects the repository is the **veto**, and every one of the
+three cases fires one: `test-file-edited`, `source-edited`, `never-passed`. `heal propose` turns each
+veto into a refusal, so no repair is possible in any of them.
+
+So the classifier was left alone and the dataset was extended: `LabelledCase.expectedVetoes` names the
+guards a case demands, `missingVeto` counts the ones that did not fire, and it is gated at zero
+alongside `falseHeal`. Without it a refactor could drop a veto while calibration stayed green — grading
+the advice and not the guard.
+
+## Step 6: the third mask detector was wrong twice before it was right
+
+The plan's revert detector asked git for the history of the healed line
+(`log -L<line>,<line>:<file>`) and flagged any later commit. Two defects, and the first fired
+immediately in the smoke:
+
+- **The commit that lands a heal is itself a commit after the heal.** Every committed repair would
+  have flagged itself as a suspected mask, on a detector gated at zero.
+- **Git's `%aI` carries a UTC offset and the heal log stores `Z`,** and they were compared as strings.
+  `2026-08-20T13:00:00+03:00 > 2026-08-20T10:05:00.000Z` is lexicographically true and chronologically
+  false, so in any non-UTC timezone every commit looked later than it was.
+
+What replaced it asks the question directly: **is the locator the heal wrote still in the spec?** No
+clock, no repository, no line arithmetic — and it is robust to the line moving, which the original was
+not. It is still labelled a heuristic, because a line can be rewritten for many reasons; the ground
+truth remains `heal revert --reason`.
+
+## Step 6: what is measured, and what is deliberately not gated
+
+| Metric        | Gated at                        | Why                                                                                                             |
+| ------------- | ------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `maskRate`    | **0**                           | One masked bug costs more than every heal ever saved                                                            |
+| `falseHeal`   | **0**                           | The direct analogue of the judge's `MAX_FALSE_PASS=0`                                                           |
+| `missingVeto` | **0**                           | The class is advice; the veto is what blocks a repair                                                           |
+| `accuracy`    | 85                              | Five classes with a real `unknown` base rate; 90 gates on noise here                                            |
+| `kappa`       | 0.7                             | Accuracy alone is inflated by whichever class dominates                                                         |
+| `precision`   | 0.9, only past 10 applied heals | Without the floor one unlucky heal fails the nightly forever                                                    |
+| `recall`      | **never**                       | Its denominator is our own classifier, so early on it measures our optimism                                     |
+| `falseBug`    | **never**                       | Over-reporting a regression is noisy, not dangerous — and gating it would push the engine toward repairing more |
+
+The mask rate is detected three ways and the report labels each as ground truth or heuristic, because a
+reader who mistakes "somebody edited that line" for "this heal hid a bug" learns to ignore the number.
+
 ## The classifier
 
 **Rule 0 outranks everything: a retry that passed means `flaky`.** A locator that resolved on attempt
@@ -193,6 +261,23 @@ the difference between evidence and a guess.
   record or a bug in our bookkeeping never changes a verdict. `HEAL_DEBUG=1` surfaces what was
   swallowed — a reporter that hides its own errors is undebuggable, which cost real time here.
 
+### Step 6 decisions
+
+- **ADR-H13 — The heal log is append-only and committed.** A revert appends a superseding line rather
+  than editing the original, so the history of what was believed and when stays intact. The one metric
+  that matters is unauditable in any format that lets its worst entry be edited away.
+- **ADR-H14 — The rolling flake baseline is committed, the raw runs are not.** Artifact retention is 90
+  days by default and one day on some plans; a flake rate has to outlast that. Committing the aggregate
+  keeps the file small and blameable, and makes "when did this test start flaking" answerable with
+  `git log -p` and no store at all. The fold is keyed by run id so it is idempotent across the
+  overlapping artifact downloads a nightly job actually performs.
+- **ADR-H15 — Calibration is offline.** No model, no browser, no network, no run of the suite: the case
+  file carries the evidence `classify()` consumes. A gate that needs the world to be reachable is a
+  gate that gets disabled, which is `plugin-ai-judge`'s reason for the same shape.
+- **ADR-H16 — `heal revert` records; it does not edit code.** Undoing the edit is `git revert`, which
+  is better at it. What git cannot do is say _why_ it was undone, and that reason is the only ground
+  truth the mask rate has.
+
 ## Risks
 
 1. **Coupling to Playwright error strings.** Mitigated by one file, a `TAXONOMY_VERSION` that
@@ -210,8 +295,9 @@ the difference between evidence and a guess.
 
 ```bash
 npm run build && npm run lint && npx tsc --noEmit && npm run typecheck:tests
-npm test              # 5 new files: errorTaxonomy, fingerprint, triage, flakeStats, runStore,
-                      # quarantine, plus create's pwConfig injector
+npm test              # errorTaxonomy, fingerprint, triage, flakeStats, runStore, quarantine,
+                      # ariaSnapshot, candidates, equivalence, metrics, calibrate, baseline,
+                      # plus create's pwConfig injector
 npm run smoke:heal    # a real browser against two fixture versions
 npm run nfr           # asserts plugin-heal still declares nothing
 ```
@@ -229,6 +315,13 @@ naming the entry, both for an exceeded budget and for a failure nobody quarantin
 The fixture makes those three cases distinguishable on purpose: between v1 and v2 the button loses its
 identifiers while keeping its role and name, the greeting's text changes, and a form's wrapper class is
 renamed under a role+name locator. A classifier that confuses any two of them has nowhere to hide.
+
+Step 6 adds three test files and one assertion worth naming: **the starter case set we ship must pass
+its own gates**, because it is what `heal-calibration.yml` runs on the first night of every project
+that installs the plugin, and greeting a new user with a red nightly teaches them to disable it. The
+CLI was also exercised end to end in a temporary project — `calibrate` (0), `calibrate --min-kappa 1.5`
+(1, naming the breach), `metrics` on an empty log (0), `revert` with an unknown id (1) and with an
+invalid reason (2).
 
 Verified by hand in a real scaffold as well: `create-pwtap add heal` splices the reporter between the
 markers, writes the three scripts and copies `docs/HEALING.md`; `remove heal` restores the config and

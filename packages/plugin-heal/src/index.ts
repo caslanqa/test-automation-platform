@@ -33,6 +33,7 @@ export {
   pruneRuns,
   readRuns,
   runFileName,
+  runIdOf,
   stampFor,
   writeRun,
   type ReadRunsOptions,
@@ -120,3 +121,57 @@ export {
   isShielded,
   type ShieldDecision,
 } from './quarantine/shield.js';
+
+// --- history, committed ------------------------------------------------------------------------
+export {
+  BASELINE_PATH,
+  BASELINE_WINDOW,
+  EMPTY_BASELINE,
+  foldBaseline,
+  loadBaseline,
+  saveBaseline,
+  type LoadBaselineResult,
+} from './history/baseline.js';
+
+// --- metrics -----------------------------------------------------------------------------------
+export {
+  HEAL_LOG_PATH,
+  appendHeal,
+  appendRevert,
+  currentHeals,
+  readHealLog,
+  type HealLogEntry,
+  type RevertReason,
+} from './metrics/healLog.js';
+export {
+  DEFAULT_SURVIVAL_RUNS,
+  MIN_APPLIED_FOR_PRECISION,
+  flakeRateTrend,
+  healMetrics,
+  type HealMetrics,
+  type HealMetricsInput,
+  type MaskDetector,
+  type MaskedHeal,
+} from './metrics/healMetrics.js';
+export { confusion, kappaMulti, type ConfusionRow, type RatedPair } from './metrics/kappaMulti.js';
+export { healsRemoved } from './metrics/rewritten.js';
+
+// --- calibration -------------------------------------------------------------------------------
+export {
+  GATE_DEFAULTS,
+  calibrateTriage,
+  classifyCase,
+  gateCalibration,
+  type CalibrationGates,
+  type CalibrationReport,
+  type CaseResult,
+} from './calibrate/calibrate.js';
+export {
+  CASES_PATH,
+  loadCases,
+  saveCases,
+  type CaseEvidence,
+  type CaseFile,
+  type LabelledCase,
+} from './calibrate/dataset.js';
+export { REVIEW_NOTE, harvestCases, type HarvestOptions } from './calibrate/harvest.js';

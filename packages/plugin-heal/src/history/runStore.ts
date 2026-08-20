@@ -34,6 +34,17 @@ export function stampFor(iso: string): string {
   return iso.replace(/\.\d+Z$/, 'Z').replace(/:/g, '-');
 }
 
+/**
+ * The run id inside a record's filename: `<stamp>-<runId>[-sN].json`.
+ *
+ * Matched rather than split, because the stamp contains dashes of its own (`2026-08-20T04-23-00Z`)
+ * and so does nothing else here — a uuid split on the wrong dash silently prunes live evidence.
+ */
+export function runIdOf(fileName: string): string {
+  const match = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z-(.+?)(?:-s\d+)?\.json$/.exec(fileName);
+  return match?.[1] ?? '';
+}
+
 export function runFileName(record: RunRecord): string {
   const shard = record.shard === undefined ? '' : `-s${record.shard.current}`;
   return `${stampFor(record.startedAt)}-${record.runId}${shard}.json`;
@@ -112,6 +123,22 @@ export function pruneRuns(dir: string, keep: number = DEFAULT_KEEP): string[] {
     try {
       fs.rmSync(path.join(dir, name), { force: true });
       removed.push(name);
+    } catch {
+      continue;
+    }
+  }
+
+  // Each run may also have kept a directory of error contexts beside it. Pruning the record without
+  // the directory would leave the only unbounded thing this store writes growing forever.
+  const live = new Set(
+    names.filter(name => name.endsWith('.json') && !removed.includes(name)).map(runIdOf),
+  );
+  for (const name of names) {
+    if (!name.endsWith('-context') || live.has(name.slice(0, -'-context'.length))) {
+      continue;
+    }
+    try {
+      fs.rmSync(path.join(dir, name), { recursive: true, force: true });
     } catch {
       continue;
     }

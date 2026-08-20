@@ -28,6 +28,9 @@ export const manifest = {
     'heal:propose': 'heal propose',
     'heal:gate': 'heal gate',
     'heal:quarantine': 'heal quarantine list',
+    'heal:calibrate': 'heal calibrate',
+    'heal:metrics': 'heal metrics',
+    'heal:baseline': 'heal baseline',
   },
   envKeys: {},
   reporter: {
@@ -35,6 +38,20 @@ export const manifest = {
     uniq: '@pwtap/plugin-heal/reporter',
     line: "    ['@pwtap/plugin-heal/reporter', { runsDir: '.heal/runs' }],",
   },
+  examples: [
+    // The starter case set. Copied once and never overwritten, because the moment a team labels its own
+    // failures this file stops being ours — and grading a classifier against somebody else's examples is
+    // the one thing calibration must not do.
+    { src: 'templates/heal/triage-cases.json', dest: 'heal/triage-cases.json' },
+    // Workflows rather than doc snippets, for the reason the judge's calibration workflow is one: the
+    // nightly check is the part teams skip when it has to be written from scratch. Both skip with a
+    // notice rather than failing red until there is something for them to read.
+    {
+      src: 'templates/workflows/heal-calibration.yml',
+      dest: '.github/workflows/heal-calibration.yml',
+    },
+    { src: 'templates/workflows/heal-history.yml', dest: '.github/workflows/heal-history.yml' },
+  ],
   docs: [{ src: 'docs/HEALING.md', dest: 'docs/HEALING.md' }],
   readmeSection: [
     '## Failure triage and flake detection',

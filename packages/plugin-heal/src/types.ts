@@ -153,5 +153,10 @@ export interface Baseline {
   schema: typeof RUN_SCHEMA;
   /** How many runs the rolling counters cover. */
   window: number;
+  /**
+   * Run ids already folded in, capped at `window`. Without it a nightly job that re-reads the same
+   * artifact would double every counter, and a doubled flake rate is a quarantine nobody needed.
+   */
+  folded?: string[];
   entries: BaselineEntry[];
 }

@@ -1,0 +1,308 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "a retry passed, and the error text looks like a broken locator",
+      "evidence": {
+        "outcome": "flaky",
+        "kind": "strict-mode",
+        "matcher": "toBeVisible",
+        "locatorCode": "locator('.row')",
+        "history": {
+          "runs": 20,
+          "flakeRate": 0.2,
+          "recoveryRate": 0.8
+        },
+        "configRetries": 2
+      },
+      "expected": "flaky",
+      "note": "The strongest single rule in the engine. A locator that resolved on attempt two did not change between attempts, so the error text must not win over the retry outcome."
+    },
+    {
+      "name": "a retry passed, and the error text looks like a regression",
+      "evidence": {
+        "outcome": "flaky",
+        "kind": "value-mismatch",
+        "matcher": "toHaveText",
+        "expectedValue": "\"0 items left\"",
+        "receivedValue": "\"1 item left\"",
+        "history": {
+          "runs": 18,
+          "flakeRate": 0.28,
+          "recoveryRate": 0.6
+        },
+        "configRetries": 2
+      },
+      "expected": "flaky",
+      "note": "A value that matched on the second attempt is not a regression — it is a race against the thing that updates it."
+    },
+    {
+      "name": "intermittent across runs, with no retry available locally",
+      "evidence": {
+        "outcome": "unexpected",
+        "kind": "presence-timeout",
+        "matcher": "toBeVisible",
+        "locatorCode": "getByRole('alert')",
+        "history": {
+          "runs": 20,
+          "flakeRate": 0.35,
+          "recoveryRate": 0.5,
+          "lastPassed": "2026-08-19T00:00:00.000Z"
+        },
+        "testFileChanged": false,
+        "topFrameFileChanged": false,
+        "configRetries": 0
+      },
+      "expected": "flaky",
+      "note": "retries are 0 locally, so the in-run signal does not exist. The cross-run rate carries it instead."
+    },
+    {
+      "name": "a selector that was unique now resolves to several elements",
+      "evidence": {
+        "outcome": "unexpected",
+        "kind": "strict-mode",
+        "matcher": "click",
+        "locatorCode": "locator('.dup')",
+        "history": {
+          "runs": 20,
+          "flakeRate": 0.05,
+          "lastPassed": "2026-08-19T00:00:00.000Z"
+        },
+        "testFileChanged": false,
+        "topFrameFileChanged": false,
+        "configRetries": 2
+      },
+      "expected": "locator-drift",
+      "note": "strict mode violation is the clearest evidence the DOM changed: the page now contains more of something than it did."
+    },
+    {
+      "name": "an element vanished and nothing in the repository changed",
+      "evidence": {
+        "outcome": "unexpected",
+        "kind": "presence-timeout",
+        "matcher": "toBeVisible",
+        "locatorCode": "getByTestId('submit')",
+        "message": "expect(locator).toBeVisible() failed\n\nLocator: getByTestId('submit')\nExpected: visible\nError: element(s) not found",
+        "history": {
+          "runs": 20,
+          "flakeRate": 0.05,
+          "lastPassed": "2026-08-19T00:00:00.000Z"
+        },
+        "testFileChanged": false,
+        "topFrameFileChanged": false,
+        "configRetries": 2
+      },
+      "expected": "locator-drift",
+      "note": "The application moved. Note that being classified as drift does NOT mean it is repairable — this locator states only a test id, so no replacement can be proven."
+    },
+    {
+      "name": "an action timed out waiting for its locator",
+      "evidence": {
+        "outcome": "unexpected",
+        "kind": "action-timeout",
+        "matcher": "click",
+        "locatorCode": "getByRole('button', { name: 'Continue' })",
+        "history": {
+          "runs": 20,
+          "flakeRate": 0.05,
+          "lastPassed": "2026-08-19T00:00:00.000Z"
+        },
+        "testFileChanged": false,
+        "topFrameFileChanged": false,
+        "configRetries": 2
+      },
+      "expected": "locator-drift"
+    },
+    {
+      "name": "the greeting says something else",
+      "evidence": {
+        "outcome": "unexpected",
+        "kind": "value-mismatch",
+        "matcher": "toHaveText",
+        "locatorCode": "locator('#greeting')",
+        "expectedValue": "\"Welcome, Ada\"",
+        "receivedValue": "\"Welcome, Grace\"",
+        "history": {
+          "runs": 20,
+          "flakeRate": 0.05,
+          "lastPassed": "2026-08-19T00:00:00.000Z"
+        },
+        "testFileChanged": false,
+        "topFrameFileChanged": false,
+        "configRetries": 2
+      },
+      "expected": "true-fail",
+      "note": "The matcher compared two values and they differ. Changing the expected value is the single most damaging edit available in a test suite.",
+      "expectedVetoes": ["not-locator-drift"]
+    },
+    {
+      "name": "a plain value assertion with no locator at all",
+      "evidence": {
+        "outcome": "unexpected",
+        "kind": "value-mismatch",
+        "matcher": "toBe",
+        "expectedValue": "3",
+        "receivedValue": "2",
+        "history": {
+          "runs": 20,
+          "flakeRate": 0.05,
+          "lastPassed": "2026-08-19T00:00:00.000Z"
+        },
+        "testFileChanged": false,
+        "topFrameFileChanged": false,
+        "configRetries": 2
+      },
+      "expected": "true-fail",
+      "note": "expect(1 + 1).toBe(3) has no Locator: line. A value mismatch must not require one.",
+      "expectedVetoes": ["not-locator-drift"]
+    },
+    {
+      "name": "the spec itself was edited in this change",
+      "evidence": {
+        "outcome": "unexpected",
+        "kind": "presence-timeout",
+        "matcher": "toBeVisible",
+        "locatorCode": "getByRole('button', { name: 'Save' })",
+        "history": {
+          "runs": 20,
+          "flakeRate": 0.05,
+          "lastPassed": "2026-08-19T00:00:00.000Z"
+        },
+        "testFileChanged": true,
+        "topFrameFileChanged": false,
+        "configRetries": 2
+      },
+      "expected": "locator-drift",
+      "note": "The DOM evidence says drift, and the classifier reports it — but a human just edited this spec, so the veto refuses any repair. The class describes the evidence; the veto decides what may be done about it. Do not \"fix\" this case by expecting true-fail: the application did not change, the test did.",
+      "expectedVetoes": ["test-file-edited"]
+    },
+    {
+      "name": "the page object in the failing frame was edited",
+      "evidence": {
+        "outcome": "unexpected",
+        "kind": "presence-timeout",
+        "matcher": "toBeVisible",
+        "locatorCode": "getByLabel('Email')",
+        "history": {
+          "runs": 20,
+          "flakeRate": 0.05,
+          "lastPassed": "2026-08-19T00:00:00.000Z"
+        },
+        "testFileChanged": false,
+        "topFrameFileChanged": true,
+        "configRetries": 2
+      },
+      "expected": "locator-drift",
+      "expectedVetoes": ["source-edited"],
+      "note": "Same as the previous case, one frame down. The page object is shared, so rewriting it under the author would break more than this one test."
+    },
+    {
+      "name": "the navigation was refused",
+      "evidence": {
+        "outcome": "unexpected",
+        "kind": "network",
+        "message": "page.goto: net::ERR_CONNECTION_REFUSED at http://localhost:3000/",
+        "history": {
+          "runs": 20,
+          "flakeRate": 0.1,
+          "lastPassed": "2026-08-19T00:00:00.000Z"
+        },
+        "testFileChanged": false,
+        "topFrameFileChanged": false,
+        "configRetries": 2
+      },
+      "expected": "env-infra"
+    },
+    {
+      "name": "the browser died under the test",
+      "evidence": {
+        "outcome": "unexpected",
+        "kind": "browser-crash",
+        "message": "page.click: Target page, context or browser has been closed",
+        "history": {
+          "runs": 20,
+          "flakeRate": 0.05,
+          "lastPassed": "2026-08-19T00:00:00.000Z"
+        },
+        "testFileChanged": false,
+        "topFrameFileChanged": false,
+        "configRetries": 2
+      },
+      "expected": "env-infra"
+    },
+    {
+      "name": "setup failed, so the test body never really ran",
+      "evidence": {
+        "outcome": "unexpected",
+        "kind": "fixture-error",
+        "message": "Error: [api] API_BASE_URL is not set (env/environments.json)",
+        "failingStepCategory": "fixture",
+        "history": {
+          "runs": 20,
+          "flakeRate": 0.05,
+          "lastPassed": "2026-08-19T00:00:00.000Z"
+        },
+        "testFileChanged": false,
+        "topFrameFileChanged": false,
+        "configRetries": 0
+      },
+      "expected": "env-infra",
+      "note": "Only the failing step's category identifies this — the message is whatever the fixture author threw."
+    },
+    {
+      "name": "a worker died and took its results with it",
+      "evidence": {
+        "outcome": "unexpected",
+        "kind": "test-timeout",
+        "message": "Test timeout of 30000ms exceeded.",
+        "hadGlobalErrors": true,
+        "history": {
+          "runs": 20,
+          "flakeRate": 0.05,
+          "lastPassed": "2026-08-19T00:00:00.000Z"
+        },
+        "testFileChanged": false,
+        "topFrameFileChanged": false,
+        "configRetries": 2
+      },
+      "expected": "env-infra",
+      "note": "An error outside any test is the only trace a dead worker leaves."
+    },
+    {
+      "name": "a timeout with nothing else to go on",
+      "evidence": {
+        "outcome": "unexpected",
+        "kind": "test-timeout",
+        "message": "Test timeout of 30000ms exceeded.",
+        "history": {
+          "runs": 20,
+          "flakeRate": 0.05,
+          "lastPassed": "2026-08-19T00:00:00.000Z"
+        },
+        "diffUnknown": true,
+        "configRetries": 2
+      },
+      "expected": "unknown",
+      "note": "The weakest signal there is. Saying so beats a confident guess that becomes a code change."
+    },
+    {
+      "name": "a test that has never passed",
+      "evidence": {
+        "outcome": "unexpected",
+        "kind": "presence-timeout",
+        "matcher": "toBeVisible",
+        "locatorCode": "getByRole('table')",
+        "history": {
+          "runs": 12,
+          "flakeRate": 1,
+          "neverPassed": true
+        },
+        "diffUnknown": true,
+        "configRetries": 2
+      },
+      "expected": "locator-drift",
+      "note": "There is no green state to be equivalent to, so nothing can be proven about a replacement — but the presence timeout is still the evidence we have. The veto, not the label, is what keeps the engine's hands off it.",
+      "expectedVetoes": ["never-passed"]
+    }
+  ]
+}

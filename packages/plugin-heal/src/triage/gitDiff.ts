@@ -87,3 +87,7 @@ export function touched(changed: ChangedFiles, file: string | undefined): boolea
     candidate => candidate === normalized || candidate.endsWith(`/${normalized}`),
   );
 }
+
+/** The commit a heal was applied at, so the log can be tied to a point in history. */
+export const headCommit = (projectDir: string): string | undefined =>
+  git(['rev-parse', 'HEAD'], projectDir)?.trim() || undefined;

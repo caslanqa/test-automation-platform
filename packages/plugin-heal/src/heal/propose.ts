@@ -12,9 +12,12 @@
  * @example
  * await proposeForFinding({ projectDir, finding, apply: false, verify: true });
  */
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { appendHeal, type HealLogEntry } from '../metrics/healLog.js';
+import { headCommit } from '../triage/gitDiff.js';
 import type { Finding } from '../triage/run.js';
 import { parseAriaSnapshot, snapshotFromErrorContext, type AriaNode } from './ariaSnapshot.js';
 import { targetsFor, webLocatorCandidates, type HealCandidate } from './candidates.js';
@@ -62,6 +65,58 @@ function snapshotFor(projectDir: string, finding: Finding): AriaNode[] | undefin
     return snapshot === undefined ? undefined : parseAriaSnapshot(snapshot);
   } catch {
     return undefined;
+  }
+}
+
+/**
+ * Record an applied heal in `heal/heal-log.jsonl`.
+ *
+ * This is what makes the precision and mask-rate metrics computable: neither is recoverable from the
+ * run records, which describe failures rather than repairs. It runs only after the edit is committed
+ * to the file, so the log never claims a heal that was rolled back.
+ *
+ * A failure here must not undo the edit, so it is swallowed with a warning. Losing a log line costs a
+ * metric; throwing after the file was already written would leave the caller unable to tell whether
+ * the spec had changed.
+ */
+function logApplied(projectDir: string, proposal: Proposal, finding: Finding): void {
+  const at = new Date().toISOString();
+  const site = finding.failure?.siteFingerprint ?? '';
+  const entry: HealLogEntry = {
+    healId: createHash('sha1')
+      .update([proposal.testKey, site, at].join('\0'))
+      .digest('hex')
+      .slice(0, 12),
+    at,
+    commit: headCommit(projectDir),
+    testKey: proposal.testKey,
+    project: proposal.project,
+    file: proposal.file,
+    line: proposal.line,
+    title: proposal.title,
+    from: proposal.intent.code,
+    to: proposal.chosen?.code ?? '',
+    siteFingerprint: site,
+    matcher: finding.failure?.matcher,
+    triage: { class: proposal.triage.class, confidence: proposal.triage.confidence },
+    proof: {
+      verdict: proposal.equivalence?.verdict ?? 'refused',
+      matched: proposal.equivalence?.matched ?? [],
+    },
+    verification:
+      proposal.verification === undefined
+        ? undefined
+        : {
+            greens: proposal.verification.greens,
+            assertionRan: proposal.verification.assertionRan,
+          },
+  };
+  try {
+    appendHeal(projectDir, entry);
+  } catch (error) {
+    process.stderr.write(
+      `[heal] applied the edit but could not write the heal log: ${(error as Error).message}\n`,
+    );
   }
 }
 
@@ -207,10 +262,17 @@ export async function proposeForFinding(options: ProposeOptions): Promise<Propos
         fs.writeFileSync(path.join(projectDir, proposal.file), original);
       } else {
         proposal.applied = true;
+        logApplied(projectDir, proposal, finding);
       }
     }
   } else if (verify) {
     proposal.refusals.push('not verified: earlier gates already refused this candidate');
+  } else if (apply) {
+    // Said out loud rather than left to be inferred from `applied: false`. An unverified edit is
+    // never written, and an operator who asked for one deserves to be told why they got nothing.
+    proposal.refusals.push(
+      'not applied: --no-verify was given, and an edit that was never run is not a repair',
+    );
   }
 
   return { proposal, dir: writeProposal(projectDir, proposal, sequence) };

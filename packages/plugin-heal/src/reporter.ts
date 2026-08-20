@@ -26,6 +26,7 @@
  */
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import fs from 'node:fs';
 import path from 'node:path';
 
 import type {
@@ -153,6 +154,11 @@ class HealReporter implements Reporter {
    * it. The config file's own directory is the project root, and Playwright runs from there.
    */
   private projectRoot = process.cwd();
+  /**
+   * Fixed at construction rather than at `onEnd`, because the failing path needs it to name the
+   * directory it copies error contexts into, and that happens long before the record is written.
+   */
+  private readonly runId = randomUUID();
   private suite: Suite | undefined;
   private readonly attempts = new Map<string, AttemptRecord[]>();
   private readonly globalErrors: string[] = [];
@@ -211,7 +217,7 @@ class HealReporter implements Reporter {
       };
       // The green path stops here: four numbers and a string, no parsing, no I/O.
       if (result.status !== 'passed' && result.status !== 'skipped') {
-        attempt.failure = this.failureOf(result);
+        attempt.failure = this.failureOf(result, test);
       }
       const list = this.attempts.get(key);
       if (list === undefined) {
@@ -258,7 +264,7 @@ class HealReporter implements Reporter {
     return test.titlePath()[1] ?? '';
   }
 
-  private failureOf(result: TestResult): FailureRecord {
+  private failureOf(result: TestResult, test: TestCase): FailureRecord {
     const error = result.errors[0];
     const raw = error?.message ?? error?.value ?? '';
     const step = deepestErroringStep(result.steps);
@@ -303,9 +309,38 @@ class HealReporter implements Reporter {
         .filter(attachment => attachment.path !== undefined)
         .map(attachment => ({
           name: attachment.name,
-          path: toPosixRelative(attachment.path as string, this.projectRoot),
+          path: this.keepContext(attachment, test),
         })),
     };
+  }
+
+  /**
+   * Copy the `error-context` attachment next to the run record, and point the record at the copy.
+   *
+   * Playwright clears the output directory at the start of every run, so the ARIA snapshot a failure
+   * captured is deleted by the **next** run — including the verification run `heal propose` performs.
+   * Without this copy a second `propose` against the same record finds nothing, and, worse, uploading
+   * `.heal/runs` as a CI artifact ships records whose evidence is in a directory that was not uploaded.
+   *
+   * Only `error-context` is copied. It is a few kilobytes of text; a trace or a video is not ours to
+   * duplicate, and those are already in the report the user has.
+   */
+  private keepContext(attachment: { name: string; path?: string }, test: TestCase): string {
+    const source = attachment.path as string;
+    if (attachment.name !== 'error-context') {
+      return toPosixRelative(source, this.projectRoot);
+    }
+    try {
+      const runsDir = path.resolve(this.projectRoot, this.options.runsDir ?? RUNS_DIR);
+      const dir = path.join(runsDir, `${this.runId}-context`);
+      fs.mkdirSync(dir, { recursive: true });
+      const target = path.join(dir, `${this.keyFor(test)}-${test.results.length}.md`);
+      fs.copyFileSync(source, target);
+      return toPosixRelative(target, this.projectRoot);
+    } catch (error) {
+      swallowed('copying the error context', error);
+      return toPosixRelative(source, this.projectRoot);
+    }
   }
 
   private finish(result: FullResult): { status?: FullResult['status'] } | undefined {
@@ -353,7 +388,7 @@ class HealReporter implements Reporter {
 
     const record: RunRecord = {
       schema: RUN_SCHEMA,
-      runId: randomUUID(),
+      runId: this.runId,
       shard: this.config.shard,
       startedAt: new Date(this.started).toISOString(),
       durationMs: Date.now() - this.started,

@@ -1,0 +1,97 @@
+# Keeps flake history alive across CI runs, in two layers — because they answer different questions.
+#
+# **Layer 1, the raw runs.** Every job uploads its `.heal/runs/*.json` as an artifact. That is what makes
+# "what exactly failed last Tuesday" answerable, and it is ephemeral: artifact retention is 90 days by
+# default and one day on some plans.
+#
+# **Layer 2, the committed aggregate.** A flake rate has to outlast that, so this job folds the runs into
+# per-test counters and opens a pull request with `heal/flake-baseline.json`. Small, readable, blameable —
+# and it buys the thing no store would: `git log -p heal/flake-baseline.json` answers "when did this test
+# start flaking" with no database at all.
+#
+# Without layer 2 the classifier has no cross-run history. It says so rather than guessing (it caps its
+# confidence and names the gap), but a healer that cannot tell a race from a regression is the failure mode
+# this whole plugin exists to avoid.
+#
+# The pull request is not a convenience: a counter change that lands without review is a quarantine
+# decision nobody made.
+name: Heal history
+
+on:
+  schedule:
+    # 05:11 UTC — after the calibration job, so a breached gate is visible before the counters move.
+    - cron: '11 5 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: heal-history
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  baseline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+
+      # Every run record this workflow can reach, from the last day of CI. `merge-multiple` flattens the
+      # per-job artifacts into one directory, and the fold skips run ids it has already seen — so
+      # overlapping downloads add each run exactly once.
+      - name: Collect the run records CI produced
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: heal-runs-*
+          path: .heal/runs
+          merge-multiple: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id || github.run_id }}
+
+      - name: Anything to fold?
+        id: runs
+        run: |
+          COUNT=$(find .heal/runs -name '*.json' 2>/dev/null | wc -l | tr -d ' ')
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+          if [ "$COUNT" = '0' ]; then
+            echo "::notice::No run records were available. Upload .heal/runs as an artifact named heal-runs-<job> from your test workflow so this job has something to fold."
+          fi
+
+      - name: Fold them into the committed baseline
+        if: steps.runs.outputs.count != '0'
+        run: npx heal baseline --update
+
+      # `gh` is on every runner, so this needs no action dependency. A no-op when the fold changed nothing,
+      # which is the common case on a quiet day.
+      - name: Open a pull request if the counters moved
+        if: steps.runs.outputs.count != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -o pipefail
+          if git diff --quiet -- heal/flake-baseline.json; then
+            echo "::notice::Flake counters unchanged — nothing to propose."
+            exit 0
+          fi
+          BRANCH="heal/flake-baseline-${{ github.run_id }}"
+          git config user.name  'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git checkout -b "$BRANCH"
+          git add heal/flake-baseline.json
+          git commit -m 'chore(heal): fold the latest runs into the flake baseline'
+          git push --set-upstream origin "$BRANCH"
+          gh pr create \
+            --title 'chore(heal): update the flake baseline' \
+            --body 'Rolling flake counters, folded from the run records CI produced.
+
+          Read the diff as a health report: a test whose rate climbed is a test to look at, and one that
+          appeared is a test that started failing. Merging accepts these numbers as the history the
+          classifier will reason from.' \
+            --label 'automated' || echo "::notice::Branch $BRANCH pushed; open the pull request manually."

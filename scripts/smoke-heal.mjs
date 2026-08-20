@@ -381,6 +381,90 @@ async function main() {
       'propose must restore the spec after a verification run',
     );
 
+    // 4c -------------------------------------------------------------------------------------
+    // Immediately after 4b, and not at the end, because the act band needs the history steps 1-3
+    // built: two green runs and one red one. By step 9 the same tests have failed nine times in a
+    // row, and the classifier reads that as intermittency — correctly — and refuses to act on a
+    // margin that thin. So the apply path is exercised where the evidence actually supports acting.
+    step('4c: --apply writes the edit and the heal log, and a revert makes the metrics say so');
+    const beforeApply = fs.readFileSync(path.join(dir, 'tests/app.spec.ts'), 'utf8');
+    const applied = await heal(dir, ['propose', '--apply']);
+    assert(
+      applied.code === 0,
+      `propose --apply should exit 0, got ${applied.code}\n${applied.stderr}`,
+    );
+
+    const healedSpec = fs.readFileSync(path.join(dir, 'tests/app.spec.ts'), 'utf8');
+    // The scope is what has to be gone: the replacement string was already present as the inner half
+    // of the original locator, so asserting on it alone would pass without any edit at all.
+    assert(
+      !healedSpec.includes("locator('form.signin')"),
+      `the drifted scope should be gone from the spec:\n${applied.stdout}`,
+    );
+    assert(
+      healedSpec.includes("toHaveText('Welcome, Ada')"),
+      'and the expected value must STILL be untouched — applying a repair changes locators only',
+    );
+
+    const logPath = path.join(dir, 'heal/heal-log.jsonl');
+    assert(
+      fs.existsSync(logPath),
+      `an applied heal must be recorded in heal/heal-log.jsonl:\n${applied.stdout}`,
+    );
+    const logged = fs
+      .readFileSync(logPath, 'utf8')
+      .split('\n')
+      .filter(line => line.trim() !== '')
+      .map(line => JSON.parse(line));
+    assert(logged.length === 1, `exactly one heal should be logged, got ${logged.length}`);
+    assert(
+      logged[0].proof.verdict === 'proven' && logged[0].triage.class === 'locator-drift',
+      `the log should carry the proof that allowed the edit, got ${JSON.stringify(logged[0].proof)}`,
+    );
+    assert(
+      logged[0].from.includes("locator('form.signin')") &&
+        logged[0].to === "getByRole('button', { name: 'Continue' })",
+      `the log should record both sides of the edit, got ${logged[0].from} -> ${logged[0].to}`,
+    );
+
+    const metrics = await heal(dir, ['metrics']);
+    assert(
+      metrics.code === 0,
+      `a heal with no suspicion against it should pass, got ${metrics.code}\n${metrics.stdout}\n${metrics.stderr}`,
+    );
+    assert(
+      /1 heal\(s\) applied/.test(metrics.stdout),
+      `metrics should count it:\n${metrics.stdout}`,
+    );
+
+    // Ground truth beats every heuristic, and it is the only input that can never be inferred.
+    const reverted = await heal(dir, [
+      'revert',
+      logged[0].healId,
+      '--reason',
+      'masked-bug',
+      '--note',
+      'smoke',
+    ]);
+    assert(
+      reverted.code === 0,
+      `recording a revert should succeed, got ${reverted.code}\n${reverted.stderr}`,
+    );
+
+    const masked = await heal(dir, ['metrics']);
+    assert(masked.code === 1, `a recorded mask must fail the metrics gate, got ${masked.code}`);
+    assert(
+      /mask-rate/.test(masked.stderr),
+      `the failing gate should be named, got:\n${masked.stderr}`,
+    );
+    assert(
+      /reverted-as-masking \(GROUND TRUTH\)/.test(masked.stdout),
+      `a human verdict must not be presented as a heuristic, got:\n${masked.stdout}`,
+    );
+
+    // Put the spec back: the steps below re-run the suite and expect the same three failures.
+    fs.writeFileSync(path.join(dir, 'tests/app.spec.ts'), beforeApply);
+
     // 5 --------------------------------------------------------------------------------------
     step('5: the value change is never even examined, let alone repaired');
     assert(

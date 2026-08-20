@@ -91,3 +91,72 @@ emits `steps: []` for a passing test**, so the assertion check would have been p
 through it and needed its own reporter; and the whole-file check compares against the tests that were
 _already_ failing, because otherwise it refuses every repair made while a sibling is red for an
 unrelated reason — which is most real repair sessions.
+
+**Measuring the healing, and gating the one number that matters.** `heal metrics` reads
+`heal/heal-log.jsonl` — committed, append-only, one line per applied heal. Append-only is the design,
+not tidiness: a heal that turns out to have hidden a bug is the most important line in the file, and a
+format that let it be edited away would make the only metric worth having unauditable.
+
+Precision is reported but **undefined below ten applied heals**, because without that floor one unlucky
+heal fails the nightly forever. Recall is reported and never gated — its denominator is our own
+classifier, so early on it measures our optimism rather than reality, and gating it would push the
+engine toward repairing more. The mask rate is gated at zero.
+
+**The plan's second mask detector could not have worked, and the failure would have been silent.** It
+asked for "the same `siteFingerprint` later failed with a value mismatch". The site fingerprint includes
+the locator code and healing changes exactly that, so a post-heal failure necessarily carries a
+different fingerprint: the detector would have been permanently dark while reading correctly in review.
+What replaced it is the same test failing with `kind === 'value-mismatch'` at the same file and **line**
+the heal edited — the observable form of "we repointed a locator and an assertion there began to
+disagree". A test pins both directions: it fires at the healed line and stays silent one line away.
+
+**The third detector was wrong twice, and the smoke caught the first one immediately.** Asking git for
+the history of the healed line flags every committed repair, because the commit that lands a heal is
+itself a commit after it — and the comparison used git's offset-bearing `%aI` against an ISO `Z`
+timestamp as strings, which makes every commit in a non-UTC timezone look later than it was. It now
+asks the question directly: is the locator the heal wrote still in the spec? No clock, no repository,
+and robust to the line moving.
+
+**A defect the same step exposed in the reporter.** Playwright clears the output directory at the start
+of every run, so the ARIA snapshot a failure captured is deleted by the next one — including the
+verification run `heal propose` performs. A second `propose` against the same record therefore found no
+evidence, and, worse, uploading `.heal/runs` as a CI artifact would have shipped records pointing into a
+`test-results/` directory that was not in the artifact. The reporter now copies the `error-context`
+attachment next to the run record and points the record at the copy, which makes a record
+self-contained; `pruneRuns` removes the copies with the record they belong to.
+
+**`heal calibrate` grades the classifier against labelled cases, entirely offline** — no model, no
+browser, no network, no run of the suite, because a gate that needs the world to be reachable is a gate
+that gets disabled. Sixteen starter cases ship with the plugin and a test asserts they pass their own
+thresholds, since that file is what the nightly workflow runs on the first night of every project that
+installs this. `kappaMulti` generalises `plugin-ai-judge`'s binary `kappa` to five classes, and a test
+asserts the two agree on two-class input so the generalisation cannot quietly drift into meaning
+something else.
+
+**Three of those sixteen cases exposed a real gap, and the tempting fix was the wrong one.** The
+diff-correlation rules were given small nudges toward `true-fail` when the weights were still relative;
+after they were rescaled to absolute confidence points, a `presence-timeout` contributes 60 to
+`locator-drift` and a +25 nudge can no longer change the winner. Raising the nudges would have produced
+the label `true-fail` — but that label is a claim about the _application_, and when a human has just
+edited the spec the application did not change. What actually protects the repository in all three cases
+is the veto (`test-file-edited`, `source-edited`, `never-passed`), and `heal propose` turns every veto
+into a refusal. So the classifier was left alone and the dataset was extended instead: a case may now
+demand vetoes as well as a class, and `missingVeto` is gated at zero next to `falseHeal`. Grading only
+the label would have let a refactor drop a guard while calibration stayed green.
+
+`falseBug` — over-reporting a regression — is reported and deliberately not gated. It is noisy, not
+dangerous, and gating both directions equally would push the classifier toward repairing more.
+
+**Flake history that outlives an artifact.** `.heal/runs/` is gitignored and machine-local; in CI it
+survives only as an artifact, and retention is 90 days by default and one day on some plans. So
+`heal baseline --update` folds runs into per-test counters in `heal/flake-baseline.json`, committed. The
+fold records each run by id, which makes it idempotent across the overlapping artifact downloads a
+nightly job actually performs — without that, re-running the job would double every counter and a
+doubled flake rate is a quarantine nobody needed. Committing the aggregate rather than the runs also
+buys what no store would: `git log -p heal/flake-baseline.json` answers "when did this test start
+flaking".
+
+Two nightly workflows are copied in on install and never overwritten, both skipping with a `::notice::`
+rather than failing red until there is something to read: `heal-calibration.yml` grades the classifier
+and measures the applied heals, and `heal-history.yml` folds the runs and opens a pull request with the
+new counters. A counter change that lands without review is a quarantine decision nobody made.

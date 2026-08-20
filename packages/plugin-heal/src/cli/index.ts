@@ -5,6 +5,10 @@
  * heal triage    [--json <path>] [--runs-dir <dir>] [--window N]
  * heal gate      [--max-quarantine N] [--total-tests N] [--no-ratchet]
  * heal quarantine list
+ * heal baseline [--update]
+ * heal metrics   [--json <path>] [--max-masked N]
+ * heal calibrate [--json <path>] [--harvest] [--min-kappa N]
+ * heal revert    <healId> --reason masked-bug|wrong-element|no-longer-needed
  * ```
  *
  * Nothing here calls a model, opens a browser, or writes to a test file. An agent front end is a
@@ -26,6 +30,8 @@ import { band } from '../triage/classify.js';
 import { triageRun, type Finding } from '../triage/run.js';
 import type { RunRecord } from '../types.js';
 import { flagNumber, flagPresent, flagValue, positionals } from './args.js';
+import { commandCalibrate } from './calibrate.js';
+import { commandBaseline, commandMetrics, commandRevert } from './metrics.js';
 
 const USAGE = `heal — failure triage, flake detection and quarantine
 
@@ -41,6 +47,20 @@ const USAGE = `heal — failure triage, flake detection and quarantine
 
   heal quarantine list
       What is quarantined, and for how much longer.
+
+  heal baseline [--update] [--runs-dir <dir>] [--window N]
+      Fold the recorded runs into heal/flake-baseline.json — the committed rolling flake history that
+      outlives a CI artifact. Additive and idempotent; writes nothing without --update.
+
+  heal metrics [--json <path>] [--max-masked N] [--survival-runs N]
+      Did the healing work, and did it hide anything? Exits 1 on a suspected mask (default 0 allowed).
+
+  heal calibrate [--json <path>] [--min-accuracy 85] [--min-kappa 0.7] [--max-false-heal 0]
+      Grade the classifier against heal/triage-cases.json. Offline: no model, no browser, no network.
+      --harvest instead drafts cases from the recorded runs for a human to correct.
+
+  heal revert <healId> --reason masked-bug|wrong-element|no-longer-needed [--note '...']
+      Record what a heal turned out to be. Ground truth for the mask rate; does not touch the code.
 `;
 
 const out = (line: string): void => {
@@ -323,6 +343,14 @@ export async function run(argv: string[], projectDir = process.cwd()): Promise<n
       return commandGate(projectDir, argv);
     case 'propose':
       return commandPropose(projectDir, argv);
+    case 'metrics':
+      return commandMetrics(projectDir, argv);
+    case 'baseline':
+      return commandBaseline(projectDir, argv);
+    case 'calibrate':
+      return commandCalibrate(projectDir, argv);
+    case 'revert':
+      return commandRevert(projectDir, argv.slice(argv.indexOf('revert') + 1));
     case 'quarantine':
       return commandQuarantine(projectDir, argv.slice(argv.indexOf('quarantine') + 1));
     case undefined:
