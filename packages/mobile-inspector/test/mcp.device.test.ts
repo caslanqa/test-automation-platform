@@ -13,6 +13,13 @@
  *
  * It asserts and never mutates: the Settings app exists on every device, so nothing is installed and no
  * device is shut down.
+ *
+ * **`test:device` runs with `--test-concurrency=1`, and must.** `node --test` runs test files in parallel
+ * processes by default, and adding this second file therefore put two independent sessions on one device
+ * at the same time. The platform's device lock serialises them, so nothing corrupts — but the waiter times
+ * out (`mobile_connect` allows 120s, and the recorder's measured phases plus a first-run WebDriverAgent
+ * build take longer than that), and the result is a red run that says "device in use" rather than anything
+ * about the code. There is one device; the files that use it run one at a time.
  */
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
