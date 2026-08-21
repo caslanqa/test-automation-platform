@@ -791,7 +791,7 @@ Changes from today:
 
 Measured, not aspirational. The deterministic rows — dependency footprint and published size — are enforced
 by `npm run nfr` in CI; the frame, log and poll bounds are unit-tested; the latency and idle-CPU rows need a
-device and belong to `device.yml`.
+real device, so they are measured by hand with `PWTAP_DEVICE=1 npm run test:device` (§12).
 
 **Measured p50 of 5 samples, host M-series macOS.** All four combinations in one sweep: Android emulator
 `pixel9`, iOS simulator iPhone 16 Pro (18.6). The `before` column is the original Android-only measurement on
@@ -900,19 +900,37 @@ READMEs for `@pwtap/mobile-core` and `@pwtap/mobile-inspector` (neither had one)
 NFR checks. All four combinations — Android × {Maestro, Appium} and iOS × {Maestro, Appium} — were driven
 end-to-end on real devices: connect, record, reload mid-session, record again, save, run.
 
-**`device.yml` runs that matrix nightly, split across two hosts, and it took a rewrite to make it mean
-anything: it had failed 21 consecutive nightlies without ever passing once.** Three defects, each hidden behind
-the one before it. The iOS jobs booted a simulator by name — `xcrun simctl boot 'iPhone 16 Pro'` — and the
-image moved to Xcode 26, whose simulators are iPhone 17/17e/16e: `Invalid device or device pair`, before any
-test ran; the step now picks whatever iPhone the image offers. The Android jobs were on macOS runners that
-expose no hypervisor, so the emulator never started (`HVF error: HV_UNSUPPORTED`) and the job spent twelve
-minutes watching `adb` look for a device that was never coming; they moved to `ubuntu-latest` with `/dev/kvm`
-opened to the runner user, which is what the new `LinuxPlatform` unlocked. And both Appium legs would have
-failed even then, at "Appium CLI not found" — the adapter spawns a global `appium` plus a platform driver, and
-no runner ships either; the boot failures had been masking that for weeks. Verified where it can be: both iOS
-legs pass locally against a freshly booted simulator (Maestro 35 s, Appium 71 s), and the Linux host seam is
-unit-tested plus exercised on a real Linux kernel in a container. The emulator legs themselves are verified by
-the first nightly that runs after this lands.
+**There is no device workflow, and that is a decision rather than an omission.** `device.yml` ran the matrix
+nightly for months and **failed 21 consecutive nightlies without passing once** — never because the code was
+wrong. A gate that is always red is not a gate: it stops being read, and then a real failure hides in it.
+
+What it kept failing on, and why none of it was ours: the iOS jobs booted a simulator by name
+(`xcrun simctl boot 'iPhone 16 Pro'`) and the image moved to Xcode 26, whose simulators are iPhone 17/17e/16e
+— `Invalid device or device pair`, before a test ran. The Android jobs were on macOS runners that expose no
+hypervisor to the VM, so the emulator never started (`HVF error: HV_UNSUPPORTED`) and each job spent twelve
+minutes watching `adb` look for a device that was not coming. Both Appium legs would have failed even then,
+at "Appium CLI not found" — the adapter spawns a global `appium` plus a platform driver and no runner ships
+either; the boot failures had masked that for weeks. Every one of those is a hosted-runner fact that changes
+underneath the repository on someone else's schedule.
+
+**The tests remain**, and they are the part with value: `packages/mobile-inspector/test/*.device.test.ts`,
+run on demand against a device you already have.
+
+```bash
+PWTAP_DEVICE=1 npm run test:device                              # maestro, Android, Settings
+PWTAP_DEVICE=1 PWTAP_DEVICE_DRIVER=appium npm run test:device
+PWTAP_DEVICE=1 PWTAP_DEVICE_PLATFORM=ios npm run test:device
+```
+
+They skip without `PWTAP_DEVICE=1`, so a normal run is unaffected, and they assert without mutating —
+nothing is installed and no device is shut down. `--test-concurrency=1` is not optional there: `node --test`
+runs files in parallel, there is one device, and the loser of that race reports a lock timeout rather than
+anything true.
+
+What CI keeps is the layer that can be trusted to mean something on a hosted runner: the fake driver covers
+the whole recording engine, `smoke:mcp` drives the real server over real stdio, and the UI row drives a real
+browser. The device matrix is a release check a human runs, and §12's exit criterion above records the last
+time all four combinations were driven end to end.
 
 ### Test strategy
 
@@ -931,7 +949,7 @@ the UI bundle is built and a Chromium installed.
 | Unit (pure, golden-file where output is text) | locator ranking and warnings, hit-test policy, node key/path derivation, codegen output, AST append/merge, protocol field validation (including malformed payloads), draft revision state machine, `imageSize` on real PNG/JPEG headers |
 | Integration (fake driver)                     | connect → tap → timeline → codegen → save → run with a stubbed Playwright binary; disconnect-does-not-clear-draft; no dropped interactions under load                                                                                   |
 | UI (real browser + fake driver)               | reload keeps recording, the picker's serial still becomes an AVD name in codegen, a refused action is stated on screen, a second view takes over instead of going deaf                                                                  |
-| Device-gated (nightly / manual)               | Android emulator × {Maestro, Appium} and iOS simulator × {Maestro, Appium} record→save→run smoke                                                                                                                                        |
+| Device-gated (manual, opt-in)                 | Android emulator × {Maestro, Appium} and iOS simulator × {Maestro, Appium} record→save→run smoke, plus the MCP server's connect→disconnect→reconnect cycle. Not in CI — see §12                                                         |
 
 ---
 
