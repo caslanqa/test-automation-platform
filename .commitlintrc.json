@@ -42,7 +42,8 @@
         "maestro",
         "appium",
         "db",
-        "perf"
+        "perf",
+        "heal"
       ]
     ],
     "scope-case": [2, "always", "lower-case"],

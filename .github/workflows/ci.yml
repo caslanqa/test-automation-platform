@@ -98,6 +98,7 @@ jobs:
         if: runner.os == 'Linux'
         run: npm run smoke:k6
       # The deterministic rows of the §11 budget: dependency footprint and published size. The latency
-      # and idle-CPU rows need a device and live in device.yml.
+      # and idle-CPU rows need a real device, so they are measured by hand with
+      # `PWTAP_DEVICE=1 npm run test:device` — there is no device workflow any more (architecture.md §12).
       - name: NFR budgets
         run: npm run nfr
