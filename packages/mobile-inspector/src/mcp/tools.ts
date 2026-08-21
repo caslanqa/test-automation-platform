@@ -195,7 +195,7 @@ async function dispatch(
         list.length === 0
           ? [
               'No mobile driver is installed in this project.',
-              'Add one with: npx create-pwtap add maestro   (or: add appium)',
+              'Add one with: npx @pwtap/create add maestro   (or: add appium)',
               ...session.driverProblems.map(problem => `- ${problem}`),
             ].join('\n')
           : undefined,

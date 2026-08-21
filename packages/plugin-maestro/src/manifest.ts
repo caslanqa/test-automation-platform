@@ -11,7 +11,7 @@
  * `git mv` (§13 carries the command).
  *
  * @example
- * // after `npx create-pwtap add maestro`, gated behind MAESTRO=1:
+ * // after `npx @pwtap/create add maestro`, gated behind MAESTRO=1:
  * //   npm run test:maestro   →  MAESTRO=1 playwright test --project=maestro
  */
 export const manifest = {

@@ -6,7 +6,7 @@
  * (so it respects a renamed tests dir) and matches `*.appium.ts`.
  *
  * @example
- * // after `npx create-pwtap add appium`, gated behind APPIUM=1:
+ * // after `npx @pwtap/create add appium`, gated behind APPIUM=1:
  * //   npm run test:appium   →  runs tests and auto-generates appium HTML report
  */
 export const manifest = {

@@ -121,7 +121,7 @@ try {
   const drivers = await client.callTool('mobile_drivers', {});
   assert(drivers.isError !== true, 'an empty project is not an error state');
   const text = drivers.content.map(part => part.text ?? '').join('\n');
-  assert(/create-pwtap add maestro/.test(text), `it should say what to install, got:\n${text}`);
+  assert(/@pwtap\/create add maestro/.test(text), `it should say what to install, got:\n${text}`);
 
   // 4 ---------------------------------------------------------------------------------------------
   step('4: a tool that needs a device refuses without taking the channel down');

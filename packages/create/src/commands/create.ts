@@ -286,7 +286,7 @@ function printNextSteps(targetDir: string, name: string, testsDir: string): void
       '',
       // Derived, not typed out: the hardcoded list silently omitted `db` the day it shipped, and would omit
       // the next plugin too.
-      `Add a plugin later:  npx create-pwtap add <${KNOWN_PLUGINS.map(plugin => plugin.id).join('|')}>`,
+      `Add a plugin later:  npx @pwtap/create add <${KNOWN_PLUGINS.map(plugin => plugin.id).join('|')}>`,
       '',
       'Claude Code: install the V&V agents once, and they follow the plugins you add:',
       '  /plugin marketplace add caslanqa/test-automation-platform',

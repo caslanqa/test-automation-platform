@@ -118,7 +118,7 @@ packages that are correctly configured. The smoke did not catch it either, becau
 Three settings come from the plugin's `userConfig`: `ALLOW_ACTIONS` (default off), `IDLE_MS` and `DEVICE`.
 None is `sensitive`, so nothing touches a keychain — this server calls no model and needs no key.
 
-For any other MCP client, `npx create-pwtap mcp` prints an equivalent block and writes nothing.
+For any other MCP client, `npx @pwtap/create mcp` prints an equivalent block and writes nothing.
 
 ## Security
 

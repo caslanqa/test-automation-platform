@@ -10,7 +10,7 @@
  * `packages/create/test/agentsStdout.test.ts` is what catches that.
  *
  * @example
- * $ npx create-pwtap claude-plugin-path
+ * $ npx @pwtap/create claude-plugin-path
  * /Users/me/.pwtap/claude-plugin/checkout-tests-9f2a1c04
  */
 import fs from 'node:fs';

@@ -14,7 +14,7 @@
  * installed, or run nothing.
  *
  * @example
- * npx create-pwtap mcp        # prints an mcpServers block to paste into any MCP client
+ * npx @pwtap/create mcp        # prints an mcpServers block to paste into any MCP client
  */
 import { createRequire } from 'node:module';
 import path from 'node:path';
@@ -46,7 +46,7 @@ export async function mcpCommand(options: McpCommandOptions): Promise<void> {
     log.warn(
       '@pwtap/mobile-inspector is not installed here, so there is no MCP server to configure yet.',
     );
-    log.warn('Add a mobile plugin first:  npx create-pwtap add maestro   (or: add appium)');
+    log.warn('Add a mobile plugin first:  npx @pwtap/create add maestro   (or: add appium)');
     return;
   }
 

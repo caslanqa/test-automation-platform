@@ -11,7 +11,7 @@
  * users already know.
  *
  * @example
- * $ npx create-pwtap init-agents --loop=claude
+ * $ npx @pwtap/create init-agents --loop=claude
  */
 import path from 'node:path';
 

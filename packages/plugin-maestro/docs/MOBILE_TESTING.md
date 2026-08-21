@@ -208,5 +208,5 @@ Screenshots and screen recording are configured via Playwright's own `use.screen
 ## Prerequisites
 
 The Maestro CLI + a JDK 17+, plus an Android SDK (`ANDROID_HOME`) or Xcode for the platform you
-target. `npx create-pwtap add maestro` runs an advisory check and points at anything missing. iOS is
+target. `npx @pwtap/create add maestro` runs an advisory check and points at anything missing. iOS is
 simulator-only today; real iOS devices are not yet supported.

@@ -9,7 +9,7 @@ LLM-as-judge matchers for the [Playwright Test Automation Platform](https://www.
 Into a `@pwtap` project (recommended — wires `expect`, env keys, and an example spec):
 
 ```bash
-npx create-pwtap add ai-judge
+npx @pwtap/create add ai-judge
 ```
 
 ## Matchers

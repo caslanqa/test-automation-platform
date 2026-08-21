@@ -175,8 +175,8 @@ The platform monorepo does **not** use aliases; import relatively.
 
 - Plugins are **optional, reversible, and independently published**.
 - Each plugin exports `manifest.ts` defining what it adds (scripts, devDeps, env keys, Playwright project, example test).
-- Add a plugin: `npx create-pwtap add @pwtap/plugin-maestro`
-- Remove a plugin: `npx create-pwtap remove @pwtap/plugin-maestro` (undoes all injections; marker-safe)
+- Add a plugin: `npx @pwtap/create add @pwtap/plugin-maestro`
+- Remove a plugin: `npx @pwtap/create remove @pwtap/plugin-maestro` (undoes all injections; marker-safe)
 - Plugins never import scaffolded core (core is copied, plugins are installed); they touch the outside world via `@playwright/test`, `@pwtap/platform`, and `process.env`.
 
 ### Node Version

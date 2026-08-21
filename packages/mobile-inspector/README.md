@@ -54,6 +54,39 @@ Driver-neutral by construction: the same test body runs under either driver — 
 
 Every element is offered as a ranked list rather than one guess, scored by how durable it is: accessibility id → resource id → exact text → index-qualified text → coordinates, with penalties for non-unique matches and for elements that belong to another app (a status bar, a system dialog). The confidence badge and the warnings are the point — a coordinate locator works today and breaks on the next layout change, and the UI says so instead of hiding it.
 
+## MCP server
+
+The same package serves an MCP server, so an agent can drive a device through the contracts your tests
+already use:
+
+```bash
+npx mobile-mcp .              # or: npm run mcp:mobile in a project with a mobile plugin
+```
+
+Nine tools — `mobile_drivers`, `mobile_devices`, `mobile_connect`, `mobile_disconnect`,
+`mobile_hierarchy`, `mobile_locators`, `mobile_screen`, `mobile_perform`, `mobile_codegen`. The one that
+justifies the server is `mobile_locators`: it returns the ranked, uniqueness-checked, fragility-annotated
+list described below, which no shell command produces. `adb shell uiautomator dump` gives raw XML with no
+scoring, and an agent working from that writes coordinate taps.
+
+Add it to any MCP client with the block `npx @pwtap/create mcp` prints, or install the pwtap Claude Code
+plugin, which derives it from the plugins you have.
+
+**Acting on the device is off by default.** `mobile_perform` stays listed and refuses, naming the switch
+(`PWTAP_MCP_ALLOW_ACTIONS`, or the plugin setting) — hiding the tool only teaches a model to reach for
+`adb shell input tap` through your shell instead. There is deliberately no shell, `adb`, `simctl`,
+uninstall or erase tool at all: an MCP tool is approved **by name**, once, so one of those allowed is a
+permanent unaudited escape from the permission gate that does see the real command string.
+
+Screen text, ids and labels are quoted to the model inside a per-call `<device-material-…>` tag, because a
+login form is attacker-controlled input. `mobile_screen` returns a **file path** by default — a screenshot
+of a logged-in app is a credential — and the hierarchy is depth- and count-bounded.
+
+At most one device session per process, and the server never takes the device lock itself: the adapters do,
+inside `connect()`/`close()`. An idle session closes on its own after `PWTAP_MCP_IDLE_MS` (default ten
+minutes), so a forgotten agent session cannot block your own test run. Design notes and the decision log:
+[`docs/mcp-plan.md`](https://github.com/caslanqa/test-automation-platform/blob/main/docs/mcp-plan.md).
+
 ## Trust boundary
 
 The service binds to loopback on a random port with a per-launch token, and treats the browser as untrusted even though it is local: every command is validated field by field, file writes and directory listings are confined to the project (by path segment, and following symlinks), the artifact path is validated before it reaches an installer, and runs are argv-only `spawn` with an explicit environment.

@@ -965,7 +965,7 @@ mistake that breaks fresh installs, and it is not recoverable by a follow-up pat
    git ls-files 'tests/**/*.mobile.ts' | while read -r f; do
      git mv "$f" "${f%.mobile.ts}.maestro.ts"
    done
-   npx create-pwtap add maestro   # re-injects the narrowed project block
+   npx @pwtap/create add maestro   # re-injects the narrowed project block
    ```
 
    Nothing inside those files changes: the `mobile` option and the `maestro` fixture they use are

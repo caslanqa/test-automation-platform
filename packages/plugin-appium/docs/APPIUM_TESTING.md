@@ -337,5 +337,5 @@ Screenshots and screen recording are configured via Playwright's own `use.screen
 
 The Appium CLI (`npm install -g appium`) plus the `uiautomator2`/`xcuitest` drivers (`appium driver
 install uiautomator2` / `xcuitest`), and an Android SDK (`ANDROID_HOME`) or Xcode for the platform you
-target. `npx create-pwtap add appium` runs an advisory check and points at anything missing. iOS is
+target. `npx @pwtap/create add appium` runs an advisory check and points at anything missing. iOS is
 simulator-only today; real iOS devices are not yet supported.

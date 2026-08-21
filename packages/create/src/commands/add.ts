@@ -12,7 +12,7 @@ export interface AddCommandOptions {
 /** `create-pwtap add <plugin…>` — install and wire one or more plugins into an existing project. */
 export async function addCommand(opts: AddCommandOptions): Promise<void> {
   if (opts.pluginIds.length === 0) {
-    throw new Error('add: name at least one plugin, e.g. `npx create-pwtap add maestro`');
+    throw new Error('add: name at least one plugin, e.g. `npx @pwtap/create add maestro`');
   }
   await addPlugins({ ...opts, testsDir: readTestsDir(opts.clientDir) });
   // The agent renderer runs from the user's home directory and cannot see a session's cwd, so this

@@ -22,7 +22,7 @@ measures the worker pool. See §6 below.
 ## 1. Install
 
 ```bash
-npx create-pwtap add perf
+npx @pwtap/create add perf
 ```
 
 Nothing else. `autocannon` ships with the plugin; there is no driver to pick and no binary to install.

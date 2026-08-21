@@ -20,7 +20,7 @@ Report the state of the pwtap agent roster.
 
    ```
    export PWTAP_PROJECT=/path/to/this/project   # then restart the session
-   npx create-pwtap add <plugin>                # also re-registers this project
+   npx @pwtap/create add <plugin>                # also re-registers this project
    ```
 
 3. If a capability they expected is missing, check it for real rather than trusting the README, which

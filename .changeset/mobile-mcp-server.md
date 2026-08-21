@@ -77,7 +77,7 @@ dispatcher, turning "not connected" into a JSON-RPC transport error. A tool resu
 read and act on; a transport error is one it can only report. Every tool now returns `isError: true`
 instead, and nothing can take the channel down.
 
-`npx create-pwtap mcp` prints a configuration block and **never writes one**. A `.mcp.json` we generated
+`npx @pwtap/create mcp` prints a configuration block and **never writes one**. A `.mcp.json` we generated
 would be a file we own forever in someone else's repository, needing a removal path, an idempotence test
 and a marker region to be safe. It points at the project's own installed inspector rather than `npx`,
 because a globally npx-ed copy running against this project's adapters is the version skew ADR-009 refuses.

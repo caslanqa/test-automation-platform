@@ -40,7 +40,7 @@ vocabulary. Only the Claude renderer is implemented; the `targets` field and tha
 
 **Fallback for anyone the plugin cannot reach** — Claude Code older than 2.1.229, an organisation
 blocking command plugin sources, or a machine offline at session start:
-`npx create-pwtap init-agents --loop=claude` writes the same components into `<project>/.claude/`,
+`npx @pwtap/create init-agents --loop=claude` writes the same components into `<project>/.claude/`,
 un-namespaced, without touching anything already there. It is a static snapshot; re-run it after
 `add` or `remove`.
 

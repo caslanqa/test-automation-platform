@@ -169,7 +169,7 @@ and on anything older the whole marketplace fails to load — blast radius limit
 one entry. Also blockable by the managed settings `disableCommandPluginSources`, and blocked by default
 under `allowManagedHooksOnly`.
 
-**Fallback:** `npx create-pwtap init-agents --loop=claude` writes the same components into
+**Fallback:** `npx @pwtap/create init-agents --loop=claude` writes the same components into
 `<project>/.claude/`, un-namespaced (`/vv`, `@vv-lead`), with no manifest. It writes **file by file and
 never replaces the directory** — that directory holds the user's own agents and `settings.local.json`.
 The trade it buys: a component whose capability disappeared stays behind as a stale file, which is why
@@ -237,8 +237,8 @@ Manual, once per release:
 
 ```bash
 claude --plugin-dir ~/.pwtap/claude-plugin/<slug>    # then /pwtap:vv-status
-npx create-pwtap add appium                          # new session → mobile-vv appears
-npx create-pwtap remove appium                       # new session → it is gone
+npx @pwtap/create add appium                          # new session → mobile-vv appears
+npx @pwtap/create remove appium                       # new session → it is gone
 ```
 
 ## Named follow-up: an eval gate, blocked on early access

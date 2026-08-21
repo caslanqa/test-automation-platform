@@ -42,7 +42,7 @@ test('an empty driver map is a clean answer, not a crash', async () => {
   assert.equal(result.isError, undefined);
   assert.deepEqual(structured(result).drivers, []);
   // The most common real first contact. It must say what to do, not print a stack.
-  assert.match(result.content[0].text, /npx create-pwtap add maestro/);
+  assert.match(result.content[0].text, /npx @pwtap\/create add maestro/);
 });
 
 test('an installed driver is listed with what it can do', async () => {
