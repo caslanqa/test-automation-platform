@@ -62,9 +62,23 @@ function announce(message: string): void {
  * Never throws. Escalation is an optional improvement on a deterministic answer; a missing optional
  * peer must not change an exit code.
  */
+/**
+ * Held in a variable rather than written inline, so TypeScript does not resolve it.
+ *
+ * A literal `import('@pwtap/plugin-ai-judge')` makes the judge plugin's `.d.ts` a **build-time**
+ * requirement of this package — which it is not: `JudgeKit` above is a structural copy precisely so the
+ * two are decoupled, and the real check is `typeof kit.judgeFetch === 'function'` below. That accidental
+ * coupling broke a release: `changeset publish` runs each package's `prepack` in parallel, every prepack
+ * cleans its own `dist` first, and this package's `tsc -b` hit the window where the judge plugin's
+ * declarations did not exist. `error TS2307`, and nine packages shipped without this one.
+ *
+ * Do not inline it back.
+ */
+const JUDGE_PACKAGE = '@pwtap/plugin-ai-judge';
+
 export async function loadJudgeKit(): Promise<JudgeKit | undefined> {
   try {
-    const kit = (await import('@pwtap/plugin-ai-judge')) as Partial<JudgeKit>;
+    const kit = (await import(JUDGE_PACKAGE)) as Partial<JudgeKit>;
     if (
       typeof kit.judgeFetch !== 'function' ||
       typeof kit.endpointForKind !== 'function' ||

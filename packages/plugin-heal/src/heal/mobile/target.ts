@@ -40,11 +40,19 @@ export const MIN_MOBILE_SCORE = 60;
 
 let kitPromise: Promise<MobileKit | undefined> | undefined;
 
+/**
+ * Held in a variable rather than written inline, so TypeScript does not resolve it — see the same note in
+ * `escalate/client.ts`. `MobileKit` in `./types.ts` is a structural copy so this package does not depend
+ * on `@pwtap/mobile-core` at build time; a literal specifier here quietly reintroduced that dependency
+ * and broke a release when `changeset publish` cleaned the two packages' `dist` directories in parallel.
+ */
+const MOBILE_CORE_PACKAGE = '@pwtap/mobile-core';
+
 /** Load `@pwtap/mobile-core`, once per process. Absent is a normal state, not an error. */
 export async function loadMobileKit(): Promise<MobileKit | undefined> {
   kitPromise ??= (async () => {
     try {
-      const core = (await import('@pwtap/mobile-core')) as Partial<MobileKit>;
+      const core = (await import(MOBILE_CORE_PACKAGE)) as Partial<MobileKit>;
       return typeof core.locatorCandidates === 'function' && typeof core.countMatches === 'function'
         ? (core as MobileKit)
         : undefined;
