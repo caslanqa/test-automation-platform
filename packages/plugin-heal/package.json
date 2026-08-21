@@ -46,8 +46,8 @@
   },
   "peerDependencies": {
     "@playwright/test": ">=1.61.0",
-    "@pwtap/plugin-ai-judge": ">=0.2.0",
-    "@pwtap/mobile-core": ">=1.4.0"
+    "@pwtap/plugin-ai-judge": ">=0.1.2",
+    "@pwtap/mobile-core": ">=1.3.0"
   },
   "scripts": {
     "build": "tsc -b",
