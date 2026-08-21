@@ -1,7 +1,7 @@
 {
   "name": "@pwtap/plugin-ai-judge",
-  "version": "0.1.2",
-  "description": "AI/LLM judge matchers for Playwright \u2014 toPassRubric/toScoreAtLeast/toMatchImage over Ollama, OpenAI-compatible endpoints (OpenAI/OpenRouter/NVIDIA/Groq/\u2026), and native Claude",
+  "version": "0.2.0",
+  "description": "AI/LLM judge matchers for Playwright — toPassRubric/toScoreAtLeast/toMatchImage over Ollama, OpenAI-compatible endpoints (OpenAI/OpenRouter/NVIDIA/Groq/…), and native Claude",
   "type": "module",
   "license": "MIT",
   "repository": {

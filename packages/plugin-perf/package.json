@@ -1,6 +1,6 @@
 {
   "name": "@pwtap/plugin-perf",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Performance testing for Playwright — Core Web Vitals, resource budgets and single-endpoint latency benchmarks, asserted inside the suite you already have",
   "type": "module",
   "license": "MIT",

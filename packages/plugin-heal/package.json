@@ -1,7 +1,7 @@
 {
   "name": "@pwtap/plugin-heal",
-  "version": "0.1.0",
-  "description": "Failure triage, flake detection and locator-drift healing for Playwright \u2014 advisory by default: it classifies before it changes anything, and it never rewrites an assertion",
+  "version": "1.0.0",
+  "description": "Failure triage, flake detection and locator-drift healing for Playwright — advisory by default: it classifies before it changes anything, and it never rewrites an assertion",
   "type": "module",
   "license": "MIT",
   "repository": {
@@ -46,8 +46,8 @@
   },
   "peerDependencies": {
     "@playwright/test": ">=1.61.0",
-    "@pwtap/plugin-ai-judge": ">=0.1.2",
-    "@pwtap/mobile-core": ">=1.3.0"
+    "@pwtap/plugin-ai-judge": ">=0.2.0",
+    "@pwtap/mobile-core": ">=1.4.0"
   },
   "scripts": {
     "build": "tsc -b",

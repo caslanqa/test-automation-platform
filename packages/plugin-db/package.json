@@ -1,6 +1,6 @@
 {
   "name": "@pwtap/plugin-db",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "Database testing for Playwright — a raw Knex instance (Postgres/MySQL/MariaDB/SQLite) and a raw MongoDB Db, with seed/reset and migration verification",
   "type": "module",
   "license": "MIT",
