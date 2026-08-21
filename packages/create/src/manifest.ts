@@ -32,6 +32,29 @@ export interface ManifestFixture {
   shared?: boolean;
 }
 
+/**
+ * One MCP server a plugin brings, declared rather than injected.
+ *
+ * Shaped like {@link ManifestFixture} on purpose, `shared` included: both mobile plugins bring the same
+ * server, and removing one while the other is installed must leave it declared.
+ *
+ * **Nothing is written to the client's repository for this.** The configuration is *derived* at render
+ * time from the manifests that resolve, so add/remove symmetry comes free: `create-pwtap remove maestro`
+ * deletes the manifest, the next render skips the server, and there is no marker region, no removal path
+ * and no idempotence test to get wrong. That is the whole reason the agent plugin uses a rendered
+ * directory rather than an injected file.
+ */
+export interface ManifestMcpServer {
+  /** The name the client sees, e.g. `mobile`. */
+  name: string;
+  /** The package holding the entry — resolved from the CLIENT's node_modules, never ours. */
+  package: string;
+  /** Package-relative path to the executable entry, e.g. `bin/mcp.mjs`. */
+  entry: string;
+  /** True when another plugin may bring the same server; the renderer dedupes by `name`. */
+  shared?: boolean;
+}
+
 export interface PluginManifest {
   id: string;
   name: string;
@@ -50,6 +73,15 @@ export interface PluginManifest {
     project: string;
     globalTeardown?: string;
   };
+  /**
+   * One entry spliced into `playwright.config.ts`'s `reporter` array. Shaped like
+   * {@link PluginManifest.playwrightProject} so add/remove symmetry is inherited: `uniq` is the
+   * removal match key (the analogue of `gateVar`) and `line` is the literal, indented as it should
+   * appear in the array.
+   */
+  reporter?: { uniq: string; line: string };
+  /** MCP servers this plugin makes available. Derived into the rendered agent plugin, never injected. */
+  mcp?: ManifestMcpServer[];
   examples?: Array<{ src: string; dest: string }>;
   docs?: Array<{ src: string; dest: string }>;
   readmeSection?: string;

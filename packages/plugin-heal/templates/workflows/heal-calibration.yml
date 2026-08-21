@@ -1,0 +1,155 @@
+# Nightly grade of the failure classifier against your own labelled cases.
+#
+# The classifier decides whether a red test is a flake, a moved locator, or a real regression — and one of
+# those three answers can lead to a code change. So it is graded the same way the AI judge is: against
+# labelled examples a human wrote, with a threshold, nightly.
+#
+# It runs **offline**. No model, no browser, no network, no run of your suite — the cases carry the evidence
+# `heal triage` consumes. That is deliberate: a gate that needs the world to be reachable is a gate that
+# gets disabled.
+#
+# Setup, once:
+#   - commit heal/triage-cases.json  (the plugin ships a starter set; grow it with `npm run heal:harvest`)
+#
+# The gate to keep at 0 is MAX_FALSE_HEAL: classifying a regression as a repairable locator drift is how a
+# green suite becomes a lie. MAX_MISSING_VETO is its quieter twin — the class is advice, the veto is what
+# actually blocks a repair, so a refactor that drops one must fail here rather than in your repository.
+name: Heal calibration
+
+on:
+  schedule:
+    # 04:23 UTC — off the hour, and well clear of the judge's 03:17 so two nightlies do not queue together.
+    - cron: '23 4 * * *'
+  workflow_dispatch:
+    inputs:
+      cases:
+        description: 'Labelled dataset to grade (blank = heal/triage-cases.json)'
+        required: false
+
+concurrency:
+  group: heal-calibration
+  cancel-in-progress: false
+
+jobs:
+  calibrate:
+    runs-on: ubuntu-latest
+    env:
+      CASES: ${{ inputs.cases }}
+      # Only reached if the optional escalation tier is configured. A drift check must re-decide: with the
+      # cache on it would replay yesterday's answers and report that nothing changed, which is the one
+      # answer it must never produce by construction.
+      HEAL_CACHE: 'off'
+      # The gates. Accuracy is 85 rather than the judge's 90 because triage has five classes with a real
+      # `unknown` base rate, and 90 on a small multi-class set gates on noise. Kappa is what protects.
+      MIN_ACCURACY: '85'
+      MIN_KAPPA: '0.7'
+      MAX_FALSE_HEAL: '0'
+      MAX_MISSING_VETO: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+
+      # Skip loudly instead of failing red: a repository that has not built a case set yet, or a fork,
+      # should see a notice explaining what to do — not a broken nightly badge.
+      - name: Is there a dataset?
+        id: config
+        run: |
+          FILE="${CASES:-heal/triage-cases.json}"
+          if [ ! -f "$FILE" ]; then
+            echo "::notice::$FILE does not exist — draft one from your real failures with 'npx heal calibrate --harvest'."
+            echo 'ready=false' >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # `tee` keeps the full report for the artifact while the exit code still decides the job —
+      # `set -o pipefail` is what makes that true, because without it the pipe returns tee's success and a
+      # breached gate passes silently.
+      - name: Calibrate
+        if: steps.config.outputs.ready == 'true'
+        run: |
+          set -o pipefail
+          npx heal calibrate ${CASES:+--cases "$CASES"} \
+            --json heal-calibration.json \
+            --min-accuracy "$MIN_ACCURACY" \
+            --min-kappa "$MIN_KAPPA" \
+            --max-false-heal "$MAX_FALSE_HEAL" \
+            --max-missing-veto "$MAX_MISSING_VETO" \
+            | tee heal-calibration.txt
+
+      # `always()`: the run whose numbers someone actually needs is the one that failed.
+      - name: Put the numbers on the run page
+        if: always() && steps.config.outputs.ready == 'true'
+        run: |
+          {
+            echo "## Heal calibration"
+            echo '```'
+            grep -E 'accuracy|kappa|false heals|lost vetoes|gate failed' heal-calibration.txt || cat heal-calibration.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Both files: the text is what a human reads, the JSON is what next month's comparison reads — per
+      # case, so "which case started failing" is answerable without re-running anything.
+      - name: Upload the full report
+        if: always() && steps.config.outputs.ready == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: heal-calibration
+          path: |
+            heal-calibration.txt
+            heal-calibration.json
+          if-no-files-found: warn
+
+  # Did the healing work, and did it hide anything? Separate job because it grades a different thing: the
+  # calibration above grades the classifier's opinions, this grades the edits that were actually made.
+  metrics:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+
+      - name: Has anything been healed?
+        id: log
+        run: |
+          if [ ! -f heal/heal-log.jsonl ]; then
+            echo "::notice::No heals recorded yet — heal/heal-log.jsonl appears the first time 'heal propose --apply' changes a locator."
+            echo 'ready=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'ready=true' >> "$GITHUB_OUTPUT"
+          fi
+
+      # Exits 1 on a suspected mask. That threshold is zero on purpose: one masked bug costs more than
+      # every heal ever saved, so a suspicion is worth a human reading it.
+      - name: Measure
+        if: steps.log.outputs.ready == 'true'
+        run: |
+          set -o pipefail
+          npx heal metrics --json heal-metrics.json | tee heal-metrics.txt
+
+      - name: Put the numbers on the run page
+        if: always() && steps.log.outputs.ready == 'true'
+        run: |
+          {
+            echo "## Heal metrics"
+            echo '```'
+            cat heal-metrics.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the full report
+        if: always() && steps.log.outputs.ready == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: heal-metrics
+          path: |
+            heal-metrics.txt
+            heal-metrics.json
+          if-no-files-found: warn

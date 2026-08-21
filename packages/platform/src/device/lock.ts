@@ -19,12 +19,31 @@ function lockDir(key: string): string {
   return path.join(os.tmpdir(), `pw-ai-devlock-${key.replace(/[^A-Za-z0-9_.-]/g, '_')}`);
 }
 
+export interface DeviceLockOptions {
+  /**
+   * How long to wait before giving up, in milliseconds. Defaults to `MAX_WAIT_MS`.
+   *
+   * Thirty minutes is right for a Playwright worker: many tests queue on one device over a run, and a
+   * worker that gave up would fail a test for a scheduling fact. It is wrong for anything a human is
+   * waiting on — an interactive tool blocked for half an hour with no output reads as a hang, and there
+   * is no way to tell it apart from one.
+   *
+   * The guard lives here rather than in the caller deliberately: racing an unbounded acquire and
+   * abandoning it leaks the lock when the abandoned attempt later succeeds.
+   */
+  timeoutMs?: number;
+}
+
 /**
  * Acquire the device lock for `key`, waiting until it's free (stealing one left by a crashed worker
  * after `STALE_MS`). Returns a release function to call when the device is no longer needed.
  */
-export async function acquireDeviceLock(key: string): Promise<() => void> {
+export async function acquireDeviceLock(
+  key: string,
+  options: DeviceLockOptions = {},
+): Promise<() => void> {
   const dir = lockDir(key);
+  const maxWait = options.timeoutMs ?? MAX_WAIT_MS;
   let waited = 0;
   for (;;) {
     try {
@@ -39,8 +58,10 @@ export async function acquireDeviceLock(key: string): Promise<() => void> {
       } catch {
         continue; // lock vanished between mkdir and stat → retry immediately
       }
-      if (waited >= MAX_WAIT_MS) {
-        throw new Error(`[pwtap] timed out waiting for device lock '${key}'`);
+      if (waited >= maxWait) {
+        throw new Error(
+          `[pwtap] timed out waiting for device lock '${key}' after ${Math.round(maxWait / 1000)}s — another pwtap process (a test run, the inspector, or an MCP session) is using that device`,
+        );
       }
       await sleep(POLL_MS);
       waited += POLL_MS;

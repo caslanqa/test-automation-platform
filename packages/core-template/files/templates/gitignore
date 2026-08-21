@@ -11,6 +11,13 @@ playwright/.cache/
 # Cached auth sessions (per-session storage state)
 .auth/
 
+# AI judge: cross-worker model gate + cached verdicts
+.judge/
+
+# Run history for @pwtap/plugin-heal. Ephemeral and per-machine; `heal/` next to it is
+# committed policy (quarantine list, labelled cases) and must NOT be ignored.
+.heal/
+
 # Secrets — only the *.example.json files are tracked
 env/environments.json
 testData/users.json

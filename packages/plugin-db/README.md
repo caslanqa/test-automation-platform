@@ -17,7 +17,7 @@ a document model would leak in exactly the places you need precision.
 ## 1. Install
 
 ```bash
-npx create-pwtap add db
+npx @pwtap/create add db
 ```
 
 Then the driver for the one engine you run — they are optional peers, so you install none you don't need:

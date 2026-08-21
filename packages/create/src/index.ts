@@ -3,16 +3,33 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { addCommand } from './commands/add.js';
+import { claudePluginPathCommand } from './commands/claudePluginPath.js';
 import { createProject } from './commands/create.js';
+import { initAgentsCommand } from './commands/initAgents.js';
+import { mcpCommand } from './commands/mcp.js';
 import { removeCommand } from './commands/remove.js';
 import { KNOWN_PLUGINS } from './registry.js';
+import { readJson } from './util/fs.js';
 import { log } from './util/log.js';
 
 // Package root (this file compiles to dist/index.js). template/ and core-manifest.json are bundled
-// alongside dist/ at prepack, so both live at the package root.
+// alongside dist/ at prepack, so both live at the package root. agents/ is committed, not generated.
 const pkgRoot = fileURLToPath(new URL('..', import.meta.url));
 const templateDir = path.join(pkgRoot, 'template');
 const coreManifestPath = path.join(pkgRoot, 'core-manifest.json');
+const agentsDir = path.join(pkgRoot, 'agents');
+
+/** Verbs, as opposed to the default `create <dir>`. A verb missing here becomes a directory name. */
+const VERBS = ['add', 'remove', 'claude-plugin-path', 'init-agents', 'mcp'] as const;
+
+/** Our own version, so a rendered plugin says which renderer produced it. */
+function ownVersion(): string {
+  try {
+    return readJson<{ version?: string }>(path.join(pkgRoot, 'package.json')).version ?? '';
+  } catch {
+    return '';
+  }
+}
 
 /** True if `--flag` is on argv, or npm surfaced it via `npm_config_<flag>` (so `npm init` flags work). */
 function flagPresent(argv: string[], flag: string): boolean {
@@ -42,7 +59,8 @@ function flagValue(argv: string[], flag: string): string | undefined {
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const positional = argv.filter(a => !a.startsWith('-'));
-  const command = positional[0] === 'add' || positional[0] === 'remove' ? positional[0] : 'create';
+  const verb = VERBS.find(v => v === positional[0]);
+  const command = verb ?? 'create';
 
   const yes = flagPresent(argv, '--yes') || argv.includes('-y');
   const install = !flagPresent(argv, '--no-install');
@@ -58,6 +76,27 @@ async function main(): Promise<void> {
   }
   if (command === 'remove') {
     await removeCommand({ clientDir: process.cwd(), pluginIds: positional.slice(1) });
+    return;
+  }
+  if (command === 'init-agents') {
+    await initAgentsCommand({
+      agentsDir,
+      version: ownVersion(),
+      projectDir: flagValue(argv, '--project') ?? process.cwd(),
+      loop: flagValue(argv, '--loop') ?? 'all',
+    });
+    return;
+  }
+  if (command === 'mcp') {
+    await mcpCommand({ clientDir: flagValue(argv, '--project') ?? process.cwd() });
+    return;
+  }
+  if (command === 'claude-plugin-path') {
+    await claudePluginPathCommand({
+      agentsDir,
+      version: ownVersion(),
+      project: flagValue(argv, '--project'),
+    });
     return;
   }
 

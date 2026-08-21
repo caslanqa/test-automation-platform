@@ -42,3 +42,44 @@ export function removeProject(clientDir: string, m: PluginManifest): void {
   src = removeFromRegion(src, 'plugins:projects', pp.gateVar);
   writeText(file, src);
 }
+
+/**
+ * Splice a plugin's reporter into playwright.config.ts's `reporter` array. Returns false if the
+ * managed marker is missing (caller then prints a paste block), which is the case for every project
+ * scaffolded before the `plugins:reporters` region existed — those users get instructions rather
+ * than a half-edit.
+ */
+export function applyReporter(clientDir: string, m: PluginManifest): boolean {
+  const reporter = m.reporter;
+  if (!reporter) {
+    return true;
+  }
+  const file = configPath(clientDir);
+  const src = readText(file);
+  if (!hasRegion(src, 'plugins:reporters')) {
+    return false;
+  }
+  writeText(file, addToRegion(src, 'plugins:reporters', reporter.line, reporter.uniq));
+  return true;
+}
+
+/**
+ * Reverse applyReporter (matches on `uniq`).
+ *
+ * Sharp edge worth knowing: if a user hand-pinned the reporter OUTSIDE the marker region, this
+ * cannot remove it, and Playwright then fails the whole run on an unresolvable reporter module once
+ * the package is uninstalled. That is Playwright's behaviour rather than ours, and `removePlugins`
+ * says so in its warning.
+ */
+export function removeReporter(clientDir: string, m: PluginManifest): void {
+  const reporter = m.reporter;
+  if (!reporter) {
+    return;
+  }
+  const file = configPath(clientDir);
+  const src = readText(file);
+  if (!hasRegion(src, 'plugins:reporters')) {
+    return;
+  }
+  writeText(file, removeFromRegion(src, 'plugins:reporters', reporter.uniq));
+}

@@ -1,9 +1,13 @@
 name: Device
 
-# The device-gated matrix from architecture.md §12: Android × {Maestro, Appium} and iOS × {Maestro, Appium}
-# record → generate → save. Deliberately not on push — it boots emulators and takes minutes, so it runs
-# nightly and on demand. Every job is opt-in via PWTAP_DEVICE=1 (the tests skip without it), so a missing
-# CLI or an unavailable device shows as a skip rather than a red build for the wrong reason.
+# The device-gated matrix from architecture.md §12: Android × {Maestro, Appium} on Linux and iOS × {Maestro,
+# Appium} on macOS, each doing record → generate → save. Deliberately not on push — it boots a device and takes
+# minutes, so it runs nightly and on demand. Every job is opt-in via PWTAP_DEVICE=1 (the tests skip without it),
+# so a missing CLI shows as a skip rather than a red build for the wrong reason.
+#
+# Each half runs on the only host that can host it. Android needs a hypervisor: GitHub's macOS runners are Apple
+# silicon and do not expose one to the VM, so the emulator died at launch with `HVF error: HV_UNSUPPORTED` for 21
+# consecutive nightlies, while a Linux runner has KVM. iOS needs macOS, because simulators do not exist elsewhere.
 on:
   schedule:
     - cron: '0 3 * * *'
@@ -14,12 +18,10 @@ permissions:
 
 jobs:
   android:
-    # macOS, not Linux. The first nightly run failed with `no Platform implementation for 'linux'`:
-    # `@pwtap/platform` branches on the host and only implements macOS, so the Linux runner could never have
-    # worked. Running Android here too keeps CI on the one host the product actually supports — iOS requires
-    # macOS anyway — at the cost of macOS runner minutes. The alternative is writing a `linux.ts`, which would
-    # widen the supported-host claim and is a product decision, not a CI fix.
-    runs-on: macos-latest
+    # Linux, for the hypervisor. `@pwtap/platform` has a LinuxPlatform (Android only — it answers iOS calls with a
+    # failure rather than a throw, which is what the device pickers already handle), so the emulator runs where KVM
+    # is: x86_64 image, because that is the architecture KVM accelerates on these runners.
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -37,21 +39,38 @@ jobs:
       - run: npm ci
       - run: npm run build
 
+      # /dev/kvm is root-only on the runner image, and the emulator runs as the runner user: without this the
+      # emulator falls back to software emulation, boots for ten minutes and then times out.
+      - name: Let the runner user reach /dev/kvm
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+
       - name: Install Maestro CLI
         if: matrix.driver == 'maestro'
         run: |
           curl -fsSL https://get.maestro.mobile.dev | bash
           echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
 
-      # Boots an AVD and runs the command inside it. The device test targets the Settings app, so nothing
-      # has to be built or installed first.
+      # The adapter spawns the Appium CLI off PATH and needs the platform's driver; neither ships with the runner,
+      # and without this the leg fails at "Appium CLI not found" before touching a device.
+      - name: Install Appium and the UiAutomator2 driver
+        if: matrix.driver == 'appium'
+        run: |
+          npm install -g appium
+          appium driver install uiautomator2
+          appium driver list --installed
+
+      # Boots an AVD and runs the command inside it. The device test targets the Settings app, so nothing has to
+      # be built or installed first.
       - name: Record against an Android emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 34
-          # The macOS runners are Apple silicon, so the emulator image has to match the host architecture;
-          # an x86_64 image has no hardware acceleration here and boots far too slowly to be useful.
-          arch: arm64-v8a
+          arch: x86_64
           target: google_apis
           profile: pixel_6
           avd-name: Pixel_6_API_34
@@ -74,6 +93,13 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
+      # Maestro runs on the JVM. The runner image ships a JDK, but pinning it here is what keeps a future image
+      # change from failing as "maestro: command not found" three steps later.
+      - uses: actions/setup-java@v4
+        if: matrix.driver == 'maestro'
+        with:
+          distribution: temurin
+          java-version: '17'
       - run: npm ci
       - run: npm run build
 
@@ -83,14 +109,42 @@ jobs:
           curl -fsSL https://get.maestro.mobile.dev | bash
           echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
 
-      # The device test asserts against a device someone else booted — it never boots or shuts one down, so
-      # that a device you were using is left as you left it. Without this step it simply SKIPPED, which reads
-      # as a green run and made the whole iOS gate vacuous.
+      # Same reason as the Android leg, with the iOS driver: XCUITest also builds WebDriverAgent on its first
+      # session, which is minutes of Xcode work that only happens here, never on a developer's second run.
+      - name: Install Appium and the XCUITest driver
+        if: matrix.driver == 'appium'
+        run: |
+          npm install -g appium
+          appium driver install xcuitest
+          appium driver list --installed
+
+      # The device test asserts against a device someone else booted — it never boots or shuts one down, so that a
+      # device you were using is left as you left it. Without this step it simply SKIPPED, which reads as a green
+      # run and made the whole iOS gate vacuous.
+      #
+      # The device is CHOSEN, never named: `xcrun simctl boot 'iPhone 16 Pro'` failed every night with
+      # `Invalid device or device pair` once the image moved to Xcode 26, whose simulators are iPhone 17/17e/16e.
+      # A hardcoded model is a dated model.
       - name: Boot a simulator
         run: |
           xcrun simctl list devices available
-          xcrun simctl boot 'iPhone 16 Pro'
-          xcrun simctl bootstatus 'iPhone 16 Pro' -b
+          UDID=$(xcrun simctl list devices available --json | node -e "
+            const runtimes = JSON.parse(require('fs').readFileSync(0, 'utf8')).devices;
+            const phones = Object.keys(runtimes)
+              .sort()
+              .flatMap(runtime => runtimes[runtime].filter(device => device.name.startsWith('iPhone')));
+            if (phones.length === 0) {
+              console.error('[device] no iPhone simulator is available on this runner');
+              process.exit(1);
+            }
+            const pick = phones[phones.length - 1];
+            console.error('[device] booting ' + pick.name + ' (' + pick.udid + ')');
+            console.log(pick.udid);
+          ")
+          # An already-booted device is success, not failure — `bootstatus` is the gate, so tolerating `boot`
+          # here masks nothing: it still fails if the device never reaches Booted.
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
           xcrun simctl list devices booted
 
       - name: Record against an iOS simulator

@@ -22,7 +22,14 @@ export {
   type StableDeviceName,
 } from './deviceDiscovery.js';
 export { deviceUnavailableMessage } from './deviceMessage.js';
-export { expect, test, type MobileInspectorOptions, type MobileTargetOptions } from './fixture.js';
+export {
+  HIERARCHY_ATTACHMENT,
+  captureHierarchyOnFailure,
+  expect,
+  test,
+  type MobileInspectorOptions,
+  type MobileTargetOptions,
+} from './fixture.js';
 export { orientCoordinateSpace, readImageSize } from './imageSize.js';
 export {
   centerOf,

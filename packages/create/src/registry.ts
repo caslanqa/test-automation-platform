@@ -61,6 +61,16 @@ export const KNOWN_PLUGINS: KnownPlugin[] = [
     status: 'stable',
   },
   {
+    id: 'heal',
+    package: '@pwtap/plugin-heal',
+    category: 'quality',
+    description:
+      'Failure triage, flake detection and quarantine — classifies a red run before anything changes, and never rewrites an assertion',
+    flag: '--heal',
+    defaultSelected: false,
+    status: 'stable',
+  },
+  {
     id: 'ai-judge',
     package: '@pwtap/plugin-ai-judge',
     category: 'ai',

@@ -1,6 +1,6 @@
 # @pwtap/platform
 
-macOS-first **platform seam** for [Playwright Test Automation Platform](https://www.npmjs.com/package/@pwtap/create) plugins — one place for OS paths, shell, device discovery/boot, and a cross-process device lock.
+**Platform seam** for [Playwright Test Automation Platform](https://www.npmjs.com/package/@pwtap/create) plugins — one place for OS paths, shell, device discovery/boot, and a cross-process device lock. macOS drives Android and iOS; Linux drives Android.
 
 [![npm](https://img.shields.io/npm/v/@pwtap/platform)](https://www.npmjs.com/package/@pwtap/platform)
 
@@ -13,8 +13,8 @@ Every OS-specific command (Android SDK paths, `adb`, `simctl`, emulator boot, de
 ```ts
 import { getPlatform } from '@pwtap/platform';
 
-const platform = getPlatform(); // MacPlatform today; throws on unsupported OS with guidance
-platform.os; // 'macos'
+const platform = getPlatform(); // MacPlatform or LinuxPlatform; throws elsewhere, naming the file to add
+platform.os; // 'macos' | 'linux'
 ```
 
 ## Surface
@@ -23,7 +23,7 @@ platform.os; // 'macos'
 - Device discovery + boot for Android AVDs and iOS simulators.
 - `deviceLock` — an OS-agnostic cross-process lock so two runs never boot or claim the same device.
 
-macOS is implemented today; other OSes throw a clear "add this file" error rather than silently misbehaving.
+macOS and Linux are implemented; other OSes throw a clear "add this file" error rather than silently misbehaving. A Linux host answers iOS calls with a failed `RunResult` instead of throwing, so device discovery and the device/app pickers report "no simulators" and stay usable — that is what runs the Android emulator on a CI runner with KVM, where a macOS runner has no hypervisor to give it.
 
 ## License
 

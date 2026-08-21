@@ -6,7 +6,7 @@
  * (so it respects a renamed tests dir) and matches `*.appium.ts`.
  *
  * @example
- * // after `npx create-pwtap add appium`, gated behind APPIUM=1:
+ * // after `npx @pwtap/create add appium`, gated behind APPIUM=1:
  * //   npm run test:appium   →  runs tests and auto-generates appium HTML report
  */
 export const manifest = {
@@ -22,8 +22,12 @@ export const manifest = {
     'mobile:create-device': 'node scripts/mobile/create-device.mjs',
     'mobile:stop-devices': 'node scripts/mobile/stop-devices.mjs',
     'mobile:inspect': 'mobile-inspect .',
+    'mcp:mobile': 'mobile-mcp .',
     'report:appium': 'node scripts/mobile/appium-report.mjs',
   },
+  // Both mobile plugins bring the same server, so `shared` keeps it declared when one is removed and
+  // the other stays — the same rule `fixture.shared` follows for the `mobileApp` fixture.
+  mcp: [{ name: 'mobile', package: '@pwtap/mobile-inspector', entry: 'bin/mcp.mjs', shared: true }],
   envKeys: {
     APPIUM_PLATFORM: 'android',
     APPIUM_DEVICE: '',

@@ -26,10 +26,11 @@
  * `@pwtap/plugin-appium`) fixtures are untouched and keep working — this is a separate, driver-neutral
  * facade for inspector-generated tests, under names that collide with neither (ADR-003).
  */
-import { test as base, expect } from '@playwright/test';
+import { test as base, expect, type TestInfo } from '@playwright/test';
 
 import type { MobilePlatform } from '@pwtap/platform';
 
+import { assignNodeIdentity } from './nodeIdentity.js';
 import { discoverDriverMap } from './registry.js';
 import { skipWithReason } from './skip.js';
 import type {
@@ -253,6 +254,51 @@ function toMobileApp(
  * The unified, driver-neutral mobile test object. Extends the plain Playwright base (no browser
  * needed). Composed alongside — not instead of — the existing `maestro`/`app` fixtures.
  */
+/** The attachment name a failing mobile test leaves behind. */
+export const HIERARCHY_ATTACHMENT = 'mobile-hierarchy';
+
+/**
+ * On failure, and only on failure, record the element tree before the session goes away.
+ *
+ * Playwright writes an `error-context` attachment carrying an ARIA snapshot for a failing web test,
+ * which is what lets tooling reason about *where the element went* after the run is over. Mobile has no
+ * such thing, and the session — the only thing that could answer — is closed on the next line. So this
+ * captures the equivalent: one `inspectHierarchy()` call against a session that was about to be torn
+ * down anyway.
+ *
+ * **The cost on a green run is one comparison.** This is not an auto-fixture: `mobileApp` is only
+ * instantiated by a test that asked for it, and by the time this runs the driver is already connected.
+ * The objection that rules out a capture fixture elsewhere — that depending on a device would boot one
+ * for every test in the project — does not apply here.
+ *
+ * Identity keys are assigned before writing, so a later reader can re-resolve a node by key rather than
+ * by position (see `nodeIdentity.ts`: position alone breaks when a list scrolls, identifiers alone are
+ * not unique).
+ *
+ * Never throws and never changes a verdict. A driver that cannot produce a tree, a device that has
+ * already gone, an attachment that fails to write: all of them leave the test's own result untouched,
+ * because a diagnostic that can fail a passing run is worse than no diagnostic.
+ */
+export async function captureHierarchyOnFailure(
+  session: DriverSession,
+  supportsHierarchy: boolean,
+  testInfo: { status?: string; expectedStatus?: string; attach: TestInfo['attach'] },
+): Promise<void> {
+  if (!supportsHierarchy || testInfo.status === testInfo.expectedStatus) {
+    return;
+  }
+  try {
+    const nodes = assignNodeIdentity(await session.inspectHierarchy());
+    await testInfo.attach(HIERARCHY_ATTACHMENT, {
+      contentType: 'application/json',
+      body: Buffer.from(JSON.stringify({ version: 1, driver: session.driverId, nodes })),
+    });
+  } catch {
+    // Deliberately silent. The test already failed for its own reason, and a second error here would
+    // replace the reason a human needs with one they do not.
+  }
+}
+
 export const test = base.extend<MobileInspectorOptions & MobileInspectorFixtures>({
   mobileTarget: [undefined, { option: true }],
 
@@ -288,13 +334,13 @@ export const test = base.extend<MobileInspectorOptions & MobileInspectorFixtures
         }
         throw error;
       }
+      const capabilities = session.capabilities ?? driver.capabilities;
       try {
         // The session's own answer when it has one: a driver's static declaration is made before the
         // platform is known, so it can only overstate what varies by platform (see DriverSession.capabilities).
-        await use(
-          toMobileApp(session, driver.id, (session.capabilities ?? driver.capabilities).gestures),
-        );
+        await use(toMobileApp(session, driver.id, capabilities.gestures));
       } finally {
+        await captureHierarchyOnFailure(session, capabilities.hierarchy, testInfo);
         await session.close();
       }
     },

@@ -9,7 +9,7 @@ Mobile testing for the [Playwright Test Automation Platform](https://www.npmjs.c
 Into a `@pwtap` project (wires the fixture, an env-gated `appium` project, env keys, and examples):
 
 ```bash
-npx create-pwtap add appium
+npx @pwtap/create add appium
 ```
 
 ## The `app` fixture
@@ -119,6 +119,19 @@ npm run report:appium        # regenerates only the Appium HTML report from exis
 diagnostics attachments, and server-command/error counts.
 
 A bare `npm test` stays UI + API — the `appium` project is gated behind `APPIUM=1`.
+
+## Record it, or let an agent drive it
+
+```bash
+npm run mobile:inspect        # the recorder — tap around, get a runnable test
+npm run mcp:mobile            # the MCP server — nine tools, for an agent
+```
+
+Both come from [`@pwtap/mobile-inspector`](https://www.npmjs.com/package/@pwtap/mobile-inspector), which
+this plugin installs as a devDependency. The MCP server's `mobile_locators` returns the same ranked,
+uniqueness-checked candidate list the recorder shows — which is the point of pointing an agent at it
+rather than at `adb`. Acting on the device is off by default. `npx @pwtap/create mcp` prints a
+configuration block for any MCP client.
 
 ## The Appium server
 

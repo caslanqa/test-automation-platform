@@ -43,7 +43,11 @@ assertMarkers(path.join(dir, 'fixtures/index.ts'), [
   'plugins:tests',
   'plugins:expects',
 ]);
-assertMarkers(path.join(dir, 'playwright.config.ts'), ['plugins:gates', 'plugins:projects']);
+assertMarkers(path.join(dir, 'playwright.config.ts'), [
+  'plugins:gates',
+  'plugins:projects',
+  'plugins:reporters',
+]);
 for (const f of [
   '.gitignore',
   'package.json',

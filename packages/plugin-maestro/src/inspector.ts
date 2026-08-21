@@ -535,7 +535,9 @@ class MaestroInspectorDriver implements MobileInspectorDriver {
 
   async connect(options: ConnectOptions): Promise<DriverSession> {
     const progress = options.onProgress ?? ((): void => undefined);
-    const release = await acquireDeviceLock(deviceLockKey(options.platform, options.device));
+    const release = await acquireDeviceLock(deviceLockKey(options.platform, options.device), {
+      timeoutMs: options.timeoutMs,
+    });
     // Declared out here so a connect that fails AFTER creating it still removes it. Only a session's `close`
     // did, and a connect that never returned a session therefore left an empty directory behind every time —
     // a refused app id, a device that went away, a driver that would not start.

@@ -10,7 +10,7 @@ allure-report/
 # Auth state (generated)
 .auth/*.json
 
-# AI judge model gate (locks/state)
+# AI judge model gate (locks/state) + cached verdicts
 .judge/
 
 # Maestro local artifacts (mobile testing)

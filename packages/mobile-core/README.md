@@ -11,7 +11,7 @@ This is the only mobile package a **test** loads at runtime. Its single dependen
 Installed for you with either driver plugin:
 
 ```bash
-npx create-pwtap add maestro   # or: add appium
+npx @pwtap/create add maestro   # or: add appium
 ```
 
 ## Write a test
@@ -59,6 +59,15 @@ One driver-neutral shape, translated by each adapter:
 ```
 
 `locatorCandidates()` ranks every option for an element with a confidence and warnings (non-unique match, element belongs to another app), which is what the inspector's right-click menu shows.
+
+## When a mobile test fails
+
+The `mobileApp` fixture captures the element tree into a `mobile-hierarchy` attachment — on failure, and
+only on failure. A green run pays one comparison; a red one leaves the screen it failed on in the report,
+where Playwright would have written an ARIA snapshot for a web test.
+
+That attachment is also what lets [`@pwtap/plugin-heal`](https://www.npmjs.com/package/@pwtap/plugin-heal)
+rank locator replacements after the run, with no device and no second connection.
 
 ## Driver adapters
 

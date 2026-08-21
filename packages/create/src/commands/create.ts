@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { recordProject } from '../agents/project.js';
 import { loadCoreManifest } from '../manifest.js';
 import { addPlugins } from '../plugin-apply.js';
 import { Prompter } from '../prompts.js';
@@ -123,6 +124,10 @@ export async function createProject(opts: CreateOptions): Promise<void> {
       log.warn(`install-deps skipped: ${err instanceof Error ? err.message : String(err)}`),
     );
   }
+
+  // Remember the project so `create-pwtap claude-plugin-path` can find it later: it runs from the
+  // user's home directory and never sees a session's working directory.
+  recordProject(targetDir);
 
   printNextSteps(targetDir, name, testsDir);
 }
@@ -281,7 +286,11 @@ function printNextSteps(targetDir: string, name: string, testsDir: string): void
       '',
       // Derived, not typed out: the hardcoded list silently omitted `db` the day it shipped, and would omit
       // the next plugin too.
-      `Add a plugin later:  npx create-pwtap add <${KNOWN_PLUGINS.map(plugin => plugin.id).join('|')}>`,
+      `Add a plugin later:  npx @pwtap/create add <${KNOWN_PLUGINS.map(plugin => plugin.id).join('|')}>`,
+      '',
+      'Claude Code: install the V&V agents once, and they follow the plugins you add:',
+      '  /plugin marketplace add caslanqa/test-automation-platform',
+      '  /plugin install pwtap@pwtap',
     ].join('\n'),
   );
 }

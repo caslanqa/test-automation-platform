@@ -7,7 +7,12 @@ import { mergePluginEnv, removePluginEnv } from './injectors/envJson.js';
 import { applyFixture, removeFixture } from './injectors/fixturesBarrel.js';
 import { orphanedExamples } from './injectors/orphanedExamples.js';
 import { mergePluginPackageJson, removePluginPackageJson } from './injectors/packageJson.js';
-import { applyProject, removeProject } from './injectors/pwConfig.js';
+import {
+  applyProject,
+  applyReporter,
+  removeProject,
+  removeReporter,
+} from './injectors/pwConfig.js';
 import { applyReadme, removeReadme } from './injectors/readme.js';
 import { fixtureList, loadPluginManifest, type PluginManifest } from './manifest.js';
 import { findKnownPlugin, KNOWN_PLUGINS } from './registry.js';
@@ -42,6 +47,13 @@ function injectManifest(clientDir: string, m: PluginManifest, testsDir: string):
   if (applyProject(clientDir, m) === false) {
     log.warn(
       `playwright.config.ts is missing a pwtap marker — add this project manually:\n  ${m.playwrightProject?.gate}`,
+    );
+  }
+  // A project scaffolded before the `plugins:reporters` region existed has no marker to splice into,
+  // so say exactly what to paste rather than editing half of the array.
+  if (applyReporter(clientDir, m) === false) {
+    log.warn(
+      `playwright.config.ts has no 'pwtap:plugins:reporters' region — add this to its reporter array manually:\n${m.reporter?.line}`,
     );
   }
 }
@@ -358,6 +370,7 @@ export async function removePlugins({
     installedDirs.push(...(m.examples ?? []).map(example => example.dest));
     removeFixture(clientDir, m, keepShared);
     removeProject(clientDir, m);
+    removeReporter(clientDir, m);
     removeReadme(clientDir, m);
     removePluginEnv(clientDir, m);
     removePluginPackageJson(clientDir, m);

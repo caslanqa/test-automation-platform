@@ -59,7 +59,8 @@ export function removePluginPackageJson(clientDir: string, m: PluginManifest): v
     if (
       (key === 'mobile:create-device' ||
         key === 'mobile:stop-devices' ||
-        key === 'mobile:inspect') &&
+        key === 'mobile:inspect' ||
+        key === 'mcp:mobile') &&
       hasOtherMobilePlugin(pkg, m.name)
     ) {
       continue;

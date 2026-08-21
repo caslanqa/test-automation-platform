@@ -17,8 +17,13 @@ Each package is a TypeScript composite; individual packages rebuild with `tsc -b
 
 ### Testing structure
 
-- **In the platform itself:** No runtime tests yet (M0–M3 scope is foundation only). Tests live in scaffolded client projects.
-- **Smoke test (CI/local):** `scripts/smoke-scaffold.mjs` runs the full scaffolder pipeline, verifies output compiles and passes a basic Playwright run.
+- **In the platform itself:** `npm test` runs `node --test` over `packages/*/test/**/*.test.ts` — 61 test files across 9 packages. TypeScript is type-stripped at runtime; `scripts/test-hooks.mjs` remaps `./x.js` imports to `./x.ts`. Types are checked separately via `tsconfig.tests.json`.
+- **Smoke tests (CI/local):** four, each asserting something a unit test cannot reach —
+  - `npm run smoke` — `scripts/smoke-scaffold.mjs`: scaffolds a core-only project and asserts every `pwtap:` marker survives.
+  - `npm run smoke:agents` — `scripts/smoke-agents.mjs`: renders the Claude Code agent plugin and asserts capability gating in both directions, plus the one-line stdout contract.
+  - `npm run smoke:judge` — `scripts/smoke-judge.mjs`: drives the AI judge's calibration CLI against a local fake gateway, and requires a gate to FIRE on a flipped verdict.
+  - `npm run smoke:k6` — the shipped k6 scenario against a local target.
+- **Budget gate:** `npm run nfr` (`scripts/nfr-check.mjs`) — dependency footprint, banned direct dependencies, stale `dist/` orphans, published size.
 
 ## High-Level Architecture
 
@@ -26,19 +31,30 @@ Each package is a TypeScript composite; individual packages rebuild with `tsc -b
 
 ```
 packages/
-├─ platform/        → @pwtap/platform (published; OS seam for plugins)
-├─ core-template/   (private; source of truth for scaffolded project)
-│  └─ files/        ← copied verbatim into new projects
-├─ create/          → @pwtap/create (published; CLI scaffolder)
-└─ plugin-ai-judge/ → @pwtap/plugin-ai-judge (published; LLM-as-judge matchers)
+├─ platform/         → @pwtap/platform          (published; OS seam for plugins)
+├─ core-template/    (private, changeset-ignored; source of truth for scaffolded projects)
+│  └─ files/         ← copied verbatim into new projects
+├─ create/           → @pwtap/create            (published; CLI scaffolder, bin: create-pwtap)
+│  └─ agents/        ← neutral agent/skill/command definitions, rendered per project
+├─ mobile-core/      → @pwtap/mobile-core       (published; driver-neutral mobile contracts + adapter registry)
+├─ mobile-inspector/ → @pwtap/mobile-inspector  (published; recorder/inspector, bin: mobile-inspect)
+├─ plugin-maestro/   → @pwtap/plugin-maestro    (published; mobile via Maestro)
+├─ plugin-appium/    → @pwtap/plugin-appium     (published; mobile via Appium/WebdriverIO)
+├─ plugin-db/        → @pwtap/plugin-db         (published; Knex SQL + MongoDB)
+├─ plugin-perf/      → @pwtap/plugin-perf       (published; in-suite budgets + k6 load)
+└─ plugin-ai-judge/  → @pwtap/plugin-ai-judge   (published; LLM-as-judge matchers)
 ```
 
 ### Dependency Order
 
-- `platform` (macOS seam for paths, shell, device discovery/boot, device lock)
-- `core-template` (private; UI + API source that gets copied)
-- `create` (scaffolder CLI that bundles core-template + reads plugin manifests)
-- Plugins (published packages that depend on `@playwright/test` + `@pwtap/platform`)
+The root `tsconfig.json` is a solution file listing **nine** project references, in build order:
+`platform` → `create` → `plugin-ai-judge` → `mobile-core` → `mobile-inspector` → `plugin-maestro` →
+`plugin-appium` → `plugin-db` → `plugin-perf`.
+
+`core-template` is **deliberately absent** from that graph: `files/` is copied verbatim into client
+projects and is compiled by each client's own `tsconfig.json`, never by this monorepo. `create`
+bundles it at `prepack` (`bundle:template`), so `template/` and `core-manifest.json` are generated
+artifacts, not sources.
 
 ### Plugin System
 
@@ -86,12 +102,20 @@ Uses `@commitlint/config-conventional` with custom **types** and **scopes**:
 
 Managed regions use comment anchors. The `create` scaffolder injects code between markers; **do not move or rename** these without updating `plugin-apply.ts`:
 
-- `// @pwtap-marker: FIXTURES_IMPORT` — plugin fixture imports
-- `// @pwtap-marker: FIXTURES_MERGE` — fixture merging calls
-- `// @pwtap-marker: PLAYWRIGHT_GATE` — env gates in `playwright.config.ts`
-- `// @pwtap-marker: PLAYWRIGHT_PROJECTS` — Playwright project definitions
+A region runs from `// pwtap:<key>` to `// pwtap:<key>:end`, and the predicate is a **whole-line**
+match (`packages/create/src/util/markers.ts`) — substring matching cannot be used, because the end
+marker contains the start marker.
 
-If editing scaffolded template files or plugin injection logic, verify markers stay intact.
+| File in a scaffolded project | Region keys                                           |
+| ---------------------------- | ----------------------------------------------------- |
+| `fixtures/index.ts`          | `plugins:imports`, `plugins:tests`, `plugins:expects` |
+| `playwright.config.ts`       | `plugins:gates`, `plugins:projects`                   |
+
+If a marker is missing, `addToRegion` throws `MarkerError` and the injector returns `false` so the
+caller prints a paste block rather than making a half-edit (see `injectors/pwConfig.ts`).
+
+If editing scaffolded template files or plugin injection logic, verify markers stay intact —
+`scripts/smoke-scaffold.mjs` asserts every key above.
 
 ### Environment Configuration
 
@@ -138,10 +162,12 @@ The platform monorepo does **not** use aliases; import relatively.
 - The template is compiled by **client projects** (each with their own `tsconfig.json`), not by the platform monorepo.
 - If updating template code, ensure it's self-contained and doesn't assume monorepo structure.
 
-### Platform Seam (macOS-First)
+### Platform Seam (macOS + Linux)
 
 - `@pwtap/platform` abstracts OS-specific operations (paths, shell commands, device discovery/boot).
-- Today: macOS only. Calling any platform function on non-darwin **throws** with a message naming the file to add.
+- Today: macOS (Android + iOS) and Linux (Android). `getPlatform()` throws on any other host with a message
+  naming the file to add. A Linux host returns a failed `RunResult` for iOS calls instead of throwing, since
+  discovery and the pickers already treat that as "no simulators".
 - Plugin code calls `getPlatform()` to access OS operations; never hardcode `darwin` checks.
 - **Goal:** hide every OS-specific detail so plugins can be ported to Windows/Linux with only platform-seam changes.
 
@@ -149,8 +175,8 @@ The platform monorepo does **not** use aliases; import relatively.
 
 - Plugins are **optional, reversible, and independently published**.
 - Each plugin exports `manifest.ts` defining what it adds (scripts, devDeps, env keys, Playwright project, example test).
-- Add a plugin: `npx create-pwtap add @pwtap/plugin-maestro`
-- Remove a plugin: `npx create-pwtap remove @pwtap/plugin-maestro` (undoes all injections; marker-safe)
+- Add a plugin: `npx @pwtap/create add @pwtap/plugin-maestro`
+- Remove a plugin: `npx @pwtap/create remove @pwtap/plugin-maestro` (undoes all injections; marker-safe)
 - Plugins never import scaffolded core (core is copied, plugins are installed); they touch the outside world via `@playwright/test`, `@pwtap/platform`, and `process.env`.
 
 ### Node Version
@@ -167,7 +193,9 @@ The platform monorepo does **not** use aliases; import relatively.
 | `npm run build`             | Compile all packages in order            |
 | `npm run lint` / `lint:fix` | ESLint check / fix                       |
 | `npm run format`            | Prettier write                           |
-| `npm run smoke`             | E2E: scaffold + verify build + test      |
+| `npm run smoke`             | E2E: scaffold + verify markers + build   |
+| `npm run smoke:agents`      | E2E: render the agent plugin + gating    |
+| `npm run nfr`               | Non-functional budget gate               |
 | `npm run commit`            | Conventional commit prompt               |
 | `npm run changeset`         | Record a version bump                    |
 | `npm run release` (CI only) | Publish to npm                           |

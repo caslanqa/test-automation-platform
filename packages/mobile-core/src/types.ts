@@ -118,6 +118,20 @@ export interface ConnectOptions {
    */
   appSource?: string;
   /**
+   * How long to wait for this device's cross-process lock before giving up, in milliseconds.
+   *
+   * Omitted means the platform default (30 minutes), which is correct for a Playwright worker: many
+   * tests queue on one device over a run, and giving up would fail a test for a scheduling fact. It is
+   * wrong for anything a human is waiting on, where a half-hour block with no output is indistinguishable
+   * from a hang.
+   *
+   * **`MOBILE_CORE_CONTRACT` deliberately stays at 1.** An added optional field cannot break an older
+   * adapter: one that does not read it simply keeps the default, which is exactly the behaviour it had.
+   * Bumping the contract would break every adapter's build to announce a change none of them need to
+   * make.
+   */
+  timeoutMs?: number;
+  /**
    * Called with a short, human-readable stage name as `connect` progresses.
    *
    * Connecting is the longest thing the inspector does — acquire or boot a device, install a build, start a

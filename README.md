@@ -16,6 +16,9 @@ An **editable UI + API testing core** you scaffold into your project with one co
 - [Authentication](#authentication)
 - [Plugins](#plugins)
 - [AI Judge](#ai-judge)
+- [Healing and triage](#healing-and-triage)
+- [Mobile MCP](#mobile-mcp)
+- [Agentic V&V](#agentic-vv)
 - [Project structure](#project-structure)
 - [CLI reference](#cli-reference)
 - [Configuration](#configuration)
@@ -53,20 +56,27 @@ npm test                                                   # runs the chromium +
 Add an engine whenever you need it:
 
 ```bash
-npx create-pwtap add ai-judge          # installs @pwtap/plugin-ai-judge and wires it in
+npx @pwtap/create add ai-judge          # installs @pwtap/plugin-ai-judge and wires it in
 ```
 
 ## Packages
 
 This repository is an npm-workspaces monorepo.
 
-| Package                                                                | Role                                                                                        | Published  |
-| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | ---------- |
-| [`@pwtap/create`](packages/create)                                     | The scaffolder — `npm init @pwtap`. Copies the editable core in and wires plugins.          | ✅         |
-| [`@pwtap/platform`](packages/platform)                                 | macOS-first platform seam (paths, shell, device discovery/boot, lock) used by plugins.      | ✅         |
-| [`@pwtap/plugin-ai-judge`](packages/plugin-ai-judge)                   | LLM-as-judge matchers (`toPassRubric` / `toScoreAtLeast` / `toMatchImage`), multi-provider. | ✅         |
-| `@pwtap/core-template`                                                 | The editable core source that `@pwtap/create` bundles. Private — never published.           | —          |
-| `@pwtap/plugin-maestro` · `-appium` · `-k6` · `-desktop` · `-security` | Mobile / performance / desktop / security engines.                                          | 🚧 planned |
+| Package                                                | Role                                                                                        | Published  |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------- | ---------- |
+| [`@pwtap/create`](packages/create)                     | The scaffolder — `npm init @pwtap`. Copies the editable core in and wires plugins.          | ✅         |
+| [`@pwtap/platform`](packages/platform)                 | macOS-first platform seam (paths, shell, device discovery/boot, lock) used by plugins.      | ✅         |
+| [`@pwtap/plugin-ai-judge`](packages/plugin-ai-judge)   | LLM-as-judge matchers (`toPassRubric` / `toScoreAtLeast` / `toMatchImage`), multi-provider. | ✅         |
+| [`@pwtap/mobile-core`](packages/mobile-core)           | Driver-neutral mobile contracts, locator scoring, and the adapter registry.                 | ✅         |
+| [`@pwtap/mobile-inspector`](packages/mobile-inspector) | Recorder and inspector for mobile flows — `npx mobile-inspect`.                             | ✅         |
+| [`@pwtap/plugin-maestro`](packages/plugin-maestro)     | Mobile testing with Maestro flows (Android + iOS).                                          | ✅         |
+| [`@pwtap/plugin-appium`](packages/plugin-appium)       | Mobile testing with Appium (XCUITest, UiAutomator2).                                        | ✅         |
+| [`@pwtap/plugin-db`](packages/plugin-db)               | Database testing — Knex SQL (Postgres/MySQL/MariaDB/SQLite) and MongoDB.                    | ✅         |
+| [`@pwtap/plugin-perf`](packages/plugin-perf)           | Performance — in-suite vitals and budgets, plus k6 load scenarios.                          | ✅         |
+| [`@pwtap/plugin-heal`](packages/plugin-heal)           | Failure triage, flake detection and quarantine — advisory, never rewrites an assertion.     | ✅         |
+| `@pwtap/core-template`                                 | The editable core source that `@pwtap/create` bundles. Private — never published.           | —          |
+| `@pwtap/plugin-desktop` · `-security`                  | Desktop / security engines.                                                                 | 🚧 planned |
 
 ## The core
 
@@ -112,17 +122,22 @@ Unauthenticated tests (public pages) simply set nothing.
 Plugins are opt-in npm packages wired through a typed manifest. Add or remove them any time:
 
 ```bash
-npx create-pwtap add ai-judge          # install + wire (fixtures, env keys, example spec, project)
-npx create-pwtap remove ai-judge       # cleanly undo
+npx @pwtap/create add ai-judge          # install + wire (fixtures, env keys, example spec, project)
+npx @pwtap/create remove ai-judge       # cleanly undo
 ```
 
-| Plugin           | Package                  | Status         |
-| ---------------- | ------------------------ | -------------- |
-| AI Judge         | `@pwtap/plugin-ai-judge` | ✅ stable      |
-| Maestro (mobile) | `@pwtap/plugin-maestro`  | 🚧 coming soon |
-| Appium (mobile)  | `@pwtap/plugin-appium`   | 🚧 coming soon |
+| Plugin           | Package                  | Flag         | Adds                                                        |
+| ---------------- | ------------------------ | ------------ | ----------------------------------------------------------- |
+| AI Judge         | `@pwtap/plugin-ai-judge` | `--ai-judge` | LLM-as-judge matchers on `expect`                           |
+| Maestro (mobile) | `@pwtap/plugin-maestro`  | `--maestro`  | `maestro` project, `mobileApp` fixture, device lifecycle    |
+| Appium (mobile)  | `@pwtap/plugin-appium`   | `--appium`   | `appium` project, same `mobileApp` fixture, WDA/UiAutomator |
+| Database         | `@pwtap/plugin-db`       | `--db`       | Knex SQL + MongoDB fixtures and assertions                  |
+| Performance      | `@pwtap/plugin-perf`     | `--perf`     | In-suite vitals with budgets, plus k6 load scenarios        |
+| Healing          | `@pwtap/plugin-heal`     | `--heal`     | Failure triage, flake detection, quarantine, locator repair |
 
-Each plugin registers an env-gated Playwright project, so a bare `npm test` always stays UI + API only. You can also preselect at scaffold time with a flag, e.g. `npm init @pwtap@latest my-tests --ai-judge`.
+Each plugin registers an env-gated Playwright project, so a bare `npm test` always stays UI + API only. You can also preselect at scaffold time with a flag, e.g. `npm init @pwtap@latest my-tests --ai-judge --heal`.
+
+Every plugin is reversible. `remove` restores the marker regions it spliced, drops its scripts and env keys, and leaves any example spec you may have built on — nothing is stranded and nothing is silently kept.
 
 ## AI Judge
 
@@ -141,6 +156,103 @@ test('bot states the opening hours', async () => {
 ```
 
 Pick a model with `JUDGE_MODEL` (plus its API key) in `env/environments.json` → `common`. The model id's **prefix** routes it: `anthropic/` (native Claude), `openrouter/`, `nvidia/`, `openai/`, `groq/`, `local/` (Ollama), or no prefix for any OpenAI-compatible gateway. Bring your own provider with `registerProvider`. See the [plugin README](packages/plugin-ai-judge/README.md) for the full provider table and matcher reference.
+
+## Healing and triage
+
+[`@pwtap/plugin-heal`](packages/plugin-heal) answers the question every red run starts with — **is this a
+bug, a flake, or a moved element?** — before anything is allowed to change.
+
+```bash
+npx @pwtap/create add heal
+
+npx playwright test          # the reporter records every run to .heal/runs/
+npm run heal:triage          # classify what failed
+npm run heal:propose         # rank locator replacements, prove one, verify it. Writes nothing
+npm run heal:gate            # CI: exit 1 on a quarantine violation or an unshielded failure
+```
+
+```text
+  → locator-drift  (90, act)  [chromium] checkout › the pay button submits
+      · the error is strict-mode
+      · nothing in the repository changed, so the application moved
+
+  ✗ true-fail  (85, act)  [chromium] cart › the badge counts items
+      · the error is value-mismatch
+      no autofix: value-mismatch: the expected value is the test doing its job
+```
+
+A **value mismatch is never healed**: if `Expected: "Welcome, Ada"` meets `Received: "Welcome, Grace"`, the
+test is doing its job, and rewriting the expectation would make the suite green and the bug invisible.
+Only `locator-drift` is ever repaired, only with a proven equivalence, and only after three consecutive
+greens with retries off — and the output is always a reviewable proposal, never a commit.
+
+Quarantine replaces `test.fixme()`: a quarantined test **still runs**, its trace and video are still in the
+report, and only the run's exit status is suppressed. Entries expire, are budgeted, and a ratchet requires
+a reason in the pull request for the list to grow.
+
+Everything above is deterministic and offline. An optional tier can ask a model about failures that stayed
+`unknown`, and four rules in code — not in the prompt — mean **it can never authorise a code change**. Full
+guide: [plugin README](packages/plugin-heal/README.md) and
+[`docs/heal-plugin-plan.md`](docs/heal-plugin-plan.md).
+
+## Mobile MCP
+
+With a mobile plugin installed, `@pwtap/mobile-inspector` also serves an MCP server, so an agent can drive
+a device through the same contracts your tests use:
+
+```bash
+npm run mcp:mobile           # or: npx @pwtap/create mcp   → prints a config block for any MCP client
+```
+
+Nine tools. The one that earns it is `mobile_locators`, which returns **ranked, uniqueness-checked,
+fragility-annotated** candidates — something no shell command produces, and without which an agent writing
+a mobile test writes coordinate taps.
+
+Acting on the device is **off by default** (`mobile_perform` stays listed and refuses, naming the switch),
+there is deliberately no shell, `adb`, `simctl`, uninstall or erase tool, and screen text is quoted to the
+model as data. If you use the Claude Code plugin above, the configuration is derived automatically from the
+plugins you have — installing `maestro` gives an agent the mobile tools, removing it takes them away.
+Design notes: [`docs/mcp-plan.md`](docs/mcp-plan.md).
+
+## Agentic V&V
+
+A team of verification & validation agents for Claude Code, **rendered from the plugins your project
+actually has**. Install it once:
+
+```text
+/plugin marketplace add caslanqa/test-automation-platform
+/plugin install pwtap@pwtap
+```
+
+A core-only project gets six agents — `vv-lead`, `story-reviewer`, `test-strategist`, `test-author`,
+`suite-reviewer`, `run-triage` — plus four skills and `/pwtap:vv` and `/pwtap:vv-status`. Add a plugin
+and the agents for it appear on the next session; remove it and they go. There is nothing to sync:
+Claude Code re-runs the renderer once per session and reloads when the output changes.
+
+| Installed                        | You also get                               |
+| -------------------------------- | ------------------------------------------ |
+| `maestro` or `appium`            | `mobile-vv` agent, `mobile-locators` skill |
+| `db`                             | `db-state-verification` skill              |
+| `perf`                           | `perf-budgets` skill                       |
+| `ai-judge`                       | `ai-judge-rubrics` skill                   |
+| a `.github/workflows/` directory | `release-gate` agent                       |
+
+Run `/pwtap:vv-status` to see which project was detected, which capability tokens that produced, and
+what each one gated in or out. Because Claude Code runs the renderer from your home directory rather
+than from the session's folder, it finds your project via `--project`, then `PWTAP_PROJECT`, then a
+registry that `create-pwtap` writes. If the roster looks wrong, that is almost always why — set
+`PWTAP_PROJECT` in your shell profile to pin it.
+
+Requires Claude Code **2.1.229 or newer**. On anything older, or in an organisation whose managed
+settings block command plugin sources, use the fallback instead:
+
+```bash
+npx @pwtap/create init-agents --loop=claude
+```
+
+That writes the same components into `<project>/.claude/`, invoked bare (`/vv`, `@vv-lead`), without
+touching anything already in that directory. It is a static snapshot — re-run it after `add` or
+`remove`. Design notes and the decision log: [`docs/agentic-vv-plan.md`](docs/agentic-vv-plan.md).
 
 ## Project structure
 
@@ -176,13 +288,22 @@ my-tests/
 
 ```text
 npm init @pwtap@latest [dir] [flags]   # scaffold (dir defaults to ".")
-npx create-pwtap add    <plugin...>    # add plugins to an existing project
-npx create-pwtap remove <plugin...>    # remove plugins
+npx @pwtap/create add    <plugin...>    # add plugins to an existing project
+npx @pwtap/create remove <plugin...>    # remove plugins
+npx @pwtap/create init-agents [--loop=claude] [--project <dir>]
+                                       # write the V&V agents into <project>/.claude/
+npx @pwtap/create claude-plugin-path [--project <dir>]
+                                       # render the agent plugin, print its path (used by Claude Code)
+npx @pwtap/create mcp [--project <dir>] # print an mcpServers block for any MCP client (writes nothing)
 ```
+
+`npm init @pwtap` and `npx @pwtap/create` are the same program — the first is npm's scaffolding convention,
+the second is how you reach the subcommands afterwards. There is no `create-pwtap` package on the registry;
+if you want the short name, install it yourself with `npm i -g @pwtap/create`.
 
 Interactively, `create` asks the same questions as `npm init playwright` — tests-folder name, GitHub Actions workflow, install browsers, and (on Linux) install OS dependencies — minus TypeScript/JavaScript, since the platform is TypeScript-only. It also lists the optional plugins.
 
-**Flags:** `-y` / `--yes` (accept defaults, skip the menu) · `--tests-dir <name>` (tests folder, default `tests`) · `--gha` (add a GitHub Actions workflow) · `--no-install` (skip `npm install`) · `--no-browsers` (skip the Playwright browser download) · `--ai-judge` (preselect a plugin).
+**Flags:** `-y` / `--yes` (accept defaults, skip the menu) · `--tests-dir <name>` (tests folder, default `tests`) · `--gha` (add a GitHub Actions workflow) · `--no-install` (skip `npm install`) · `--no-browsers` (skip the Playwright browser download) · one per plugin: `--ai-judge`, `--maestro`, `--appium`, `--db`, `--perf`, `--heal`.
 
 ## Configuration
 
@@ -221,6 +342,20 @@ Scripts available inside a scaffolded project:
 | `npm run format`            | Prettier                                |
 | `npm run type-check`        | `tsc --noEmit`                          |
 | `npm run commit`            | Commitizen (conventional commit prompt) |
+
+Plugins add their own. `add heal` brings seven:
+
+| Script                    | Does                                                            |
+| ------------------------- | --------------------------------------------------------------- |
+| `npm run heal:triage`     | Classify this run's failures                                    |
+| `npm run heal:propose`    | Rank locator replacements, prove one, verify it. Writes nothing |
+| `npm run heal:gate`       | CI gate — quarantine budget plus unshielded failures            |
+| `npm run heal:quarantine` | What is quarantined, and for how much longer                    |
+| `npm run heal:calibrate`  | Grade the classifier against your labelled cases (offline)      |
+| `npm run heal:metrics`    | Did the heals hold, and did any of them hide something?         |
+| `npm run heal:baseline`   | Fold runs into the committed flake history                      |
+
+`add maestro` or `add appium` bring `test:maestro` / `test:appium`, `mobile:inspect`, `mobile:create-device`, `mobile:stop-devices` and `mcp:mobile`.
 
 ## Development
 

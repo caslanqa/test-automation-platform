@@ -1,4 +1,4 @@
-/** OS identifiers the platform seam can represent. Only 'macos' is implemented today. */
+/** OS identifiers the platform seam can represent. 'macos' and 'linux' are implemented today. */
 export type OsId = 'macos' | 'windows' | 'linux';
 
 /** A mobile platform a device belongs to. */
@@ -58,7 +58,7 @@ export interface Platform {
   /** Env with `ANDROID_HOME`/`ANDROID_SDK_ROOT` set and `platform-tools` on PATH (when a SDK is found). */
   androidEnv(): NodeJS.ProcessEnv;
 
-  // --- iOS simulator ---
+  // --- iOS simulator (macOS only; a Linux host reports failure rather than throwing) ---
   simctl(args: string[], opts?: RunOptions): Promise<RunResult>;
   openSimulatorApp(): Promise<void>;
   quitSimulatorApp(): Promise<void>;

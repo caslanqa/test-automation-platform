@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>heal fixture v1</title>
+  </head>
+  <body>
+    <!--
+      v1 → v2 changes exactly three things, and each is a deliberately different KIND of change so a
+      classifier that confuses them has nowhere to hide:
+
+      1. the button keeps its role and accessible name but loses its test id and its id
+         — a pure identifier change with NOTHING in the test code left to check a replacement
+         against, so the honest outcome is a ranked proposal that refuses to claim proof;
+      2. the greeting's TEXT changes — a pure value change, the true-fail case, never repaired;
+      3. the sign-in form's structural wrapper class changes while the inner button keeps its role
+         and name — the one case where the code stated two signals, so a replacement IS provable.
+    -->
+    <button data-testid="submit" id="login-button">Log in</button>
+    <p id="greeting">Welcome, Ada</p>
+
+    <form class="signin" aria-label="Sign in">
+      <label for="email">Email</label>
+      <input id="email" placeholder="you@example.com" />
+      <button>Continue</button>
+    </form>
+  </body>
+</html>

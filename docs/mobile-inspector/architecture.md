@@ -44,13 +44,15 @@ Recording a driver-neutral mobile flow against a booted Android emulator or iOS 
 locators for the elements touched, generating a readable Playwright test that uses the platform's own
 fixture barrel, saving it into the project, and running it back.
 
-**Supported hosts.** macOS (Android + iOS) is supported and CI-verified. **Linux is NOT supported**: the
-first nightly device run failed with `no Platform implementation for 'linux'` — `@pwtap/platform` branches on
-the host in `getPlatform()` and only has a macOS implementation. The Android job therefore has to run on a
-macOS runner, or a `linux.ts` has to be written. This document previously claimed Linux was CI-verified; it
-never was. Windows is **best-effort**: the code MUST stay path-portable (it already branches on `playwright.cmd`)
-and MUST NOT hard-code POSIX separators, but no phase exit criterion depends on Windows and no CI job
-covers it. iOS is macOS-only by platform constraint, not by our choice.
+**Supported hosts.** macOS drives both platforms. **Linux drives Android**, and does so because CI forced the
+question: GitHub's macOS runners are Apple silicon and expose no hypervisor, so the emulator could not start
+there at all (`HVF error: HV_UNSUPPORTED`), while a Linux runner has KVM. `@pwtap/platform` now has a
+`LinuxPlatform` alongside `MacPlatform`; it answers iOS calls with a failed `RunResult` rather than a throw,
+which is what device discovery and the pickers already handle, so an iOS request on Linux degrades to "no
+simulators" instead of crashing a UI that was only asking. iOS stays macOS-only by platform constraint, not by
+our choice. Windows is **best-effort**: the code MUST stay path-portable (it already branches on
+`playwright.cmd`) and MUST NOT hard-code POSIX separators, but no phase exit criterion depends on Windows and
+no CI job covers it — `getPlatform()` throws there, naming the file to add.
 
 ### Explicitly out of scope (with reason)
 
@@ -896,10 +898,21 @@ budget). `run` never clears the draft.
 READMEs for `@pwtap/mobile-core` and `@pwtap/mobile-inspector` (neither had one).
 → **Exit: MET, with the device matrix verified by hand.** CI is green on `tsc -b`, `eslint`, the suite and the
 NFR checks. All four combinations — Android × {Maestro, Appium} and iOS × {Maestro, Appium} — were driven
-end-to-end on real devices: connect, record, reload mid-session, record again, save, run. `device.yml` runs the
-same matrix nightly; two defects in it were found and fixed rather than left to a green-looking run — the
-Android job was on a Linux runner `@pwtap/platform` cannot support at all, and the iOS job never booted a
-simulator, so the test skipped and the gate was vacuous.
+end-to-end on real devices: connect, record, reload mid-session, record again, save, run.
+
+**`device.yml` runs that matrix nightly, split across two hosts, and it took a rewrite to make it mean
+anything: it had failed 21 consecutive nightlies without ever passing once.** Three defects, each hidden behind
+the one before it. The iOS jobs booted a simulator by name — `xcrun simctl boot 'iPhone 16 Pro'` — and the
+image moved to Xcode 26, whose simulators are iPhone 17/17e/16e: `Invalid device or device pair`, before any
+test ran; the step now picks whatever iPhone the image offers. The Android jobs were on macOS runners that
+expose no hypervisor, so the emulator never started (`HVF error: HV_UNSUPPORTED`) and the job spent twelve
+minutes watching `adb` look for a device that was never coming; they moved to `ubuntu-latest` with `/dev/kvm`
+opened to the runner user, which is what the new `LinuxPlatform` unlocked. And both Appium legs would have
+failed even then, at "Appium CLI not found" — the adapter spawns a global `appium` plus a platform driver, and
+no runner ships either; the boot failures had been masking that for weeks. Verified where it can be: both iOS
+legs pass locally against a freshly booted simulator (Maestro 35 s, Appium 71 s), and the Linux host seam is
+unit-tested plus exercised on a real Linux kernel in a container. The emulator legs themselves are verified by
+the first nightly that runs after this lands.
 
 ### Test strategy
 
@@ -952,7 +965,7 @@ mistake that breaks fresh installs, and it is not recoverable by a follow-up pat
    git ls-files 'tests/**/*.mobile.ts' | while read -r f; do
      git mv "$f" "${f%.mobile.ts}.maestro.ts"
    done
-   npx create-pwtap add maestro   # re-injects the narrowed project block
+   npx @pwtap/create add maestro   # re-injects the narrowed project block
    ```
 
    Nothing inside those files changes: the `mobile` option and the `maestro` fixture they use are

@@ -11,7 +11,7 @@
  * `git mv` (§13 carries the command).
  *
  * @example
- * // after `npx create-pwtap add maestro`, gated behind MAESTRO=1:
+ * // after `npx @pwtap/create add maestro`, gated behind MAESTRO=1:
  * //   npm run test:maestro   →  MAESTRO=1 playwright test --project=maestro
  */
 export const manifest = {
@@ -26,7 +26,11 @@ export const manifest = {
     'mobile:create-device': 'node scripts/mobile/create-device.mjs',
     'mobile:stop-devices': 'node scripts/mobile/stop-devices.mjs',
     'mobile:inspect': 'mobile-inspect .',
+    'mcp:mobile': 'mobile-mcp .',
   },
+  // Both mobile plugins bring the same server, so `shared` keeps it declared when one is removed and
+  // the other stays — the same rule `fixture.shared` follows for the `mobileApp` fixture.
+  mcp: [{ name: 'mobile', package: '@pwtap/mobile-inspector', entry: 'bin/mcp.mjs', shared: true }],
   envKeys: {
     MOBILE_PLATFORM: 'android',
     MOBILE_DEVICE: '',

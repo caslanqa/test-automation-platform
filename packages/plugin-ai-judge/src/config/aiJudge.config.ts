@@ -56,6 +56,15 @@ export interface AIJudgeConfig {
    */
   cloudFallbackPrefer: string[];
 
+  /**
+   * Name substrings of models FINE-TUNED to evaluate. When any installed Ollama model matches one, the
+   * router picks tiers from those alone: an 8B judge-tuned model beats a much larger generalist at
+   * grading, so ranking local models by parameter size alone leaves the better judge unused. Empty
+   * (or no match) → every installed model is a candidate, as before.
+   * @example judgeModelHints: ['selene', 'prometheus'] // `ollama pull` one and it takes over
+   */
+  judgeModelHints: string[];
+
   /** Discovery cache time-to-live in milliseconds. */
   registryCacheTtlMs: number;
 }
@@ -85,6 +94,8 @@ export const aiJudgeConfig: AIJudgeConfig = {
   visionHints: ['claude', 'gemini', 'gpt-4o', 'gpt-5', 'vision', 'llava'],
 
   cloudFallbackPrefer: ['opus', 'sonnet', 'gpt-5', 'gemini', 'gpt-4o', 'flash', 'mini'],
+
+  judgeModelHints: ['selene', 'prometheus', 'glider', 'flow-judge', 'judge', 'critic'],
 
   registryCacheTtlMs: 5 * 60 * 1000,
 };

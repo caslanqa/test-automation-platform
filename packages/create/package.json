@@ -17,6 +17,7 @@
   },
   "files": [
     "dist",
+    "agents",
     "template",
     "core-manifest.json"
   ],

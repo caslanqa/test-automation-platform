@@ -35,9 +35,25 @@ const RUNTIME_PACKAGES = ALL_PACKAGES.filter(pkg => !DEV_ONLY_PACKAGES.has(pkg))
  * complained. The rest are banned only as OUR OWN direct dependencies (ADR-013/ADR-014) — a third-party
  * client that brings its own WebSocket implementation is its business, ours is not adding a second
  * formatter or compiler when the project already has one.
+ *
+ * The MCP entries are ADR-015, and they exist because this check would otherwise **not have noticed**:
+ * `mobile-inspector` is dev-only, so it is excluded from the runtime closure scan and an SDK added there
+ * would have passed silently. Both SDK generations make `zod` a hard requirement — v2 depends on it, v1
+ * has it as a non-optional peer — which is ~11.6 MB of closure to avoid writing the 120-line JSON-RPC
+ * server whose inverse this repo already ships. The loop below runs over ALL_PACKAGES, so dev-only
+ * packages are covered here even though they are not covered above.
  */
 const BANNED_ANYWHERE = ['electron'];
-const BANNED_AS_OURS = ['ws', 'prettier', 'typescript', 'electron'];
+const BANNED_AS_OURS = [
+  'ws',
+  'prettier',
+  'typescript',
+  'electron',
+  'zod',
+  'express',
+  '@modelcontextprotocol/sdk',
+  '@modelcontextprotocol/server',
+];
 /** §11: install size added by the inspector devDependency. */
 const INSPECTOR_MAX_UNPACKED_MB = 5;
 
