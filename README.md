@@ -75,6 +75,7 @@ This repository is an npm-workspaces monorepo.
 | [`@pwtap/plugin-db`](packages/plugin-db)               | Database testing — Knex SQL (Postgres/MySQL/MariaDB/SQLite) and MongoDB.                    | ✅         |
 | [`@pwtap/plugin-perf`](packages/plugin-perf)           | Performance — in-suite vitals and budgets, plus k6 load scenarios.                          | ✅         |
 | [`@pwtap/plugin-heal`](packages/plugin-heal)           | Failure triage, flake detection and quarantine — advisory, never rewrites an assertion.     | ✅         |
+| [`@pwtap/plugin-tms`](packages/plugin-tms)             | Test management sync (Qase) — runs and results with every artifact, off until asked.        | ✅         |
 | `@pwtap/core-template`                                 | The editable core source that `@pwtap/create` bundles. Private — never published.           | —          |
 | `@pwtap/plugin-desktop` · `-security`                  | Desktop / security engines.                                                                 | 🚧 planned |
 
@@ -134,6 +135,7 @@ npx @pwtap/create remove ai-judge       # cleanly undo
 | Database         | `@pwtap/plugin-db`       | `--db`       | Knex SQL + MongoDB fixtures and assertions                  |
 | Performance      | `@pwtap/plugin-perf`     | `--perf`     | In-suite vitals with budgets, plus k6 load scenarios        |
 | Healing          | `@pwtap/plugin-heal`     | `--heal`     | Failure triage, flake detection, quarantine, locator repair |
+| Test management  | `@pwtap/plugin-tms`      | `--tms`      | Qase sync — runs, results and artifacts; `tms` CLI          |
 
 Each plugin registers an env-gated Playwright project, so a bare `npm test` always stays UI + API only. You can also preselect at scaffold time with a flag, e.g. `npm init @pwtap@latest my-tests --ai-judge --heal`.
 

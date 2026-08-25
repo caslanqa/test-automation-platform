@@ -1,0 +1,52 @@
+{
+  "name": "@pwtap/plugin-tms",
+  "version": "0.1.0",
+  "description": "Test management sync for Playwright — cases, runs, results with artifacts, and a requirements traceability matrix. Qase is the first provider.",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/caslanqa/test-automation-platform.git",
+    "directory": "packages/plugin-tms"
+  },
+  "engines": {
+    "node": ">=22.23"
+  },
+  "bin": {
+    "tms": "./bin/tms.mjs"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./manifest": {
+      "types": "./dist/manifest.d.ts",
+      "default": "./dist/manifest.js"
+    },
+    "./reporter": {
+      "types": "./dist/reporter.d.ts",
+      "default": "./dist/reporter.js"
+    }
+  },
+  "files": [
+    "dist",
+    "bin",
+    "docs"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "peerDependencies": {
+    "@playwright/test": ">=1.61.0"
+  },
+  "dependencies": {
+    "playwright-qase-reporter": "^2.7.0"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "prepack": "node ../../scripts/clean.mjs . && npm run build"
+  }
+}

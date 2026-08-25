@@ -36,6 +36,7 @@
     "version-packages": "changeset version",
     "smoke:agents": "node scripts/smoke-agents.mjs",
     "smoke:heal": "node scripts/smoke-heal.mjs",
+    "smoke:tms": "node scripts/smoke-tms.mjs",
     "smoke:mcp": "node scripts/smoke-mcp.mjs"
   },
   "lint-staged": {

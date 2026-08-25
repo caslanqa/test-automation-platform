@@ -43,7 +43,8 @@
         "appium",
         "db",
         "perf",
-        "heal"
+        "heal",
+        "tms"
       ]
     ],
     "scope-case": [2, "always", "lower-case"],

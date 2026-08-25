@@ -1,0 +1,13 @@
+{
+  // One runtime dependency — `playwright-qase-reporter`, the thing this package exists to wrap. Everything
+  // else (the API client, the sync engine, the traceability matrix) is `node:` built-ins and `fetch`.
+  // `scripts/nfr-check.mjs` prints the runtime closure on every CI run, so a second dependency is visible
+  // on sight. `@playwright/test` is a peer: the reporter runs inside the client's own runner, never ours.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "types": ["node", "@playwright/test"]
+  },
+  "include": ["src/**/*.ts"]
+}
