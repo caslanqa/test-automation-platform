@@ -25,7 +25,11 @@ import path from 'node:path';
 
 import { gitContext, loadEnvFile, readConfig, runTitle, type TmsConfig } from '../config.js';
 import { resolveProvider } from '../providers/index.js';
-import { flagList, flagNumber, flagValue, positionals } from './args.js';
+import { applySync } from '../sync/apply.js';
+import { planIsEmpty, planSync } from '../sync/diff.js';
+import { discoverTests } from '../sync/discover.js';
+import { renderPlan } from '../sync/report.js';
+import { flagList, flagNumber, flagPresent, flagValue, positionals } from './args.js';
 import { DEFAULT_RUN_ID_FILE, readRunId, RUN_ID_KEY, writeRunId } from './runId.js';
 
 const USAGE = `tms — test management sync
@@ -40,6 +44,15 @@ const USAGE = `tms — test management sync
 
   tms run complete [--id <runId>] [--output <file>]
       Close the run. Takes --id, else ${RUN_ID_KEY}, else the id in <file>.
+
+  tms sync [--apply] [--deprecate-orphans] [--project <name>] [--limit <n>]
+      Reconcile the cases in the tool with the specs in this repo. Prints the plan and changes
+      NOTHING without --apply. Reads the suite through "playwright test --list" — no test is run.
+
+      --apply              create, link and update; write each new id back into its spec file
+      --deprecate-orphans  also mark cases the code no longer contains as deprecated (never deletes)
+      --project <name>     limit discovery to one Playwright project
+      --limit <n>          detail lines per section (default 10)
 
 Configuration lives in env/environments.json (TMS_PROVIDER, TMS_MODE, QASE_TESTOPS_*), and an
 exported variable always wins over the file.`;
@@ -67,6 +80,8 @@ export async function run(argv: string[], cwd: string = process.cwd()): Promise<
     switch (command) {
       case 'doctor':
         return await commandDoctor(config);
+      case 'sync':
+        return await commandSync(argv, cwd, config);
       case 'run':
         switch (subcommand) {
           case 'create':
@@ -101,6 +116,73 @@ async function commandDoctor(config: TmsConfig): Promise<number> {
     out(`${check.ok ? '✓' : '✗'} ${check.name.padEnd(12)} ${check.detail}`);
   }
   return probe.ok ? 0 : 1;
+}
+
+/**
+ * Reconcile the tool with the repo.
+ *
+ * Discovery runs first and independently of the network: a suite that will not list is a problem to fix
+ * before anything is created, and finding that out after half a project has been written is worse.
+ *
+ * Exit code 1 with no `--apply` when there is something to do, so `tms sync` doubles as a CI check —
+ * "the specs and the tool have drifted" is a reportable state.
+ */
+async function commandSync(argv: string[], cwd: string, config: TmsConfig): Promise<number> {
+  const apply = flagPresent(argv, '--apply');
+  const project = flagValue(argv, '--project');
+  const limit = flagNumber(argv, '--limit', 10);
+
+  const discovery = discoverTests(cwd, {
+    args: project === undefined ? [] : [`--project=${project}`],
+  });
+  if (discovery.tests.length === 0) {
+    err('tms sync: Playwright listed no tests — nothing to sync');
+    return 1;
+  }
+
+  const provider = resolveProvider(config);
+  const existing = await provider.listCases();
+  const plan = planSync(discovery.tests, existing);
+
+  for (const line of renderPlan(plan, { existingCount: existing.length, limit, applied: apply })) {
+    out(line);
+  }
+
+  if (!apply) {
+    out('');
+    out(
+      planIsEmpty(plan)
+        ? 'nothing to do.'
+        : 'dry run — nothing was changed. Re-run with --apply to create, link and write ids back.',
+    );
+    return planIsEmpty(plan) ? 0 : 1;
+  }
+
+  const result = await applySync(provider, plan, {
+    rootDir: discovery.rootDir,
+    deprecateOrphans: flagPresent(argv, '--deprecate-orphans'),
+  });
+
+  out('');
+  out(
+    `applied: ${result.created} created, ${result.adopted} linked, ${result.updated} updated, ` +
+      `${result.written} ids written${result.deprecated === 0 ? '' : `, ${result.deprecated} deprecated`}`,
+  );
+
+  if (result.refusals.length > 0) {
+    // Not a failure of the sync: the cases exist. Only the link is unwritten, and the next run adopts
+    // them by title rather than creating duplicates.
+    out('');
+    out(`${result.refusals.length} id(s) could not be placed automatically — paste these by hand:`);
+    for (const refusal of result.refusals) {
+      out(`  ${refusal.file}:${refusal.line}  ${refusal.title}`);
+      out(`      ${refusal.reason}`);
+      out(`      ${refusal.snippet}`);
+    }
+    return 1;
+  }
+
+  return 0;
 }
 
 async function commandRunCreate(argv: string[], cwd: string, config: TmsConfig): Promise<number> {

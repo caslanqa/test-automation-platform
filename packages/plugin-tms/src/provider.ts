@@ -40,12 +40,44 @@ export interface TmsRunRef {
   url?: string;
 }
 
+/** A case as it exists in the tool. `suitePath` is resolved by the provider, not stored as an id. */
+export interface TmsCase {
+  id: string;
+  title: string;
+  suitePath: string[];
+  tags: string[];
+  /** False for a manual case. Only automated cases are ever considered orphaned by a code sync. */
+  automated: boolean;
+}
+
+export interface NewTmsCase {
+  /** The caller's own key, echoed back with the new id — the only way to match a batch to its inputs. */
+  ref: string;
+  title: string;
+  suitePath: string[];
+  tags: string[];
+}
+
+export interface TmsCasePatch {
+  title?: string;
+  suitePath?: string[];
+  tags?: string[];
+  /** Mark a case the code no longer contains. Never a delete — see `deprecateCase`. */
+  deprecated?: boolean;
+}
+
 export interface TmsProvider {
   readonly id: string;
   /** Connectivity, credentials and project existence. Never throws — it reports. */
   probe(): Promise<TmsProbe>;
   createRun(input: TmsRunInput): Promise<TmsRunRef>;
   completeRun(runId: string): Promise<void>;
+
+  /** Every case in the project, with its suite path resolved. Paginated internally. */
+  listCases(): Promise<TmsCase[]>;
+  /** Create in bulk, and return each new id next to the `ref` it came from. */
+  createCases(cases: NewTmsCase[]): Promise<Array<{ ref: string; id: string }>>;
+  updateCase(id: string, patch: TmsCasePatch): Promise<void>;
   /**
    * A constructed Playwright reporter, or `null` for a provider with no result sync of its own.
    *

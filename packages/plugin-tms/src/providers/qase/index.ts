@@ -12,11 +12,21 @@
 import type { Reporter } from '@playwright/test/reporter';
 
 import type { TmsConfig } from '../../config.js';
-import type { TmsProbe, TmsProvider, TmsRunInput, TmsRunRef } from '../../provider.js';
+import type {
+  NewTmsCase,
+  TmsCase,
+  TmsCasePatch,
+  TmsProbe,
+  TmsProvider,
+  TmsRunInput,
+  TmsRunRef,
+} from '../../provider.js';
+import * as cases from './cases.js';
 import { QaseClient, type QaseClientOptions } from './client.js';
 import { missingQaseConfig, readQaseConfig, type QaseConfig } from './config.js';
 import { createQaseReporter } from './reporter.js';
 import { completeRun, createRun } from './runs.js';
+import { loadSuites, type SuiteIndex } from './suites.js';
 
 interface ProjectResult {
   title?: string;
@@ -29,6 +39,14 @@ export function createQaseProvider(
   clientOptions: QaseClientOptions = {},
 ): TmsProvider {
   const client = new QaseClient(qase, clientOptions);
+
+  /**
+   * The suite tree, fetched at most once per process and then grown in place by `ensurePath`. A sync
+   * touches it for every case; re-reading it per call would spend the rate-limit budget on a tree that
+   * only this process is changing.
+   */
+  let suites: Promise<SuiteIndex> | undefined;
+  const suiteIndex = (): Promise<SuiteIndex> => (suites ??= loadSuites(client));
 
   return {
     id: 'qase',
@@ -76,6 +94,18 @@ export function createQaseProvider(
 
     completeRun(runId: string): Promise<void> {
       return completeRun(client, runId);
+    },
+
+    async listCases(): Promise<TmsCase[]> {
+      return cases.listCases(client, await suiteIndex());
+    },
+
+    async createCases(input: NewTmsCase[]): Promise<Array<{ ref: string; id: string }>> {
+      return cases.createCases(client, await suiteIndex(), input);
+    },
+
+    async updateCase(id: string, patch: TmsCasePatch): Promise<void> {
+      return cases.updateCase(client, await suiteIndex(), id, patch);
     },
 
     /**

@@ -1,22 +1,29 @@
 #!/usr/bin/env node
 /**
  * End-to-end smoke test for the test management plugin: scaffold a real project, `add tms`, and prove
- * the three things unit tests cannot.
+ * the things unit tests cannot.
  *
  * 1. **The injection lands.** The manifest is untyped by design, so a misspelled field is an injection
  *    that silently does nothing. Only a real `create-pwtap add` catches that.
  * 2. **`off` really is off.** A scaffolded project with this plugin installed and `TMS_MODE` unset runs
  *    green with no network. Asserted by running a spec, not by reading the code.
- * 3. **Add and remove are symmetric.** `remove tms` has to take the reporter line, the env keys and the
+ * 3. **A real sync round-trips.** Against a stub Qase server: discover through Playwright's own lister,
+ *    create cases, write the ids into real spec files, and then find nothing to do on a second run.
+ *    Idempotence is the single strongest assertion here — it can only hold if the id we wrote is the id
+ *    the next discovery reads back, through the actual runner, out of the actual edited file.
+ * 4. **The edited specs still compile.** The source editor's output is fed straight back to
+ *    `playwright test --list`, so a corrupted file fails here rather than in someone's repository.
+ * 5. **Add and remove are symmetric.** `remove tms` has to take the reporter line, the env keys and the
  *    scripts back out, or the next `npm test` loads a reporter from a package that is gone.
  *
  * Run with `npm run smoke:tms`. Fails (non-zero) on any broken assertion.
  *
  * @example
- *   npm run smoke:tms   # prints "[smoke] OK" when injection, inertness and removal all hold
+ *   npm run smoke:tms   # prints "[smoke] OK" when injection, inertness, sync and removal all hold
  */
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -35,6 +42,22 @@ const step = message => console.log(`[smoke] ${message}`);
 
 const run = (cmd, args, cwd, env) =>
   execFileSync(cmd, args, { stdio: 'inherit', cwd: cwd ?? root, env: { ...process.env, ...env } });
+
+/**
+ * Like {@link tryRun}, but asynchronous — mandatory for anything that talks to the stub Qase below.
+ * `execFileSync` blocks this process's event loop, so an in-process HTTP server cannot answer while it
+ * runs and the child times out against a server that is technically listening.
+ */
+function tryRunAsync(cmd, args, cwd, env) {
+  return new Promise(resolve => {
+    execFile(
+      cmd,
+      args,
+      { cwd, encoding: 'utf8', env: { ...process.env, ...env }, maxBuffer: 64 * 1024 * 1024 },
+      (error, stdout, stderr) => resolve({ ok: error === null, output: `${stdout}${stderr}` }),
+    );
+  });
+}
 
 /** Run and capture, returning `{ ok, output }` instead of throwing — for the cases that must fail. */
 function tryRun(cmd, args, cwd, env) {
@@ -177,7 +200,180 @@ assert(
 
 step('refusal OK — an unconfigured publish fails before a single test runs');
 
-// --- 4. removal is symmetric --------------------------------------------------------------------
+// --- 4. a real sync, against a stub Qase ---------------------------------------------------------
+
+/**
+ * Enough of Qase v1 to run a sync against, and no more. A recorded fixture would not do: the point is
+ * that `tms sync` reads what it wrote, so the server has to actually hold state between the two runs.
+ */
+function startQase() {
+  const state = { suites: [], cases: [], nextSuite: 1, nextCase: 100, patches: [] };
+  const server = http.createServer((request, response) => {
+    const chunks = [];
+    request.on('data', chunk => chunks.push(chunk));
+    request.on('end', () => {
+      const url = new URL(request.url, 'http://x');
+      const body =
+        chunks.length === 0 ? undefined : JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      const send = result =>
+        response
+          .writeHead(200, { 'content-type': 'application/json' })
+          .end(JSON.stringify({ status: true, result }));
+
+      if (url.pathname === '/v1/project/DEMO') {
+        return send({ title: 'Demo Project', code: 'DEMO' });
+      }
+      if (url.pathname === '/v1/system-fields') {
+        return send({ entities: [{ slug: 'status', options: [{ id: 3, slug: 'deprecated' }] }] });
+      }
+      if (url.pathname === '/v1/suite/DEMO') {
+        if (request.method === 'POST') {
+          const suite = {
+            id: state.nextSuite++,
+            title: body.title,
+            parent_id: body.parent_id ?? null,
+          };
+          state.suites.push(suite);
+          return send({ id: suite.id });
+        }
+        return send({ total: state.suites.length, entities: state.suites });
+      }
+      if (url.pathname === '/v1/case/DEMO/bulk') {
+        const ids = body.cases.map(item => {
+          const created = { id: state.nextCase++, isManual: false, tags: [], ...item };
+          created.tags = (item.tags ?? []).map(title => ({ title }));
+          state.cases.push(created);
+          return created.id;
+        });
+        return send({ ids });
+      }
+      if (url.pathname === '/v1/case/DEMO') {
+        return send({ total: state.cases.length, entities: state.cases });
+      }
+      if (url.pathname.startsWith('/v1/case/DEMO/') && request.method === 'PATCH') {
+        const id = Number(url.pathname.split('/').pop());
+        const target = state.cases.find(item => item.id === id);
+        state.patches.push({ id, body });
+        if (target !== undefined) {
+          Object.assign(
+            target,
+            body,
+            body.tags === undefined ? {} : { tags: body.tags.map(title => ({ title })) },
+          );
+        }
+        return send({ id });
+      }
+      response
+        .writeHead(404)
+        .end(JSON.stringify({ status: false, errorMessage: `no stub for ${url.pathname}` }));
+    });
+  });
+  return new Promise(resolve => {
+    server.listen(0, '127.0.0.1', () =>
+      resolve({
+        state,
+        url: `http://127.0.0.1:${server.address().port}/v1`,
+        close: () => new Promise(done => server.close(done)),
+      }),
+    );
+  });
+}
+
+const qase = await startQase();
+const qaseEnv = {
+  TMS_MODE: 'off',
+  QASE_TESTOPS_PROJECT: 'DEMO',
+  QASE_TESTOPS_API_TOKEN: 'stub-token',
+  QASE_API_BASE_URL: qase.url,
+};
+
+// Three shapes on purpose: a bare call the editor has to add an options object to, one that already has
+// an annotation it must merge with rather than overwrite, and a parameterised loop it must refuse to
+// write to at all.
+fs.mkdirSync(path.join(dir, 'tests/checkout'), { recursive: true });
+fs.writeFileSync(
+  path.join(dir, 'tests/checkout/cart.spec.ts'),
+  `import { test, expect } from '@fixtures';
+
+test.describe('cart', () => {
+  test('rejects an expired card', async () => {
+    expect(1).toBe(1);
+  });
+
+  test('shows the total', { annotation: { type: 'Requirement', description: 'PAY-17' } }, async () => {
+    expect(1).toBe(1);
+  });
+
+  for (const role of ['admin', 'guest']) {
+    test(\`is visible to \${role}\`, async () => {
+      expect(1).toBe(1);
+    });
+  }
+});
+`,
+  'utf8',
+);
+
+step('tms sync (dry run)…');
+const dry = await tryRunAsync('npx', ['tms', 'sync'], dir, qaseEnv);
+assert(!dry.ok, 'a dry run with pending work should exit 1 so it can be a CI check');
+// The scaffold ships example specs of its own, so the count is 'the four we wrote, plus those'.
+const plannedCreates = Number(/create\s+(\d+)/.exec(dry.output)?.[1] ?? 0);
+assert(plannedCreates >= 4, `expected at least four creates in the plan:\n${dry.output}`);
+assert(qase.state.cases.length === 0, 'a dry run created something — it must change nothing');
+assert(
+  !fs.readFileSync(path.join(dir, 'tests/checkout/cart.spec.ts'), 'utf8').includes('QaseID'),
+  'a dry run edited a spec file',
+);
+
+step('tms sync --apply…');
+const applied = await tryRunAsync('npx', ['tms', 'sync', '--apply'], dir, qaseEnv);
+assert(applied.ok, `sync --apply failed:\n${applied.output}`);
+assert(
+  qase.state.cases.length === plannedCreates,
+  `the plan promised ${plannedCreates} cases, the tool got ${qase.state.cases.length}`,
+);
+
+// checkout/cart.spec.ts + describe('cart') is three levels, built parent-first and reused.
+const suiteTitles = qase.state.suites.map(suite => suite.title);
+assert(
+  suiteTitles.slice(0, 3).join('>') === 'checkout>cart>cart',
+  `suite hierarchy came out as ${suiteTitles.join('>')}`,
+);
+assert(
+  new Set(qase.state.cases.filter(c => c.title.startsWith('is visible')).map(c => c.suite_id))
+    .size === 1,
+  'the parameterised pair should land in one suite',
+);
+
+const edited = fs.readFileSync(path.join(dir, 'tests/checkout/cart.spec.ts'), 'utf8');
+assert(
+  (edited.match(/QaseID/g) ?? []).length === 2,
+  `expected exactly two ids written:\n${edited}`,
+);
+assert(
+  /annotation: \[\{ type: 'Requirement', description: 'PAY-17' \}, \{ type: 'QaseID'/.test(edited),
+  `the existing Requirement annotation was not preserved:\n${edited}`,
+);
+assert(
+  !/is visible to \$\{role\}`, \{/.test(edited),
+  'an id was written at a shared call site, where it would name both parameterised tests',
+);
+
+step('re-listing the edited spec through Playwright…');
+const relist = await tryRunAsync('npx', ['playwright', 'test', '--list'], dir, qaseEnv);
+assert(relist.ok, `the write-back produced a spec Playwright cannot load:\n${relist.output}`);
+
+step('tms sync again — the second run must find nothing to do…');
+const second = await tryRunAsync('npx', ['tms', 'sync'], dir, qaseEnv);
+assert(second.ok, `the second sync still wanted to change something:\n${second.output}`);
+assert(/nothing to do/.test(second.output), `expected "nothing to do":\n${second.output}`);
+assert(qase.state.cases.length === plannedCreates, 'the second sync created duplicates');
+
+await qase.close();
+step('sync OK — created, written back, and idempotent on the second run');
+
+// --- 5. removal is symmetric --------------------------------------------------------------------
 
 step('create-pwtap remove tms…');
 run('node', [CREATE, 'remove', 'tms'], dir);

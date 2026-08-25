@@ -56,8 +56,33 @@ nothing. A green CI job next to an empty run is the failure nobody catches.
 
 Full guide, including the CI snippet and a table of every failure message: [`docs/TEST_MANAGEMENT.md`](docs/TEST_MANAGEMENT.md).
 
+## Case sync
+
+```bash
+npm run tms:sync            # print the plan, change nothing
+npm run tms:sync -- --apply # create, link, update, and write the ids back into the specs
+```
+
+Your specs are the source of truth. Discovery goes through `playwright test --list`, so **no test is
+run** and no browser starts. A test finds its case by its `QaseID` annotation first, and by suite path
+plus title only when it has none yet — and a match found that way is written back:
+
+```ts
+test('rejects an expired card', { annotation: { type: 'QaseID', description: '42' } }, async ({ page }) => { … });
+```
+
+That edit is Qase's own recommendation, not a style choice: name matching breaks on a rename, an id
+does not. An annotation you already wrote is merged with, never replaced.
+
+**Nothing is ever deleted.** A case the code no longer contains is reported as an orphan;
+`--deprecate-orphans` marks it, looking the status value up in your workspace rather than assuming an
+integer. With no `--apply` the command exits `1` when the tool and the code have drifted, so it works
+as a CI check.
+
+Two call sites cannot hold an id and are reported instead of guessed at: a parameterised loop, and a
+helper that declares tests on your behalf. Those stay matched by title.
+
 ## Coming next
 
-Case sync from your specs (`tms sync`), a requirements traceability matrix built from
-`requirements/*.md` with a CI coverage gate (`tms trace`), and defect creation from confirmed
-`true-fail` triage.
+A requirements traceability matrix built from `requirements/*.md` with a CI coverage gate
+(`tms trace`), and defect creation from confirmed `true-fail` triage.

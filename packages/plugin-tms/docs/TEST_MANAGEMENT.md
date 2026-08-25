@@ -110,6 +110,86 @@ unset the reporter owns the run and completes it itself, which is what you want 
 `tms run complete` takes the id from `--id`, else `QASE_TESTOPS_RUN_ID`, else the file — and refuses
 rather than guessing when it has none.
 
+## Case sync
+
+```bash
+npm run tms:sync            # print the plan, change nothing
+npm run tms:sync -- --apply # create, link, update, and write ids back into the specs
+```
+
+Your specs are the source of truth; the tool is the mirror. Discovery goes through
+`playwright test --list` — **no test is run**, no browser starts.
+
+### How a test finds its case
+
+Two passes, in this order:
+
+1. **By id.** A `QaseID` annotation is exact and permanent. Rename the test, move it to another file,
+   restructure the describes — it still points at the same case, and the history stays whole.
+2. **By suite path and title**, only for tests with no id yet. A match here is _adopted_: the id is
+   written into the spec so the next sync uses pass 1 and the link stops depending on the title.
+
+That write-back is not a stylistic choice. Qase's own documentation is explicit that name matching
+"sees a 'new' test and the old one's history stops" on a rename, and that the id in code is the link
+that survives. So `--apply` edits your spec files:
+
+```ts
+// before
+test('rejects an expired card', async ({ page }) => { … });
+
+// after
+test('rejects an expired card', { annotation: { type: 'QaseID', description: '42' } }, async ({ page }) => { … });
+```
+
+An existing annotation is merged with, never replaced — a `Requirement` annotation you wrote stays and
+becomes the first entry of an array. Commit the result; it is what makes the next sync a no-op.
+
+### The suite path
+
+Directory segments, then the file stem, then each `describe`. `tests/checkout/cart.spec.ts` with
+`describe('totals')` puts the case under `checkout › cart › totals`. Suites are created as needed and
+reused; nothing is created twice.
+
+### What the plan tells you
+
+| Section                 | Meaning                                                                                                              |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `create`                | no id, no title match — a new case, and the id is written back                                                       |
+| `adopt`                 | an existing case with this suite path and title — linked, and the id is written back                                 |
+| `update`                | linked, but the title, suite or tags drifted; the tool is corrected to match the code                                |
+| `orphans`               | automated cases with no test in the code — **never deleted**, only listed                                            |
+| `dangling`              | the annotation names a case that is not in this project — never recreated; remove the annotation or restore the case |
+| `matched by title only` | the id cannot be written at that call site, so the link stays fragile                                                |
+
+`--deprecate-orphans` marks orphans deprecated instead of only listing them. It looks the status value
+up in your workspace's own system fields rather than assuming an integer, and refuses if there is no
+"deprecated" option. Nothing here ever deletes a case: the run history is the reason it exists.
+
+### Where an id cannot go
+
+Two call sites cannot hold one, and the sync says so rather than writing the wrong thing:
+
+- **A parameterised loop.** `for (const role of […]) test(\`works for ${role}\`, …)`is one`test(` call
+  producing several tests. An annotation there would give all of them the same case id.
+- **A helper that declares tests.** `test.as('admin')(…)` puts the `test(` call inside `fixtures/ui.ts`,
+  outside the tests directory. Writing there would tag the helper, and through it every test that uses it.
+
+Those tests still get cases and still report results. They stay matched by suite path and title, which
+means **renaming one starts a new case and ends the old one's history**. Give a test its own `test()`
+call when its history matters.
+
+### As a CI check
+
+`tms sync` with no `--apply` exits `1` when there is anything to create, link or update, and `0` when
+the tool already matches the code — so a job can fail on drift:
+
+```yaml
+- run: npm run tms:sync # fails if a new test has no case in Qase
+```
+
+`--project <name>` limits discovery to one Playwright project; `--limit <n>` sets how many lines each
+section of the report prints (it always says how many it dropped).
+
 ## When something goes wrong
 
 | What you see                                                                                      | What it means                                                                                                                         |
@@ -119,6 +199,9 @@ rather than guessing when it has none.
 | `unknown TMS_PROVIDER "testrail"`                                                                 | A typo, or a provider that does not exist yet. Known providers are listed in the message.                                             |
 | A run is missing a third of its results                                                           | A shard completed the run. Check that `QASE_TESTOPS_RUN_ID` is exported in **every** shard.                                           |
 
+| `N id(s) could not be placed automatically` | The cases exist; only the annotation is unwritten. Paste the printed snippet — the next sync adopts the case by title rather than creating a duplicate. |
+| `Playwright could not load the suite` | A spec fails to import. The sync stops there on purpose: a suite that lists nothing looks exactly like a suite whose tests were all deleted. |
+| `refusing to guess which id belongs to which test` | A bulk create came back with the wrong number of ids. Nothing was written back; re-run the sync. |
 Rate limits are Qase's: 1000 requests/minute per user, 3000 per IP. The client honours `Retry-After` on
 429 and backs off on 5xx, four attempts, then fails loudly — a sync that reports success it did not
 achieve is worse than one that exits non-zero.
