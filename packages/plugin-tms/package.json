@@ -1,7 +1,7 @@
 {
   "name": "@pwtap/plugin-tms",
   "version": "0.1.0",
-  "description": "Test management sync for Playwright — cases, runs, results with artifacts, and a requirements traceability matrix. Qase is the first provider.",
+  "description": "Test management sync for Playwright \u2014 cases, runs, results with artifacts, and a requirements traceability matrix. Qase is the first provider.",
   "type": "module",
   "license": "MIT",
   "repository": {
@@ -34,6 +34,7 @@
   "files": [
     "dist",
     "bin",
+    "templates",
     "docs"
   ],
   "publishConfig": {

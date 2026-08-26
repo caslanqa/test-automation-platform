@@ -75,10 +75,11 @@ function newCase(test: DiscoveredTest): NewTmsCase {
     title: test.title,
     suitePath: test.suitePath,
     tags: test.tags,
+    requirements: test.requirements,
   };
 }
 
-const sameTags = (left: readonly string[], right: readonly string[]): boolean =>
+const sameList = (left: readonly string[], right: readonly string[]): boolean =>
   left.length === right.length &&
   [...left].sort().join('\u0000') === [...right].sort().join('\u0000');
 
@@ -96,9 +97,15 @@ function drift(
     patch.suitePath = test.suitePath;
     changed.push('suite');
   }
-  if (!sameTags(existing.tags, test.tags)) {
+  if (!sameList(existing.tags, test.tags)) {
     patch.tags = test.tags;
     changed.push('tags');
+  }
+  // Only when the code names some: a project whose Qase has no requirement field reads back `[]` for
+  // every case, and treating that as drift would rewrite the whole suite on every sync forever.
+  if (test.requirements.length > 0 && !sameList(existing.requirements, test.requirements)) {
+    patch.requirements = test.requirements;
+    changed.push('requirements');
   }
   return { ...patch, changed };
 }

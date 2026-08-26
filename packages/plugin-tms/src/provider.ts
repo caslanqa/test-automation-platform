@@ -46,6 +46,8 @@ export interface TmsCase {
   title: string;
   suitePath: string[];
   tags: string[];
+  /** Requirement keys the tool currently stores for this case. Empty when it stores none. */
+  requirements: string[];
   /** False for a manual case. Only automated cases are ever considered orphaned by a code sync. */
   automated: boolean;
 }
@@ -56,12 +58,14 @@ export interface NewTmsCase {
   title: string;
   suitePath: string[];
   tags: string[];
+  requirements: string[];
 }
 
 export interface TmsCasePatch {
   title?: string;
   suitePath?: string[];
   tags?: string[];
+  requirements?: string[];
   /** Mark a case the code no longer contains. Never a delete — see `deprecateCase`. */
   deprecated?: boolean;
 }
@@ -73,6 +77,14 @@ export interface TmsProvider {
   createRun(input: TmsRunInput): Promise<TmsRunRef>;
   completeRun(runId: string): Promise<void>;
 
+  /**
+   * Can this project store a requirement key against a case, and where?
+   *
+   * Asked once, before a sync writes anything, so the answer is printed once instead of being
+   * discovered per case. `ok: false` is not an error — the local traceability matrix is the
+   * deliverable and the tool-side link is the mirror.
+   */
+  requirementSupport(): Promise<{ ok: boolean; detail: string }>;
   /** Every case in the project, with its suite path resolved. Paginated internally. */
   listCases(): Promise<TmsCase[]>;
   /** Create in bulk, and return each new id next to the `ref` it came from. */

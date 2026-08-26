@@ -30,6 +30,7 @@ const aCase = (over: Partial<TmsCase> = {}): TmsCase => ({
   title: 'rejects an expired card',
   suitePath: ['cart'],
   tags: [],
+  requirements: [],
   automated: true,
   ...over,
 });

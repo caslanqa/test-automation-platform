@@ -32,6 +32,8 @@ export const manifest = {
   scripts: {
     'tms:doctor': 'tms doctor',
     'tms:sync': 'tms sync',
+    'tms:trace': 'tms trace',
+    'tms:gate': 'tms trace --gate',
     'tms:run:create': 'tms run create',
     'tms:run:complete': 'tms run complete',
   },
@@ -47,6 +49,11 @@ export const manifest = {
     uniq: '@pwtap/plugin-tms/reporter',
     line: "    ['@pwtap/plugin-tms/reporter', {}],",
   },
+  examples: [
+    // Copied once and never overwritten, like every other plugin's examples. It ships as `draft`, so
+    // installing the plugin cannot make an existing coverage gate go red on a file the team never wrote.
+    { src: 'templates/requirements', dest: 'requirements' },
+  ],
   docs: [{ src: 'docs/TEST_MANAGEMENT.md', dest: 'docs/TEST_MANAGEMENT.md' }],
   readmeSection: [
     '## Test management',
@@ -80,6 +87,12 @@ export const manifest = {
     'until `-- --apply`, which creates the cases and writes each id back into the spec as a `QaseID`',
     'annotation — the only link Qase says survives a rename. It never deletes; a case the code no longer',
     'contains is reported as an orphan.',
+    '',
+    '**6. Trace requirements to tests** with `npm run tms:trace`. Requirements live in `requirements/*.md`',
+    '(Qase has no requirements API — its own matrix is fed by issue-tracker links), tests claim them with a',
+    '`Requirement` annotation, and the matrix lands in `tms/` as markdown + JSON (add `-- --format csv` for',
+    'an auditor). `npm run tms:gate` fails when a `valid` requirement has no test, or has one that did not',
+    'pass. Both are offline: no token, no network, no test run.',
     '',
     'Full guide, including the CI snippet and what each configuration key does: `docs/TEST_MANAGEMENT.md`.',
   ].join('\n'),

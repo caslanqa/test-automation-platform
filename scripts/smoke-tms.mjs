@@ -13,13 +13,17 @@
  *    the next discovery reads back, through the actual runner, out of the actual edited file.
  * 4. **The edited specs still compile.** The source editor's output is fed straight back to
  *    `playwright test --list`, so a corrupted file fails here rather than in someone's repository.
- * 5. **Add and remove are symmetric.** `remove tms` has to take the reporter line, the env keys and the
+ * 5. **The traceability matrix tells three verdicts apart.** Against real requirement files and a real
+ *    results report: one requirement verified by a test that ran and passed, one uncovered, and one
+ *    covered by a test that never executed. Only running the suite can produce the third, and it is
+ *    the one a matrix built from annotations alone reports as green.
+ * 6. **Add and remove are symmetric.** `remove tms` has to take the reporter line, the env keys and the
  *    scripts back out, or the next `npm test` loads a reporter from a package that is gone.
  *
  * Run with `npm run smoke:tms`. Fails (non-zero) on any broken assertion.
  *
  * @example
- *   npm run smoke:tms   # prints "[smoke] OK" when injection, inertness, sync and removal all hold
+ *   npm run smoke:tms   # prints "[smoke] OK" when injection, inertness, sync, trace and removal hold
  */
 import { execFile, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -110,6 +114,17 @@ fs.copyFileSync(
   path.join(dir, 'env/environments.json'),
 );
 
+// One real commit, so `tms trace` has a sha to stamp its report with. A fresh scaffold is `git init`ed
+// but empty, and an unattributable audit artifact is not an audit artifact. `--no-verify` skips the
+// husky hooks the scaffold just installed; they are not what is under test here.
+const git = (...args) =>
+  execFileSync('git', ['-c', 'user.name=smoke', '-c', 'user.email=smoke@example.com', ...args], {
+    cwd: dir,
+    stdio: 'ignore',
+  });
+git('add', '-A');
+git('commit', '-m', 'chore: scaffold', '--no-verify');
+
 step('create-pwtap add tms…');
 run('node', [CREATE, 'add', 'tms', '--no-install'], dir);
 
@@ -141,9 +156,20 @@ for (const file of ['env/environments.json', 'env/environments.example.json']) {
 }
 
 const scripts = readJson(path.join(dir, 'package.json')).scripts;
-for (const name of ['tms:doctor', 'tms:run:create', 'tms:run:complete']) {
+for (const name of [
+  'tms:doctor',
+  'tms:sync',
+  'tms:trace',
+  'tms:gate',
+  'tms:run:create',
+  'tms:run:complete',
+]) {
   assert(scripts[name] !== undefined, `package.json is missing the ${name} script`);
 }
+assert(
+  fs.existsSync(path.join(dir, 'requirements/example.md')),
+  'the example requirement was not copied',
+);
 assert(
   fs.existsSync(path.join(dir, 'docs/TEST_MANAGEMENT.md')),
   'docs/TEST_MANAGEMENT.md was not copied',
@@ -206,6 +232,10 @@ step('refusal OK — an unconfigured publish fails before a single test runs');
  * Enough of Qase v1 to run a sync against, and no more. A recorded fixture would not do: the point is
  * that `tms sync` reads what it wrote, so the server has to actually hold state between the two runs.
  */
+/** `{ '55': 'PAY-17' }` (write shape) → `[{ id: 55, value: 'PAY-17' }]` (read shape). */
+const customFieldsOf = written =>
+  Object.entries(written ?? {}).map(([id, value]) => ({ id: Number(id), value }));
+
 function startQase() {
   const state = { suites: [], cases: [], nextSuite: 1, nextCase: 100, patches: [] };
   const server = http.createServer((request, response) => {
@@ -222,6 +252,14 @@ function startQase() {
 
       if (url.pathname === '/v1/project/DEMO') {
         return send({ title: 'Demo Project', code: 'DEMO' });
+      }
+      if (url.pathname === '/v1/custom_field') {
+        // A real workspace has to have this field for requirement keys to reach Qase at all; the stub
+        // provides one so the write path is exercised rather than skipped.
+        return send({
+          total: 1,
+          entities: [{ id: 55, title: 'Requirement', entity: 'case', type: 'text' }],
+        });
       }
       if (url.pathname === '/v1/system-fields') {
         return send({ entities: [{ slug: 'status', options: [{ id: 3, slug: 'deprecated' }] }] });
@@ -241,7 +279,13 @@ function startQase() {
       if (url.pathname === '/v1/case/DEMO/bulk') {
         const ids = body.cases.map(item => {
           const created = { id: state.nextCase++, isManual: false, tags: [], ...item };
+          // Qase's read/write asymmetry, reproduced on purpose: a case is WRITTEN with `tags: ['x']` and
+          // `custom_field: {'55': 'PAY-17'}`, and READ back as `tags: [{title}]` and
+          // `custom_fields: [{id, value}]`. A stub that echoes the write shape would let a real
+          // round-trip bug through — this one did, until it did not.
           created.tags = (item.tags ?? []).map(title => ({ title }));
+          created.custom_fields = customFieldsOf(item.custom_field);
+          delete created.custom_field;
           state.cases.push(created);
           return created.id;
         });
@@ -370,10 +414,162 @@ assert(second.ok, `the second sync still wanted to change something:\n${second.o
 assert(/nothing to do/.test(second.output), `expected "nothing to do":\n${second.output}`);
 assert(qase.state.cases.length === plannedCreates, 'the second sync created duplicates');
 
-await qase.close();
 step('sync OK — created, written back, and idempotent on the second run');
 
-// --- 5. removal is symmetric --------------------------------------------------------------------
+// --- 5. the traceability matrix, end to end ------------------------------------------------------
+
+// Three requirements chosen to produce three different verdicts in one gate run, because the whole
+// point of the matrix is that "has a test" and "is verified" are not the same fact.
+fs.mkdirSync(path.join(dir, 'requirements'), { recursive: true });
+fs.writeFileSync(
+  path.join(dir, 'requirements/pay-17.md'),
+  `---\nid: PAY-17\ntitle: An expired card is rejected\nstatus: valid\ntype: user-story\n---\n\n1. **AC-1** — Returns 422.\n2. **AC-2** — Shows a message.\n`,
+  'utf8',
+);
+fs.writeFileSync(
+  path.join(dir, 'requirements/pay-2.md'),
+  `---\nid: PAY-2\ntitle: Refunds are issued within a day\nstatus: valid\n---\n`,
+  'utf8',
+);
+fs.writeFileSync(
+  path.join(dir, 'requirements/pay-3.md'),
+  `---\nid: PAY-3\ntitle: A declined card is retried once\nstatus: valid\n---\n`,
+  'utf8',
+);
+
+fs.writeFileSync(
+  path.join(dir, 'tests/checkout/refunds.spec.ts'),
+  `import { test, expect } from '@fixtures';
+
+test('rejects an expired card', {
+  annotation: { type: 'Requirement', description: 'PAY-17#AC-1' },
+}, async () => {
+  expect(1).toBe(1);
+});
+
+test('retries a declined card — excluded from this smoke run', {
+  annotation: { type: 'Requirement', description: 'PAY-3' },
+}, async () => {
+  expect(1).toBe(1);
+});
+`,
+  'utf8',
+);
+
+// The refunds spec carries Requirement annotations, so syncing it again proves the key reaches Qase —
+// which is the only tool-side half of traceability that exists, Qase having no requirements API.
+step('tms sync --apply with requirement annotations…');
+const reqSync = await tryRunAsync('npx', ['tms', 'sync', '--apply'], dir, qaseEnv);
+assert(reqSync.ok, `the second apply failed:\n${reqSync.output}`);
+const stored = qase.state.cases.flatMap(item => item.custom_fields ?? []);
+assert(
+  stored.some(entry => entry.id === 55 && entry.value === 'PAY-17#AC-1'),
+  `the requirement key did not reach the case custom field: ${JSON.stringify(stored)}`,
+);
+
+await qase.close();
+
+// Earlier steps ran the suite, so the report exists. Remove it to isolate the coverage-only branch —
+// the one where nothing can be called "verified" because nothing was measured.
+fs.rmSync(path.join(dir, 'test-results/results.json'), { force: true });
+
+step('tms trace with no run results…');
+const traceDry = await tryRunAsync('npx', ['tms', 'trace'], dir, qaseEnv);
+assert(traceDry.ok, `tms trace failed:\n${traceDry.output}`);
+assert(
+  /no run results at test-results\/results\.json/.test(traceDry.output),
+  `expected the coverage-only notice:\n${traceDry.output}`,
+);
+for (const file of ['tms/rtm.md', 'tms/rtm.json']) {
+  assert(fs.existsSync(path.join(dir, file)), `${file} was not written`);
+}
+
+// Run only ONE of the two annotated tests, so the other is covered-but-never-executed. That is the
+// verdict a matrix built from annotations alone cannot tell apart from a passing one.
+step('running one annotated spec to produce test-results/results.json…');
+const suite = await tryRunAsync(
+  'npx',
+  [
+    'playwright',
+    'test',
+    'tests/checkout/refunds.spec.ts',
+    '--project=chromium',
+    '--grep-invert',
+    'excluded',
+  ],
+  dir,
+  qaseEnv,
+);
+assert(suite.ok, `the annotated spec did not pass:\n${suite.output}`);
+assert(
+  fs.existsSync(path.join(dir, 'test-results/results.json')),
+  'the scaffold config should have written test-results/results.json',
+);
+
+step('tms trace --gate…');
+const gate = await tryRunAsync(
+  'npx',
+  ['tms', 'trace', '--gate', '--format', 'md,json,csv'],
+  dir,
+  qaseEnv,
+);
+assert(!gate.ok, `the gate passed with an uncovered requirement:\n${gate.output}`);
+assert(/uncovered\s+PAY-2/.test(gate.output), `PAY-2 should be uncovered:\n${gate.output}`);
+assert(/not-run\s+PAY-3/.test(gate.output), `PAY-3 should be covered-but-not-run:\n${gate.output}`);
+assert(
+  !/PAY-17/.test(
+    gate.output
+      .split('\n')
+      .filter(line => /^\s{2}\w/.test(line))
+      .join('\n'),
+  ),
+  `PAY-17 ran and passed, so it must not be a finding:\n${gate.output}`,
+);
+assert(
+  fs.existsSync(path.join(dir, 'tms/rtm.csv')),
+  'the csv format was requested and not written',
+);
+
+const rtm = JSON.parse(read(path.join(dir, 'tms/rtm.json')));
+assert(rtm.schema === 'pwtap.tms.rtm/1', `unexpected rtm schema: ${rtm.schema}`);
+assert(rtm.counts.verified === 1, `expected one verified requirement, got ${rtm.counts.verified}`);
+assert(
+  rtm.counts.uncovered === 1 && rtm.counts['not-run'] === 1,
+  'the three verdicts did not come out',
+);
+assert(rtm.sha !== '', 'the report is not stamped with a git sha');
+const pay17 = rtm.requirements.find(item => item.id === 'PAY-17');
+assert(pay17.criteria[0].verdict === 'verified', 'AC-1 was named by a passing test');
+assert(pay17.criteria[1].verdict === 'uncovered', 'AC-2 was named by nobody');
+
+// Strict adds the criterion nobody claimed; the default gate deliberately does not, so a team that has
+// not adopted criterion-level linking is not told its whole matrix is broken.
+step('tms trace --gate --strict…');
+const strict = await tryRunAsync('npx', ['tms', 'trace', '--gate', '--strict'], dir, qaseEnv);
+assert(
+  /PAY-17#AC-2/.test(strict.output),
+  `--strict should name the unclaimed criterion:\n${strict.output}`,
+);
+
+// Retiring the two gaps must make the gate pass — a gate that can never go green gets deleted.
+step('tms trace --gate after the gaps are retired…');
+for (const file of ['requirements/pay-2.md', 'requirements/pay-3.md']) {
+  fs.writeFileSync(
+    path.join(dir, file),
+    read(path.join(dir, file)).replace('status: valid', 'status: draft'),
+    'utf8',
+  );
+}
+const green = await tryRunAsync('npx', ['tms', 'trace', '--gate'], dir, qaseEnv);
+assert(green.ok, `the gate should pass once the gaps are drafts:\n${green.output}`);
+assert(
+  /all covered and verified/.test(green.output),
+  `expected the verified summary:\n${green.output}`,
+);
+
+step('trace OK — three verdicts, a stamped report, and a gate that can go both ways');
+
+// --- 6. removal is symmetric --------------------------------------------------------------------
 
 step('create-pwtap remove tms…');
 run('node', [CREATE, 'remove', 'tms'], dir);
@@ -394,7 +590,14 @@ for (const file of ['env/environments.json', 'env/environments.example.json']) {
   }
 }
 const scriptsAfter = readJson(path.join(dir, 'package.json')).scripts;
-for (const name of ['tms:doctor', 'tms:run:create', 'tms:run:complete']) {
+for (const name of [
+  'tms:doctor',
+  'tms:sync',
+  'tms:trace',
+  'tms:gate',
+  'tms:run:create',
+  'tms:run:complete',
+]) {
   assert(scriptsAfter[name] === undefined, `the ${name} script survived removal`);
 }
 
@@ -402,5 +605,5 @@ step('removal OK — add and remove are symmetric');
 
 fs.rmSync(dir, { recursive: true, force: true });
 console.log(
-  '\n[smoke] OK — tms injects, stays inert until asked, refuses half-configured, and removes cleanly.',
+  '\n[smoke] OK — tms injects, stays inert until asked, refuses half-configured, syncs idempotently,\n  traces requirements to three distinct verdicts, and removes cleanly.',
 );

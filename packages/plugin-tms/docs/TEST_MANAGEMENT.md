@@ -190,6 +190,115 @@ the tool already matches the code — so a job can fail on drift:
 `--project <name>` limits discovery to one Playwright project; `--limit <n>` sets how many lines each
 section of the report prints (it always says how many it dropped).
 
+## Requirements and traceability
+
+```bash
+npm run tms:trace   # write the matrix to tms/
+npm run tms:gate    # the same thing, and exit 1 on a gap
+```
+
+Both are **entirely local**: no token, no network, no test run. That is deliberate — the matrix is the
+artifact an auditor is handed and the check a pull request runs, and neither should depend on a
+third-party service being reachable.
+
+### Why requirements live in the repo
+
+Qase has **no requirements API**. Its own traceability report is built from _external issues_ — a case
+linked to a Jira, GitHub, GitLab, Linear or Azure DevOps ticket. With no tracker wired up there is
+nothing on that side to sync to, so requirements live next to the tests:
+
+```markdown
+<!-- requirements/pay-17.md -->
+
+---
+
+id: PAY-17
+title: An expired card is rejected at checkout
+status: valid # valid | draft | review | implemented | obsolete
+type: user-story # epic | feature | user-story
+parent: PAY-1
+---
+
+## Acceptance criteria
+
+1. **AC-1** — Paying with an expired card returns HTTP 422 and the code `card_expired`.
+2. **AC-2** — The user is shown "Your card has expired".
+```
+
+`id` and `title` are required; everything else has a default. A criterion is any line carrying a bold
+`**AC-n**` marker — numbered list, bullet or bare line, whichever reads better.
+
+A file that will not parse is **reported and fails the gate**, never skipped: silently dropping it
+would shrink the denominator and make coverage look better than it is.
+
+### How a test claims one
+
+```ts
+test('rejects an expired card', {
+  annotation: { type: 'Requirement', description: 'PAY-17#AC-1' },
+}, async ({ request }) => { … });
+```
+
+`PAY-17` covers the requirement as a whole. `PAY-17#AC-1` covers it **and** that one criterion. Both
+count toward requirement coverage — a team that has not adopted criterion-level linking is not told its
+whole matrix is empty.
+
+One annotation can carry several keys: `description: 'PAY-17, PAY-18'`.
+
+### Covered is not verified
+
+Two questions the matrix keeps apart, because conflating them is how a matrix starts lying:
+
+| Verdict        | Meaning                                                                         |
+| -------------- | ------------------------------------------------------------------------------- |
+| ✅ `verified`  | a test names it, that test ran, and it passed                                   |
+| ❌ `failing`   | a test names it and went red — **covered, not verified**                        |
+| ⚪ `not-run`   | a test names it, and that test did not execute in the last run (or was skipped) |
+| 🚫 `uncovered` | no test names it at all                                                         |
+| ➖ `excluded`  | its status is `draft`, `review` or `obsolete` — not held to account yet         |
+
+One red test among five green ones makes the requirement `failing`. A **skipped** test never counts as
+evidence: "there is a test and it did not fail" is not the same claim as "a test proved this".
+
+Outcomes come from `test-results/results.json` — the JSON report the scaffold's config already writes.
+Point somewhere else with `--results <file>`. With no results file the command says so and nothing is
+called verified.
+
+### The report
+
+`tms/rtm.md` and `tms/rtm.json` by default; add `--format md,json,csv` for the spreadsheet an auditor
+will ask for. Every report is stamped with the branch, the commit sha and a timestamp, so an exported
+matrix is attributable to a state of the repository. `--out <dir>` moves them.
+
+The JSON is a stable schema (`pwtap.tms.rtm/1`) with counts, per-requirement verdicts, per-criterion
+verdicts and the linked tests including their case ids — meant to be read by other tools.
+
+### The gate
+
+```yaml
+- run: npx playwright test # produces test-results/results.json
+- run: npm run tms:gate # fails on a gap
+```
+
+Exit `1` on any of: an uncovered requirement, a failing one, one whose tests did not run, a test naming
+a requirement no file defines, or a requirement file that would not parse. `--strict` also requires
+every declared acceptance criterion to be covered.
+
+`draft`, `review` and `obsolete` requirements are excluded. A gate that fails on work not started yet
+gets switched off, and a switched-off gate protects nothing — so the example requirement this plugin
+installs ships as `draft`.
+
+### The Qase side
+
+`tms sync` also writes the requirement keys into a **text custom field named `Requirement`** on each
+case, which makes them visible, filterable and QQL-searchable in Qase. The field is **never created for
+you** — that is workspace schema, and a sync command reshaping your Qase project is more than it was
+asked to do. Create it in Settings → Custom fields (entity "Test case", type "Text"), or ignore it: the
+sync says so once and carries on, and the local matrix is unaffected.
+
+When you later connect a real tracker, the same key moves to `POST /case/{code}/{id}/external-issues`
+and Qase's own requirements report fills in. That is the upgrade path, not a rewrite.
+
 ## When something goes wrong
 
 | What you see                                                                                      | What it means                                                                                                                         |
@@ -202,6 +311,9 @@ section of the report prints (it always says how many it dropped).
 | `N id(s) could not be placed automatically` | The cases exist; only the annotation is unwritten. Paste the printed snippet — the next sync adopts the case by title rather than creating a duplicate. |
 | `Playwright could not load the suite` | A spec fails to import. The sync stops there on purpose: a suite that lists nothing looks exactly like a suite whose tests were all deleted. |
 | `refusing to guess which id belongs to which test` | A bulk create came back with the wrong number of ids. Nothing was written back; re-run the sync. |
+| `unknown frontmatter key "statuss"` | A typo in a requirement file. Unknown keys are refused by name rather than ignored, so a misspelled `status` cannot silently become the default. |
+| `duplicate id PAY-17 — already defined in …` | Two requirement files answering to one key make every link ambiguous. The first file wins and the second is reported. |
+| `no run results at test-results/results.json` | The suite has not been run since the report was deleted. Coverage still works; nothing is called verified. |
 Rate limits are Qase's: 1000 requests/minute per user, 3000 per IP. The client honours `Retry-After` on
 429 and backs off on 5xx, four attempts, then fails loudly — a sync that reports success it did not
 achieve is worse than one that exits non-zero.

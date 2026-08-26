@@ -48,6 +48,15 @@ export interface DiscoveredTest {
   /** Playwright projects this test belongs to. */
   projects: string[];
   /**
+   * What the test DID, when the report being read is a results report rather than a `--list`.
+   *
+   * The two are the same file format, so one parser serves both: `--list` leaves `results` empty and
+   * this stays `undefined`, while `test-results/results.json` fills it. The last attempt wins, so a
+   * test that failed once and passed on retry reads as `passed` — which is what a traceability matrix
+   * should say about it.
+   */
+  outcome?: string;
+  /**
    * Why an id must not be written at this call site, or `undefined` when it may be. Two reasons, both
    * the same underlying hazard — an annotation there would name something other than this one test:
    *
@@ -86,6 +95,8 @@ interface JsonAnnotation {
 interface JsonTest {
   annotations?: JsonAnnotation[];
   projectName?: string;
+  /** Present only in a RESULTS report — `--list` writes an empty array. */
+  results?: Array<{ status?: string }>;
 }
 
 interface JsonSpec {
@@ -222,10 +233,46 @@ function collect(
             (spec.tests ?? []).map(test => test.projectName ?? '').filter(name => name !== ''),
           ),
         ],
+        outcome: outcomeOf(spec.tests ?? []),
       });
     }
     collect(suite.suites ?? [], depth + 1, here, out);
   }
+}
+
+/**
+ * The worst outcome across every project this spec ran in, or `undefined` when nothing ran.
+ *
+ * Worst rather than last: a test that passes on chromium and fails on webkit is a failing test, and a
+ * matrix that reports it as green is the reason nobody trusts matrices. Within one project the LAST
+ * attempt wins, so a retry that succeeded reads as `passed`.
+ *
+ * **Only `results[]` is read, never `test.status`.** A `--list` report carries `status: "skipped"` on
+ * every test as a placeholder — nothing has run yet — and taking it as an outcome made every listed
+ * test look like it had a verdict. That turned "never executed" into "green" in the traceability
+ * matrix, which is the single failure this whole feature exists to prevent.
+ */
+const OUTCOME_RANK: Record<string, number> = {
+  passed: 0,
+  skipped: 1,
+  interrupted: 2,
+  timedOut: 3,
+  failed: 4,
+};
+
+function outcomeOf(tests: readonly JsonTest[]): string | undefined {
+  let worst: string | undefined;
+  for (const test of tests) {
+    const attempts = test.results ?? [];
+    const last = attempts.length === 0 ? undefined : attempts[attempts.length - 1].status;
+    if (last === undefined || last === '') {
+      continue;
+    }
+    if (worst === undefined || (OUTCOME_RANK[last] ?? 5) > (OUTCOME_RANK[worst] ?? 5)) {
+      worst = last;
+    }
+  }
+  return worst;
 }
 
 /** Decide, per test, whether its call site can hold an id — see {@link DiscoveredTest.unwritableReason}. */
@@ -286,4 +333,36 @@ export function discoverTests(cwd: string, options: DiscoverOptions = {}): Disco
   markUnwritable(tests);
 
   return { rootDir: report.config?.rootDir ?? cwd, tests };
+}
+
+/**
+ * Read a Playwright JSON **results** report — the one the scaffold's own config already writes to
+ * `test-results/results.json`.
+ *
+ * Same format, same parser, so a traceability matrix learns what each test DID without this package
+ * knowing anything about `@pwtap/plugin-heal`'s private run records. The scaffold ships the `json`
+ * reporter by default, which makes this the one artifact that is there without anyone configuring it.
+ *
+ * Returns an empty discovery when the file is absent: a matrix with no statuses is still a coverage
+ * matrix, and "you have not run the suite yet" is not an error.
+ *
+ * @example
+ * const { tests } = readResultsReport('/repo/test-results/results.json');
+ * tests[0].outcome; // 'passed' | 'failed' | 'skipped' | …
+ */
+export function readResultsReport(file: string): Discovery {
+  if (!fs.existsSync(file)) {
+    return { rootDir: path.dirname(file), tests: [] };
+  }
+
+  let report: JsonReport;
+  try {
+    report = JSON.parse(fs.readFileSync(file, 'utf8')) as JsonReport;
+  } catch {
+    throw new Error(`${file} is not a Playwright JSON report`);
+  }
+
+  const tests: DiscoveredTest[] = [];
+  collect(report.suites ?? [], 0, [], tests);
+  return { rootDir: report.config?.rootDir ?? path.dirname(file), tests };
 }

@@ -6,9 +6,20 @@
  * together are the whole contract this module depends on, so they are the fixture.
  */
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { test } from 'node:test';
 
-import { discoverTests, fileStem, testKey } from '../src/sync/discover.js';
+import { discoverTests, fileStem, readResultsReport, testKey } from '../src/sync/discover.js';
+
+/** Scratch directories the results-report cases create, removed when the file is done. */
+const after: string[] = [];
+test.after(() => {
+  for (const dir of after) {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 const ROOT = '/repo/tests';
 
@@ -268,4 +279,93 @@ test('the file stem drops the project-selecting suffix, not the name', () => {
   assert.equal(fileStem('api/users.api.ts'), 'users');
   assert.equal(fileStem('legacy/a.b.test.ts'), 'a.b');
   assert.equal(fileStem('plain.ts'), 'plain');
+});
+
+test('a results report is read by the same parser, and the worst outcome wins', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pwtap-results-'));
+  after.push(dir);
+  const file = path.join(dir, 'results.json');
+  fs.writeFileSync(
+    file,
+    JSON.stringify({
+      config: { rootDir: ROOT },
+      suites: [
+        {
+          title: 'a.spec.ts',
+          file: 'a.spec.ts',
+          specs: [
+            // Green on one project, red on another: one test, and it is a failing one. A matrix that
+            // reported this as passed is the reason nobody trusts matrices.
+            spec('cross-browser', 'a.spec.ts', 3, 5, {
+              tests: [
+                { projectName: 'chromium', annotations: [], results: [{ status: 'passed' }] },
+                { projectName: 'webkit', annotations: [], results: [{ status: 'failed' }] },
+              ],
+            }),
+            // Failed then passed on retry: the last attempt is what the test did.
+            spec('flaky', 'a.spec.ts', 9, 5, {
+              tests: [
+                {
+                  projectName: 'chromium',
+                  annotations: [],
+                  results: [{ status: 'failed' }, { status: 'passed' }],
+                },
+              ],
+            }),
+            spec('never ran', 'a.spec.ts', 14, 5, {
+              tests: [{ projectName: 'chromium', results: [] }],
+            }),
+          ],
+        },
+      ],
+    }),
+    'utf8',
+  );
+
+  const { tests } = readResultsReport(file);
+
+  assert.deepEqual(
+    tests.map(item => [item.title, item.outcome]),
+    [
+      ['cross-browser', 'failed'],
+      ['flaky', 'passed'],
+      ['never ran', undefined],
+    ],
+  );
+});
+
+test('a --list report gives no outcome, whatever placeholder status it carries', () => {
+  // Playwright's `--list` writes `status: "skipped"` on every test. Reading that as an outcome made a
+  // listed-but-never-executed test look verified in the traceability matrix.
+  const { tests } = discoverTests('/repo', {
+    listJson: listJson({
+      config: { rootDir: ROOT },
+      suites: [
+        {
+          title: 'a.spec.ts',
+          file: 'a.spec.ts',
+          specs: [
+            spec('listed only', 'a.spec.ts', 3, 5, {
+              tests: [{ projectName: 'chromium', annotations: [], results: [], status: 'skipped' }],
+            }),
+          ],
+        },
+      ],
+    }),
+  });
+
+  assert.equal(tests[0].outcome, undefined);
+});
+
+test('a missing results file is an empty discovery, not an error', () => {
+  assert.deepEqual(readResultsReport('/nowhere/results.json').tests, []);
+});
+
+test('a results file that is not a Playwright report says so', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pwtap-results-'));
+  after.push(dir);
+  const file = path.join(dir, 'results.json');
+  fs.writeFileSync(file, 'not json', 'utf8');
+
+  assert.throws(() => readResultsReport(file), /is not a Playwright JSON report/);
 });

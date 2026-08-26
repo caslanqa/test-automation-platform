@@ -82,7 +82,39 @@ as a CI check.
 Two call sites cannot hold an id and are reported instead of guessed at: a parameterised loop, and a
 helper that declares tests on your behalf. Those stay matched by title.
 
+## Requirements and traceability
+
+```bash
+npm run tms:trace   # write the matrix to tms/
+npm run tms:gate    # the same thing, and exit 1 on a gap
+```
+
+Qase has **no requirements API** — its own report is fed by issue-tracker links — so requirements live
+next to the tests in `requirements/*.md`, and the matrix is produced here. Entirely local: no token, no
+network, no test run.
+
+A test claims a requirement with an annotation; `PAY-17#AC-1` claims the requirement **and** one
+acceptance criterion:
+
+```ts
+test('rejects an expired card', {
+  annotation: { type: 'Requirement', description: 'PAY-17#AC-1' },
+}, async ({ request }) => { … });
+```
+
+**Covered is not verified.** A test naming a requirement makes it covered; that test running and
+passing makes it verified. A red test among green ones is `failing`, and a skipped test never counts
+as evidence. Outcomes come from `test-results/results.json`, which the scaffold's config already
+writes; with no results file nothing is called verified and the command says so.
+
+The gate fails on an uncovered requirement, a failing one, one whose tests never ran, a test naming a
+requirement no file defines, or a requirement file that would not parse. `draft`, `review` and
+`obsolete` are excluded — a gate that fails on work not started yet gets switched off.
+
+Reports land in `tms/` as markdown and JSON (`--format csv` for the spreadsheet an auditor asks for),
+each stamped with the branch, sha and timestamp.
+
 ## Coming next
 
-A requirements traceability matrix built from `requirements/*.md` with a CI coverage gate
-(`tms trace`), and defect creation from confirmed `true-fail` triage.
+Defect creation from confirmed `true-fail` triage, and the agent surface that teaches
+`story-reviewer` and `test-author` to write requirement files and annotations.

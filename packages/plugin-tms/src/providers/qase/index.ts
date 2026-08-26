@@ -24,6 +24,7 @@ import type {
 import * as cases from './cases.js';
 import { QaseClient, type QaseClientOptions } from './client.js';
 import { missingQaseConfig, readQaseConfig, type QaseConfig } from './config.js';
+import { DEFAULT_REQUIREMENT_FIELD, requirementField } from './customFields.js';
 import { createQaseReporter } from './reporter.js';
 import { completeRun, createRun } from './runs.js';
 import { loadSuites, type SuiteIndex } from './suites.js';
@@ -94,6 +95,28 @@ export function createQaseProvider(
 
     completeRun(runId: string): Promise<void> {
       return completeRun(client, runId);
+    },
+
+    /**
+     * Qase has no requirements API, so the key lives in a case custom field. That field is workspace
+     * schema and is NEVER created from here — a sync command reshaping someone's Qase project is more
+     * than it was asked to do — so this reports what is there and the caller prints it once.
+     */
+    async requirementSupport(): Promise<{ ok: boolean; detail: string }> {
+      try {
+        const field = await requirementField(client);
+        return field === undefined
+          ? {
+              ok: false,
+              detail:
+                `no "${DEFAULT_REQUIREMENT_FIELD}" text custom field on test cases in ${qase.project} — ` +
+                'requirement keys stay in the local matrix only. Add one in Qase (Settings → Custom fields, ' +
+                'entity "Test case", type "Text") to mirror them there.',
+            }
+          : { ok: true, detail: `custom field "${field.title}" (#${field.id})` };
+      } catch (error) {
+        return { ok: false, detail: error instanceof Error ? error.message : String(error) };
+      }
     },
 
     async listCases(): Promise<TmsCase[]> {

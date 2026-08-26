@@ -135,6 +135,7 @@ test('reading a case turns tag objects into strings and suite_id into a path', a
     title: 'a',
     suitePath: ['cart'],
     tags: ['smoke'],
+    requirements: [],
     automated: true,
   });
   assert.equal(cases[1].automated, true, 'an old case has only the deprecated automation integer');
@@ -150,8 +151,8 @@ test('creating cases sends plain tag strings, isManual false, and one suite call
 
   const index = await loadSuites(client);
   const created = await createCases(client, index, [
-    { ref: 'one', title: 'a', suitePath: ['cart'], tags: ['smoke'] },
-    { ref: 'two', title: 'b', suitePath: ['cart'], tags: [] },
+    { ref: 'one', title: 'a', suitePath: ['cart'], tags: ['smoke'], requirements: [] },
+    { ref: 'two', title: 'b', suitePath: ['cart'], tags: [], requirements: [] },
   ]);
 
   assert.deepEqual(created, [
@@ -181,8 +182,8 @@ test('a bulk response with the wrong number of ids refuses to guess', async () =
   await assert.rejects(
     () =>
       createCases(client, index, [
-        { ref: 'one', title: 'a', suitePath: [], tags: [] },
-        { ref: 'two', title: 'b', suitePath: [], tags: [] },
+        { ref: 'one', title: 'a', suitePath: [], tags: [], requirements: [] },
+        { ref: 'two', title: 'b', suitePath: [], tags: [], requirements: [] },
       ]),
     /refusing to guess which id belongs to which test/,
   );

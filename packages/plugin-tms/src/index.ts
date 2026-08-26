@@ -34,6 +34,25 @@ export type {
 export { KNOWN_PROVIDERS, resolveProvider } from './providers/index.js';
 export { QaseApiError } from './providers/qase/client.js';
 export { readQaseConfig, type QaseConfig } from './providers/qase/config.js';
+export { gateMatrix, type GateFinding, type GateVerdict } from './requirements/gate.js';
+export {
+  REQUIREMENTS_DIR,
+  loadRequirements,
+  type AcceptanceCriterion,
+  type Requirement,
+  type RequirementSet,
+} from './requirements/load.js';
+export {
+  buildMatrix,
+  countByVerdict,
+  renderCsv,
+  renderJson,
+  renderMarkdown,
+  splitReference,
+  type Matrix,
+  type MatrixRow,
+  type Verdict,
+} from './requirements/rtm.js';
 export { insertQaseId, type AnnotateResult } from './sync/annotate.js';
 export { applySync, type ApplyResult } from './sync/apply.js';
 export { planIsEmpty, planSync, type SyncPlan } from './sync/diff.js';
@@ -41,6 +60,7 @@ export {
   QASE_ID_ANNOTATION,
   REQUIREMENT_ANNOTATION,
   discoverTests,
+  readResultsReport,
   testKey,
   type DiscoveredTest,
   type Discovery,

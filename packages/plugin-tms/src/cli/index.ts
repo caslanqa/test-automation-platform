@@ -21,13 +21,23 @@
  * // npx playwright test --shard=1/4 & npx playwright test --shard=2/4 & wait
  * // npx tms run complete
  */
+import fs from 'node:fs';
 import path from 'node:path';
 
 import { gitContext, loadEnvFile, readConfig, runTitle, type TmsConfig } from '../config.js';
 import { resolveProvider } from '../providers/index.js';
+import { gateMatrix } from '../requirements/gate.js';
+import { loadRequirements, REQUIREMENTS_DIR } from '../requirements/load.js';
+import {
+  buildMatrix,
+  countByVerdict,
+  renderCsv,
+  renderJson,
+  renderMarkdown,
+} from '../requirements/rtm.js';
 import { applySync } from '../sync/apply.js';
 import { planIsEmpty, planSync } from '../sync/diff.js';
-import { discoverTests } from '../sync/discover.js';
+import { discoverTests, readResultsReport, testKey } from '../sync/discover.js';
 import { renderPlan } from '../sync/report.js';
 import { flagList, flagNumber, flagPresent, flagValue, positionals } from './args.js';
 import { DEFAULT_RUN_ID_FILE, readRunId, RUN_ID_KEY, writeRunId } from './runId.js';
@@ -53,6 +63,17 @@ const USAGE = `tms — test management sync
       --deprecate-orphans  also mark cases the code no longer contains as deprecated (never deletes)
       --project <name>     limit discovery to one Playwright project
       --limit <n>          detail lines per section (default 10)
+
+  tms trace [--gate] [--strict] [--format md|json|csv] [--out <dir>] [--results <file>]
+      Build the requirements traceability matrix from ${REQUIREMENTS_DIR}/*.md and the Requirement
+      annotations in the specs. Reads run outcomes from <file> (default test-results/results.json)
+      when it exists. Entirely local — no network, no test run.
+
+      --gate            exit 1 on an uncovered, failing or not-run requirement (CI check)
+      --strict          with --gate, also require every acceptance criterion to be covered
+      --format          one or more of md,json,csv (default md,json)
+      --out <dir>       where the report files go (default tms/)
+      --results <file>  the Playwright JSON report to read outcomes from
 
 Configuration lives in env/environments.json (TMS_PROVIDER, TMS_MODE, QASE_TESTOPS_*), and an
 exported variable always wins over the file.`;
@@ -82,6 +103,8 @@ export async function run(argv: string[], cwd: string = process.cwd()): Promise<
         return await commandDoctor(config);
       case 'sync':
         return await commandSync(argv, cwd, config);
+      case 'trace':
+        return commandTrace(argv, cwd);
       case 'run':
         switch (subcommand) {
           case 'create':
@@ -158,6 +181,16 @@ async function commandSync(argv: string[], cwd: string, config: TmsConfig): Prom
     return planIsEmpty(plan) ? 0 : 1;
   }
 
+  // Asked once, before anything is written: the answer is workspace configuration, so discovering it
+  // per case would print the same sentence a hundred times or — worse — swallow it.
+  if (discovery.tests.some(test => test.requirements.length > 0)) {
+    const support = await provider.requirementSupport();
+    if (!support.ok) {
+      out('');
+      out(`note: ${support.detail}`);
+    }
+  }
+
   const result = await applySync(provider, plan, {
     rootDir: discovery.rootDir,
     deprecateOrphans: flagPresent(argv, '--deprecate-orphans'),
@@ -222,4 +255,105 @@ async function commandRunComplete(argv: string[], cwd: string, config: TmsConfig
   await resolveProvider(config).completeRun(id);
   out(`run ${id} completed`);
   return 0;
+}
+
+/**
+ * The requirements traceability matrix.
+ *
+ * **Entirely local.** Requirements come from the repository, links come from the `Requirement`
+ * annotations the runner already reports, and outcomes come from the JSON report the scaffold's own
+ * config already writes. No token, no network, no test run — which is what lets this be the artifact an
+ * auditor is handed and the check a pull request runs.
+ *
+ * Exit codes: `0` when nothing is asked of it or the gate passes, `1` when `--gate` finds something.
+ * Without `--gate` it always exits `0` — writing a report is not a verdict.
+ */
+function commandTrace(argv: string[], cwd: string): number {
+  const { requirements, problems } = loadRequirements(cwd);
+  const resultsPath = path.resolve(
+    cwd,
+    flagValue(argv, '--results') ?? 'test-results/results.json',
+  );
+  const results = readResultsReport(resultsPath);
+  const resultsRead = results.tests.length > 0;
+
+  // Discovery gives the LINKS (every declared test, whether or not it ran); the results report gives the
+  // OUTCOMES. Joining them by testKey is what keeps "covered" and "verified" separate — a requirement
+  // whose only test was filtered out of the last run must not read as green.
+  const discovery = discoverTests(cwd);
+  const outcomes = new Map(results.tests.map(test => [testKey(test), test.outcome]));
+  const tests = discovery.tests.map(test => {
+    const outcome = outcomes.get(testKey(test));
+    return outcome === undefined ? test : { ...test, outcome };
+  });
+
+  const matrix = buildMatrix(requirements, tests);
+  const git = gitContext(cwd);
+  const context = {
+    sha: git.sha,
+    branch: git.branch,
+    generatedAt: new Date().toISOString(),
+    ...(resultsRead ? { resultsFile: path.relative(cwd, resultsPath) } : {}),
+  };
+
+  if (requirements.length === 0) {
+    out(`no requirements found in ${REQUIREMENTS_DIR}/ — nothing to trace.`);
+    out(
+      `Add a ${REQUIREMENTS_DIR}/<id>.md with id/title frontmatter; see docs/TEST_MANAGEMENT.md.`,
+    );
+  }
+
+  const formats = flagList(argv, '--format');
+  const wanted = formats.length === 0 ? ['md', 'json'] : formats;
+  const outDir = path.resolve(cwd, flagValue(argv, '--out') ?? 'tms');
+  const renderers: Record<string, () => string> = {
+    md: () => renderMarkdown(matrix, context),
+    json: () => renderJson(matrix, context),
+    csv: () => renderCsv(matrix, context),
+  };
+
+  const unknown = wanted.filter(format => renderers[format] === undefined);
+  if (unknown.length > 0) {
+    err(`tms trace: unknown --format ${unknown.join(', ')} — known formats: md, json, csv`);
+    return 2;
+  }
+
+  fs.mkdirSync(outDir, { recursive: true });
+  for (const format of wanted) {
+    const file = path.join(outDir, `rtm.${format}`);
+    fs.writeFileSync(file, renderers[format](), 'utf8');
+    out(`wrote ${path.relative(cwd, file)}`);
+  }
+
+  const counts = countByVerdict(matrix);
+  out('');
+  out(
+    `verified ${counts.verified}  failing ${counts.failing}  not run ${counts['not-run']}  ` +
+      `uncovered ${counts.uncovered}  excluded ${counts.excluded}`,
+  );
+  if (!resultsRead) {
+    out(
+      `no run results at ${path.relative(cwd, resultsPath)} — coverage only, nothing is "verified".`,
+    );
+  }
+
+  for (const problem of problems) {
+    err(`${problem.file}: ${problem.reason}`);
+  }
+
+  if (!flagPresent(argv, '--gate')) {
+    return 0;
+  }
+
+  const verdict = gateMatrix(matrix, {
+    resultsRead,
+    problems,
+    strict: flagPresent(argv, '--strict'),
+  });
+  out('');
+  out(verdict.summary);
+  for (const finding of verdict.findings) {
+    err(`  ${finding.kind.padEnd(9)} ${finding.subject}  ${finding.detail}`);
+  }
+  return verdict.ok ? 0 : 1;
 }

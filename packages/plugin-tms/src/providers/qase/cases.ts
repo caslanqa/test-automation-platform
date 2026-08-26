@@ -18,6 +18,12 @@
  */
 import type { NewTmsCase, TmsCase, TmsCasePatch } from '../../provider.js';
 import type { QaseClient } from './client.js';
+import {
+  decodeRequirements,
+  encodeRequirements,
+  requirementField,
+  type QaseCustomField,
+} from './customFields.js';
 import { ensurePath, pathKey, type SuiteIndex } from './suites.js';
 import { optionId } from './systemFields.js';
 
@@ -26,6 +32,7 @@ interface QaseCase {
   title: string;
   suite_id?: number | null;
   tags?: Array<{ title?: string }>;
+  custom_fields?: Array<{ id?: number; value?: string }>;
   isManual?: boolean;
   /** Deprecated in the API, still the only signal on cases created before `isManual` existed. */
   automation?: number;
@@ -39,14 +46,36 @@ function isAutomated(row: QaseCase): boolean {
 }
 
 export async function listCases(client: QaseClient, index: SuiteIndex): Promise<TmsCase[]> {
-  const rows = await client.list<QaseCase>(`/case/${client.project}`);
+  const [rows, field] = await Promise.all([
+    client.list<QaseCase>(`/case/${client.project}`),
+    requirementField(client),
+  ]);
   return rows.map(row => ({
     id: String(row.id),
     title: row.title,
     suitePath: row.suite_id == null ? [] : (index.pathById.get(row.suite_id) ?? []),
     tags: (row.tags ?? []).map(tag => tag.title ?? '').filter(title => title !== ''),
+    requirements: requirementsOf(row, field),
     automated: isAutomated(row),
   }));
+}
+
+/** The stored requirement keys, or `[]` when the workspace has no such field to read. */
+function requirementsOf(row: QaseCase, field: QaseCustomField | undefined): string[] {
+  if (field === undefined) {
+    return [];
+  }
+  return decodeRequirements((row.custom_fields ?? []).find(entry => entry.id === field.id)?.value);
+}
+
+/** `{ '12': 'PAY-17,PAY-18' }`, or nothing at all when the field is absent. */
+function customFieldBody(
+  field: QaseCustomField | undefined,
+  requirements: readonly string[],
+): Record<string, unknown> {
+  return field === undefined
+    ? {}
+    : { custom_field: { [field.id]: encodeRequirements(requirements) } };
 }
 
 /** Qase caps a bulk create; 100 keeps each request well inside the body-size limit too. */
@@ -70,6 +99,8 @@ export async function createCases(
     }
   }
 
+  const field = await requirementField(client);
+
   const out: Array<{ ref: string; id: string }> = [];
   for (let offset = 0; offset < cases.length; offset += BULK_SIZE) {
     const batch = cases.slice(offset, offset + BULK_SIZE);
@@ -80,6 +111,7 @@ export async function createCases(
           ? {}
           : { suite_id: suiteIds.get(pathKey(item.suitePath)) }),
         ...(item.tags.length === 0 ? {} : { tags: item.tags }),
+        ...(item.requirements.length === 0 ? {} : customFieldBody(field, item.requirements)),
         isManual: false,
       })),
     });
@@ -108,6 +140,9 @@ export async function updateCase(
   }
   if (patch.tags !== undefined) {
     body.tags = patch.tags;
+  }
+  if (patch.requirements !== undefined) {
+    Object.assign(body, customFieldBody(await requirementField(client), patch.requirements));
   }
   if (patch.suitePath !== undefined) {
     const suiteId = await ensurePath(client, index, patch.suitePath);

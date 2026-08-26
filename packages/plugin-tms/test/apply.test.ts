@@ -42,6 +42,7 @@ function recorder(existing: TmsCase[] = [], nextId = 100): Recorder {
     probe: () => Promise.resolve({ ok: true, checks: [] }),
     createRun: () => Promise.resolve({ id: '1' }),
     completeRun: () => Promise.resolve(),
+    requirementSupport: () => Promise.resolve({ ok: true, detail: 'stub' }),
     listCases: () => Promise.resolve(existing),
     createCases: (cases: NewTmsCase[]) => {
       calls.push('create');
@@ -114,7 +115,14 @@ test('several edits in one file are applied bottom-up, so every line number stay
 test('ids are written before any update call, so a half-finished run is resumable', async () => {
   const fs = memory({ 'cart.spec.ts': `test('a', async () => {});\n` });
   const { provider, calls } = recorder([
-    { id: '7', title: 'different', suitePath: ['cart'], tags: [], automated: true },
+    {
+      id: '7',
+      title: 'different',
+      suitePath: ['cart'],
+      tags: [],
+      requirements: [],
+      automated: true,
+    },
   ]);
 
   // A test linked to case 7 whose title drifted: an update, with no create.
@@ -122,7 +130,16 @@ test('ids are written before any update call, so a half-finished run is resumabl
     provider,
     planSync(
       [aTest({ caseIds: [7] })],
-      [{ id: '7', title: 'different', suitePath: ['cart'], tags: [], automated: true }],
+      [
+        {
+          id: '7',
+          title: 'different',
+          suitePath: ['cart'],
+          tags: [],
+          requirements: [],
+          automated: true,
+        },
+      ],
     ),
     {
       rootDir: '/repo/tests',
@@ -202,6 +219,7 @@ test('orphans are untouched unless --deprecate-orphans is passed', async () => {
     title: 'gone',
     suitePath: ['cart'],
     tags: [],
+    requirements: [],
     automated: true,
   };
   const fs = memory({ 'cart.spec.ts': '' });
