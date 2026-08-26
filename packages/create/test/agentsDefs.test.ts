@@ -59,6 +59,7 @@ test('the shipped definitions load, and the roster is what the plan says', () =>
     'read-run-artifacts',
     'risk-to-layer',
     'spec-conventions',
+    'tms-traceability',
   ]);
   assert.deepEqual(names('command'), ['vv', 'vv-status']);
 });
@@ -75,6 +76,7 @@ test('each gated definition is gated on the capability it actually needs', () =>
       'db-state-verification': 'plugin:db',
       'perf-budgets': 'plugin:perf',
       'ai-judge-rubrics': 'plugin:ai-judge',
+      'tms-traceability': 'plugin:tms',
     },
   );
 });

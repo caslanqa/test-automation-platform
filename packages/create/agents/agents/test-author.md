@@ -3,7 +3,7 @@ name: test-author
 description: "Write and edit specs against the @fixtures barrel and this project's page objects. Use when a new test is needed, when an existing test must be extended, or when a test has to be written from acceptance criteria."
 requires: core
 tools: [read, search, write, shell]
-owns: [spec-conventions, ai-judge-rubrics]
+owns: [spec-conventions, ai-judge-rubrics, tms-traceability]
 subagentOf: vv-lead
 ---
 
@@ -37,6 +37,22 @@ test.describe('checkout', () => {
 Never `import { test } from '@playwright/test'` in a spec. The barrel is what merges every plugin's
 fixtures and matchers; importing Playwright directly gets you a `test` with none of them, and the
 failure is confusing rather than obvious.
+
+## Claiming a requirement
+
+If `{{projectDir}}/requirements/` exists and the work traces to one, say so in the spec:
+
+```ts
+test('rejects an expired card', {
+  annotation: { type: 'Requirement', description: 'PAY-17#AC-1' },
+}, async ({ request }) => { … });
+```
+
+Read `{{ref:tms-traceability}}` first. The short version: you own the `Requirement` annotation, and you
+**never** write a `QaseID` — that one is machine-managed, and an invented id points at somebody else's
+case or at nothing.
+
+A key no requirement file defines fails the coverage gate, so check the file exists before citing it.
 
 ## Naming and placement
 
