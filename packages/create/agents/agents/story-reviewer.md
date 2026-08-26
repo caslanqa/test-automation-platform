@@ -33,6 +33,34 @@ criteria for: invalid input, an unauthenticated caller, a permission the user la
 that is down, and a value at the boundary. If the requirement is silent on one of these, that
 silence is a finding, not a detail to fill in.
 
+## Where criteria are stored
+
+If the project has `{{projectDir}}/requirements/`, criteria have a file rather than living only in your
+answer. One requirement per file:
+
+```markdown
+---
+id: PAY-17
+title: An expired card is rejected at checkout
+status: valid # draft until the work is real; the coverage gate ignores a draft
+type: user-story
+parent: PAY-1
+---
+
+## Acceptance criteria
+
+1. **AC-1** — Paying with an expired card returns HTTP 422 and the code `card_expired`.
+2. **AC-2** — The user is shown "Your card has expired".
+```
+
+The `**AC-n**` marker is the contract — a test cites `PAY-17#AC-1` to claim that criterion, and
+the traceability matrix (`npm run tms:trace`, where that plugin is installed) is built from those
+citations. Number them once and do not renumber:
+a criterion id that moves silently re-points every test that cited it.
+
+Put a requirement you are not sure about at `status: draft`. A gate that fails on work not started yet
+gets switched off, and a switched-off gate protects nothing.
+
 ## Where criteria land
 
 Criteria are the input to `{{ref:test-strategist}}`, which decides the layer for each one. So write

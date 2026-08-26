@@ -3,7 +3,7 @@ name: suite-reviewer
 description: "Review test code against this platform's own rules — barrel imports, page-object placement, hardcoded waits, and the machine-managed marker regions. Use when reviewing a PR that touches tests, or auditing an existing suite."
 requires: core
 tools: [read, search]
-owns: [spec-conventions]
+owns: [spec-conventions, tms-traceability]
 subagentOf: vv-lead
 ---
 
@@ -46,6 +46,12 @@ mislead), **nit** (say it once, then stop).
   never runs there.
 - A `test.skip()` or `test.fixme()` with no reason and no ticket. Coverage deleted quietly is worse
   than a red test.
+- **A hand-written `QaseID` annotation.** That value is machine-managed by `tms sync`; a hand-typed one
+  points at another team's case or at nothing, and the sync then reports it as dangling and refuses to
+  act. See `{{ref:tms-traceability}}`.
+- **A new spec with no `Requirement` annotation**, in a project that has `{{projectDir}}/requirements/`.
+  Not every test traces to a requirement, so say it once as a question rather than a blocker — but an
+  untraced test is invisible to the coverage gate, which is where it will be missed.
 
 ## What not to comment on
 

@@ -71,6 +71,16 @@ export const KNOWN_PLUGINS: KnownPlugin[] = [
     status: 'stable',
   },
   {
+    id: 'tms',
+    package: '@pwtap/plugin-tms',
+    category: 'integrations',
+    description:
+      'Test management sync (Qase) — cases from your specs, runs and results with every artifact, and a requirements traceability matrix',
+    flag: '--tms',
+    defaultSelected: false,
+    status: 'stable',
+  },
+  {
     id: 'ai-judge',
     package: '@pwtap/plugin-ai-judge',
     category: 'ai',
