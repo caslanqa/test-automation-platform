@@ -114,7 +114,30 @@ requirement no file defines, or a requirement file that would not parse. `draft`
 Reports land in `tms/` as markdown and JSON (`--format csv` for the spreadsheet an auditor asks for),
 each stamped with the branch, sha and timestamp.
 
-## Coming next
+## Defects, from a triaged run
 
-Defect creation from confirmed `true-fail` triage, and the agent surface that teaches
-`story-reviewer` and `test-author` to write requirement files and annotations.
+With [`@pwtap/plugin-heal`](https://www.npmjs.com/package/@pwtap/plugin-heal) installed:
+
+```bash
+npx heal triage --json .heal/triage.json   # heal classifies the red run
+npm run tms:defects -- --apply             # file only what deserves filing
+```
+
+**Only `true-fail` becomes a defect.** `flaky`, `locator-drift`, `env-infra` and `unknown` are each
+skipped with the reason printed — a flaky test opening a defect fills the tracker with noise, and a
+tracker nobody reads hides the real defect too.
+
+The title is derived from the test, so the same failure never opens a second defect while the first is
+open; the body carries the run, the commit and heal's own classification. Quarantined tests are mirrored
+onto their cases as `is_flaky`, one-way.
+
+This never imports `@pwtap/plugin-heal` — it reads that plugin's two documented output files. No build
+coupling, no version skew, and a project without heal simply has no such file.
+
+## With the V&V agents
+
+Installing this plugin adds a **`tms-traceability`** skill to the `@pwtap` Claude Code agents, and
+teaches three of them about it: `test-author` claims a requirement in the specs it writes,
+`story-reviewer` files acceptance criteria as `requirements/<id>.md`, and `suite-reviewer` flags a
+hand-written `QaseID` — that value is machine-managed, and an invented one points at another team's
+case or at nothing.

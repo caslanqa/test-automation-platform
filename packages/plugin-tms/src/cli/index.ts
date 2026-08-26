@@ -25,6 +25,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { gitContext, loadEnvFile, readConfig, runTitle, type TmsConfig } from '../config.js';
+import { planDefects } from '../defects/plan.js';
+import {
+  DEFAULT_QUARANTINE_FILE,
+  DEFAULT_TRIAGE_FILE,
+  readQuarantine,
+  readTriage,
+} from '../heal/read.js';
 import { resolveProvider } from '../providers/index.js';
 import { gateMatrix } from '../requirements/gate.js';
 import { loadRequirements, REQUIREMENTS_DIR } from '../requirements/load.js';
@@ -37,7 +44,13 @@ import {
 } from '../requirements/rtm.js';
 import { applySync } from '../sync/apply.js';
 import { planIsEmpty, planSync } from '../sync/diff.js';
-import { discoverTests, readResultsReport, testKey } from '../sync/discover.js';
+import {
+  discoverTests,
+  healTitle,
+  readResultsReport,
+  sameFile,
+  testKey,
+} from '../sync/discover.js';
 import { renderPlan } from '../sync/report.js';
 import { flagList, flagNumber, flagPresent, flagValue, positionals } from './args.js';
 import { DEFAULT_RUN_ID_FILE, readRunId, RUN_ID_KEY, writeRunId } from './runId.js';
@@ -75,6 +88,16 @@ const USAGE = `tms — test management sync
       --out <dir>       where the report files go (default tms/)
       --results <file>  the Playwright JSON report to read outcomes from
 
+  tms defects [--apply] [--from <file>] [--quarantine <file>] [--no-flaky]
+      Open a defect for every failure heal classified as true-fail, and mark quarantined tests as
+      flaky in the tool. Prints the plan and changes NOTHING without --apply.
+
+      --from <file>        heal triage report (default ${DEFAULT_TRIAGE_FILE})
+      --quarantine <file>  heal quarantine list (default ${DEFAULT_QUARANTINE_FILE})
+      --no-flaky           skip the quarantine mirror; open defects only
+
+      Produce the triage report first:  npx heal triage --json ${DEFAULT_TRIAGE_FILE}
+
 Configuration lives in env/environments.json (TMS_PROVIDER, TMS_MODE, QASE_TESTOPS_*), and an
 exported variable always wins over the file.`;
 
@@ -105,6 +128,8 @@ export async function run(argv: string[], cwd: string = process.cwd()): Promise<
         return await commandSync(argv, cwd, config);
       case 'trace':
         return commandTrace(argv, cwd);
+      case 'defects':
+        return await commandDefects(argv, cwd, config);
       case 'run':
         switch (subcommand) {
           case 'create':
@@ -356,4 +381,101 @@ function commandTrace(argv: string[], cwd: string): number {
     err(`  ${finding.kind.padEnd(9)} ${finding.subject}  ${finding.detail}`);
   }
   return verdict.ok ? 0 : 1;
+}
+
+/**
+ * Open defects for real failures, and mirror the quarantine list.
+ *
+ * heal does the classifying; this does the filing. The one rule that matters is the whitelist: **only
+ * `true-fail`**. A flaky test opening a defect fills the tracker with noise, and a tracker full of
+ * noise is one nobody reads — at which point the real defect is invisible too.
+ *
+ * Reads heal's two artifacts by path rather than importing the package: no build coupling, no version
+ * skew, and a project without heal simply has no such file.
+ */
+async function commandDefects(argv: string[], cwd: string, config: TmsConfig): Promise<number> {
+  const triageFile = path.resolve(cwd, flagValue(argv, '--from') ?? DEFAULT_TRIAGE_FILE);
+  const triage = readTriage(triageFile);
+  if (triage === undefined) {
+    err(
+      `tms defects: no triage report at ${path.relative(cwd, triageFile)} — ` +
+        `produce one with "npx heal triage --json ${DEFAULT_TRIAGE_FILE}"`,
+    );
+    return 1;
+  }
+
+  const apply = flagPresent(argv, '--apply');
+  const provider = resolveProvider(config);
+  const openDefects = await provider.listOpenDefects();
+  const plan = planDefects(triage.findings, openDefects, triage);
+
+  out(`triage run ${triage.runId}${triage.commit === undefined ? '' : ` at ${triage.commit}`}`);
+  out(`${triage.findings.length} finding(s), ${openDefects.length} open defect(s) in the tool`);
+  out('');
+  out(`  open       ${String(plan.open.length).padStart(4)}`);
+  out(`  existing   ${String(plan.existing.length).padStart(4)}`);
+  out(`  skipped    ${String(plan.skipped.length).padStart(4)}`);
+
+  for (const entry of plan.open) {
+    out(`  + ${entry.title}`);
+  }
+  for (const entry of plan.existing) {
+    out(`  = ${entry.title}  (defect ${entry.defectId})`);
+  }
+  for (const entry of plan.skipped) {
+    out(`  · ${entry.finding.title}  ${entry.reason}`);
+  }
+
+  // The quarantine mirror is one-way: the committed list is policy, and the tool reflects it.
+  const quarantineFile = path.resolve(
+    cwd,
+    flagValue(argv, '--quarantine') ?? DEFAULT_QUARANTINE_FILE,
+  );
+  const quarantined = flagPresent(argv, '--no-flaky') ? [] : readQuarantine(quarantineFile);
+  const flaky: Array<{ caseId: string; title: string }> = [];
+  if (quarantined.length > 0) {
+    const tests = discoverTests(cwd).tests;
+    for (const entry of quarantined) {
+      const match = tests.find(
+        test => healTitle(test) === entry.title && sameFile(entry.file, test.file),
+      );
+      const caseId = match?.caseIds[0];
+      if (caseId === undefined) {
+        out(
+          `  ? ${entry.title}  quarantined, but no case is linked to it yet — run tms sync first`,
+        );
+        continue;
+      }
+      flaky.push({ caseId: String(caseId), title: entry.title });
+    }
+    out('');
+    out(`  flaky      ${String(flaky.length).padStart(4)}  quarantined tests to mark in the tool`);
+  }
+
+  if (!apply) {
+    out('');
+    out(
+      plan.open.length === 0 && flaky.length === 0
+        ? 'nothing to do.'
+        : 'dry run — nothing was changed. Re-run with --apply to open the defects.',
+    );
+    return 0;
+  }
+
+  let opened = 0;
+  for (const entry of plan.open) {
+    const id = await provider.createDefect({
+      title: entry.title,
+      actualResult: entry.actualResult,
+    });
+    out(`opened defect ${id} — ${entry.title}`);
+    opened += 1;
+  }
+  for (const entry of flaky) {
+    await provider.setCaseFlaky(entry.caseId, true);
+  }
+
+  out('');
+  out(`applied: ${opened} defect(s) opened, ${flaky.length} case(s) marked flaky`);
+  return 0;
 }

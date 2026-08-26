@@ -299,6 +299,76 @@ sync says so once and carries on, and the local matrix is unaffected.
 When you later connect a real tracker, the same key moves to `POST /case/{code}/{id}/external-issues`
 and Qase's own requirements report fills in. That is the upgrade path, not a rewrite.
 
+## Defects, from a triaged run
+
+Requires [`@pwtap/plugin-heal`](https://www.npmjs.com/package/@pwtap/plugin-heal), which is what
+decides whether a red test is a real failure.
+
+```bash
+npx heal triage --json .heal/triage.json   # heal classifies the run
+npm run tms:defects                        # print the plan, change nothing
+npm run tms:defects -- --apply             # open the defects
+```
+
+### Only `true-fail` is filed
+
+| heal's class    | What happens                                                                  |
+| --------------- | ----------------------------------------------------------------------------- |
+| `true-fail`     | a defect is opened                                                            |
+| `flaky`         | skipped — a defect here is noise, and noise is how a tracker stops being read |
+| `locator-drift` | skipped — the test needs repairing, not the product                           |
+| `env-infra`     | skipped — the environment failed, not the code under test                     |
+| `unknown`       | skipped — heal could not classify it, and guessing is not this command's job  |
+
+Every skip is printed with its reason. A skip nobody can see is indistinguishable from a bug.
+
+A low-confidence `true-fail` **is** still filed. heal's bands are heal's contract; re-thresholding here
+would be a second, invisible policy in a different file.
+
+### No duplicates
+
+The defect title is derived from the test — `<describes › title> — <file>` — so the same failing test
+produces the identical title every run. An **open** defect with that title means the failure is already
+tracked and nothing is created. A _resolved_ one does not count: the same test failing again after a
+fix is a regression, and deserves its own defect.
+
+The body carries the run id, the commit, the classification with its confidence and band, and heal's
+own reasons. Nothing in it is inferred — a defect nobody can trace back to a run is a defect nobody can
+reproduce.
+
+Severity is resolved through `GET /system-fields` by slug (`major` by default), because Qase requires
+it as an integer and never documents which integer.
+
+### The quarantine mirror
+
+Tests in `heal/quarantine.json` are marked `is_flaky` on their Qase case, so the tool shows what the
+repository already admits. One-way: the committed list is policy, the tool is the mirror. `--no-flaky`
+turns it off.
+
+A quarantined test with no case linked yet is reported rather than skipped silently — run `tms sync`
+first.
+
+### Why this reads heal's files instead of importing it
+
+`@pwtap/plugin-tms` never names `@pwtap/plugin-heal` in an import. Both of heal's artifacts are stable,
+documented files a human already runs a command to produce, so a file contract buys everything an
+optional peer dependency would and costs nothing: no build coupling (heal's own
+`test/optionalPeers.test.ts` exists because a literal dynamic specifier once broke a release), no
+version skew, and a project without heal simply has no such file — which the command says plainly.
+
+## With the V&V agents
+
+If you use the `@pwtap` Claude Code agents, installing this plugin adds a **`tms-traceability`** skill
+and changes three agents:
+
+| Agent            | What it now does                                                            |
+| ---------------- | --------------------------------------------------------------------------- |
+| `test-author`    | writes the `Requirement` annotation, and never a `QaseID`                   |
+| `story-reviewer` | files acceptance criteria as `requirements/<id>.md` with `**AC-n**` markers |
+| `suite-reviewer` | flags a hand-written `QaseID`, and asks about an untraced new spec          |
+
+`/vv` gains a traceability row and the reminder that covered is not verified.
+
 ## When something goes wrong
 
 | What you see                                                                                      | What it means                                                                                                                         |
@@ -314,6 +384,10 @@ and Qase's own requirements report fills in. That is the upgrade path, not a rew
 | `unknown frontmatter key "statuss"` | A typo in a requirement file. Unknown keys are refused by name rather than ignored, so a misspelled `status` cannot silently become the default. |
 | `duplicate id PAY-17 — already defined in …` | Two requirement files answering to one key make every link ambiguous. The first file wins and the second is reported. |
 | `no run results at test-results/results.json` | The suite has not been run since the report was deleted. Coverage still works; nothing is called verified. |
+| `no triage report at .heal/triage.json` | `tms defects` needs `@pwtap/plugin-heal` to have classified the run first: `npx heal triage --json .heal/triage.json`. |
+| `does not look like a heal triage report` | The file is JSON but has no `findings` array. Regenerate it rather than editing it by hand. |
+| `quarantined, but no case is linked to it yet` | The test has no `QaseID` annotation. Run `tms sync -- --apply` first. |
+| `this workspace has no "major" option on the Severity field` | Qase requires a severity integer to create a defect and never documents which. Nothing was created; check the workspace's Severity field. |
 Rate limits are Qase's: 1000 requests/minute per user, 3000 per IP. The client honours `Retry-After` on
 429 and backs off on 5xx, four attempts, then fails loudly — a sync that reports success it did not
 achieve is worse than one that exits non-zero.

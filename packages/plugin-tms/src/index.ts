@@ -22,6 +22,21 @@ export {
   type TmsConfig,
   type TmsMode,
 } from './config.js';
+export {
+  DEFECT_CLASS,
+  defectBody,
+  defectTitle,
+  planDefects,
+  type DefectPlan,
+} from './defects/plan.js';
+export {
+  DEFAULT_QUARANTINE_FILE,
+  DEFAULT_TRIAGE_FILE,
+  readQuarantine,
+  readTriage,
+  type TriageFinding,
+  type TriageReport,
+} from './heal/read.js';
 export type {
   NewTmsCase,
   TmsCase,
@@ -60,7 +75,9 @@ export {
   QASE_ID_ANNOTATION,
   REQUIREMENT_ANNOTATION,
   discoverTests,
+  healTitle,
   readResultsReport,
+  sameFile,
   testKey,
   type DiscoveredTest,
   type Discovery,

@@ -366,3 +366,37 @@ export function readResultsReport(file: string): Discovery {
   collect(report.suites ?? [], 0, [], tests);
   return { rootDir: report.config?.rootDir ?? path.dirname(file), tests };
 }
+
+/**
+ * The test's identity **the way `@pwtap/plugin-heal` writes it**: describes and title joined by ` › `,
+ * with no file path.
+ *
+ * heal derives it from Playwright's `titlePath()` after the file entry, while {@link DiscoveredTest}
+ * carries the same describes with the directory and file stem prepended (that prefix is what becomes
+ * the suite path in the tool). Dropping exactly that prefix is what lets a triage report and a
+ * discovery describe the same test.
+ *
+ * @example
+ * // checkout/cart.spec.ts, describe('totals') > test('adds tax')
+ * healTitle(test); // 'totals › adds tax'
+ */
+export function healTitle(test: Pick<DiscoveredTest, 'file' | 'suitePath' | 'title'>): string {
+  const directories = path.posix
+    .dirname(test.file)
+    .split('/')
+    .filter(part => part !== '' && part !== '.').length;
+  return [...test.suitePath.slice(directories + 1), test.title].join(' › ');
+}
+
+/**
+ * Do a heal path and a discovery path name the same file?
+ *
+ * They are relative to different roots — heal's to the project, ours to Playwright's `rootDir`, which
+ * is the tests directory — so `tests/checkout/cart.spec.ts` and `checkout/cart.spec.ts` are the same
+ * file. Comparing by suffix is what bridges that without either side learning the other's base.
+ */
+export function sameFile(healFile: string, discoveredFile: string): boolean {
+  const left = healFile.split(path.sep).join('/');
+  const right = discoveredFile.split(path.sep).join('/');
+  return left === right || left.endsWith(`/${right}`) || right.endsWith(`/${left}`);
+}

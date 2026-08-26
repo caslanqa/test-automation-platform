@@ -90,6 +90,12 @@ export interface TmsProvider {
   /** Create in bulk, and return each new id next to the `ref` it came from. */
   createCases(cases: NewTmsCase[]): Promise<Array<{ ref: string; id: string }>>;
   updateCase(id: string, patch: TmsCasePatch): Promise<void>;
+
+  /** Open defects, so a failure already tracked does not open a second one. */
+  listOpenDefects(): Promise<Array<{ id: string; title: string }>>;
+  createDefect(defect: { title: string; actualResult: string }): Promise<string>;
+  /** One-way: the quarantine list is the source of truth, the tool is the mirror. */
+  setCaseFlaky(caseId: string, flaky: boolean): Promise<void>;
   /**
    * A constructed Playwright reporter, or `null` for a provider with no result sync of its own.
    *

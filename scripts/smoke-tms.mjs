@@ -17,7 +17,11 @@
  *    results report: one requirement verified by a test that ran and passed, one uncovered, and one
  *    covered by a test that never executed. Only running the suite can produce the third, and it is
  *    the one a matrix built from annotations alone reports as green.
- * 6. **Add and remove are symmetric.** `remove tms` has to take the reporter line, the env keys and the
+ * 6. **Only a true-fail becomes a defect.** Against a heal triage report in heal's own file shape —
+ *    this plugin never imports that package — one `true-fail` is filed, `flaky` and `locator-drift` are
+ *    skipped with their reasons, the severity comes from a system-field lookup rather than a literal,
+ *    and a second run does not open the defect twice.
+ * 7. **Add and remove are symmetric.** `remove tms` has to take the reporter line, the env keys and the
  *    scripts back out, or the next `npm test` loads a reporter from a package that is gone.
  *
  * Run with `npm run smoke:tms`. Fails (non-zero) on any broken assertion.
@@ -33,6 +37,17 @@ import path from 'node:path';
 
 const root = process.cwd();
 const CREATE = path.join(root, 'packages/create/dist/index.js');
+
+/** Every script the manifest promises, asserted both after `add` and after `remove`. */
+const SCRIPTS = [
+  'tms:doctor',
+  'tms:sync',
+  'tms:trace',
+  'tms:gate',
+  'tms:defects',
+  'tms:run:create',
+  'tms:run:complete',
+];
 
 const fail = message => {
   throw new Error(`[smoke] ${message}`);
@@ -156,14 +171,7 @@ for (const file of ['env/environments.json', 'env/environments.example.json']) {
 }
 
 const scripts = readJson(path.join(dir, 'package.json')).scripts;
-for (const name of [
-  'tms:doctor',
-  'tms:sync',
-  'tms:trace',
-  'tms:gate',
-  'tms:run:create',
-  'tms:run:complete',
-]) {
+for (const name of SCRIPTS) {
   assert(scripts[name] !== undefined, `package.json is missing the ${name} script`);
 }
 assert(
@@ -237,7 +245,15 @@ const customFieldsOf = written =>
   Object.entries(written ?? {}).map(([id, value]) => ({ id: Number(id), value }));
 
 function startQase() {
-  const state = { suites: [], cases: [], nextSuite: 1, nextCase: 100, patches: [] };
+  const state = {
+    suites: [],
+    cases: [],
+    defects: [],
+    nextSuite: 1,
+    nextCase: 100,
+    nextDefect: 500,
+    patches: [],
+  };
   const server = http.createServer((request, response) => {
     const chunks = [];
     request.on('data', chunk => chunks.push(chunk));
@@ -253,6 +269,16 @@ function startQase() {
       if (url.pathname === '/v1/project/DEMO') {
         return send({ title: 'Demo Project', code: 'DEMO' });
       }
+      if (url.pathname === '/v1/defect/DEMO') {
+        if (request.method === 'POST') {
+          const defect = { id: state.nextDefect++, status: 'open', ...body };
+          state.defects.push(defect);
+          return send({ id: defect.id });
+        }
+        const status = url.searchParams.get('status');
+        const visible = state.defects.filter(item => status === null || item.status === status);
+        return send({ total: visible.length, entities: visible });
+      }
       if (url.pathname === '/v1/custom_field') {
         // A real workspace has to have this field for requirement keys to reach Qase at all; the stub
         // provides one so the write path is exercised rather than skipped.
@@ -262,7 +288,14 @@ function startQase() {
         });
       }
       if (url.pathname === '/v1/system-fields') {
-        return send({ entities: [{ slug: 'status', options: [{ id: 3, slug: 'deprecated' }] }] });
+        return send({
+          entities: [
+            { slug: 'status', options: [{ id: 3, slug: 'deprecated' }] },
+            // Qase REQUIRES severity to create a defect, and the integer is undocumented — the stub
+            // provides the option so the lookup path is exercised rather than short-circuited.
+            { slug: 'severity', options: [{ id: 4, slug: 'major', title: 'Major' }] },
+          ],
+        });
       }
       if (url.pathname === '/v1/suite/DEMO') {
         if (request.method === 'POST') {
@@ -467,6 +500,137 @@ assert(
   `the requirement key did not reach the case custom field: ${JSON.stringify(stored)}`,
 );
 
+// --- the defect bridge ---------------------------------------------------------------------------
+
+// A heal triage report, in heal's own documented shape. Written rather than generated because the
+// contract under test is the FILE — this plugin never imports @pwtap/plugin-heal, so a fixture written
+// to that shape is exactly what a real `heal triage --json` hands over.
+fs.mkdirSync(path.join(dir, '.heal'), { recursive: true });
+fs.writeFileSync(
+  path.join(dir, '.heal/triage.json'),
+  JSON.stringify(
+    {
+      runId: 'run-smoke-1',
+      commit: 'deadbee',
+      startedAt: '2026-08-26T00:00:00.000Z',
+      findings: [
+        {
+          testKey: 'k1',
+          project: 'chromium',
+          file: 'tests/checkout/cart.spec.ts',
+          line: 4,
+          title: 'cart › rejects an expired card',
+          outcome: 'unexpected',
+          class: 'true-fail',
+          confidence: 88,
+          band: 'act',
+          reasons: ['a value mismatch is never a locator problem'],
+        },
+        {
+          testKey: 'k2',
+          project: 'chromium',
+          file: 'tests/checkout/cart.spec.ts',
+          line: 8,
+          title: 'cart › shows the total',
+          outcome: 'flaky',
+          class: 'flaky',
+          confidence: 91,
+          band: 'act',
+          reasons: [],
+        },
+        {
+          testKey: 'k3',
+          project: 'chromium',
+          file: 'tests/checkout/cart.spec.ts',
+          line: 13,
+          title: 'cart › is visible to admin',
+          outcome: 'unexpected',
+          class: 'locator-drift',
+          confidence: 74,
+          band: 'advise',
+          reasons: [],
+        },
+      ],
+    },
+    null,
+    2,
+  ),
+  'utf8',
+);
+
+// A quarantined test that IS linked to a case, so the flaky mirror has something to hit. Its title is
+// heal's format — describes and title, no file path — which is the join this plugin has to get right.
+fs.mkdirSync(path.join(dir, 'heal'), { recursive: true });
+fs.writeFileSync(
+  path.join(dir, 'heal/quarantine.json'),
+  JSON.stringify(
+    {
+      version: 1,
+      entries: [
+        {
+          testKey: 'k2',
+          project: 'chromium',
+          file: 'tests/checkout/cart.spec.ts',
+          title: 'cart › shows the total',
+          class: 'flaky',
+          reason: 'fails on CI about one run in ten',
+          addedAt: '2026-08-26T00:00:00.000Z',
+          expiresAt: '2026-09-26T00:00:00.000Z',
+          addedBy: 'smoke',
+        },
+      ],
+    },
+    null,
+    2,
+  ),
+  'utf8',
+);
+
+step('tms defects (dry run)…');
+const defectsDry = await tryRunAsync('npx', ['tms', 'defects'], dir, qaseEnv);
+assert(defectsDry.ok, `tms defects failed:\n${defectsDry.output}`);
+assert(
+  /open\s+1/.test(defectsDry.output),
+  `expected exactly one defect planned:\n${defectsDry.output}`,
+);
+assert(
+  /skipped\s+2/.test(defectsDry.output),
+  `flaky and locator-drift must be skipped:\n${defectsDry.output}`,
+);
+assert(/noise/.test(defectsDry.output), `the flaky skip must state why:\n${defectsDry.output}`);
+assert(qase.state.defects.length === 0, 'a dry run opened a defect');
+
+step('tms defects --apply…');
+const defectsApply = await tryRunAsync('npx', ['tms', 'defects', '--apply'], dir, qaseEnv);
+assert(defectsApply.ok, `tms defects --apply failed:\n${defectsApply.output}`);
+assert(qase.state.defects.length === 1, `expected one defect, got ${qase.state.defects.length}`);
+const [defect] = qase.state.defects;
+assert(
+  defect.title === 'cart › rejects an expired card — tests/checkout/cart.spec.ts',
+  `unexpected defect title: ${defect.title}`,
+);
+assert(defect.severity === 4, 'severity must come from the system-field lookup, not a literal');
+assert(/run-smoke-1 at deadbee/.test(defect.actual_result), 'the body must trace back to the run');
+assert(
+  /true-fail \(88% — act\)/.test(defect.actual_result),
+  `the body must carry heal's classification: ${defect.actual_result}`,
+);
+
+// The quarantined test is linked to a case (the sync wrote its id), so it must have been marked.
+const flaked = qase.state.patches.filter(entry => entry.body.is_flaky === 1);
+assert(flaked.length === 1, `expected one case marked flaky, got ${flaked.length}`);
+
+step('tms defects --apply again — the open defect must not be duplicated…');
+const defectsAgain = await tryRunAsync('npx', ['tms', 'defects', '--apply'], dir, qaseEnv);
+assert(defectsAgain.ok, `the second run failed:\n${defectsAgain.output}`);
+assert(qase.state.defects.length === 1, 'the same failure opened a second defect');
+assert(
+  /existing\s+1/.test(defectsAgain.output),
+  `expected it to be recognised as existing:\n${defectsAgain.output}`,
+);
+
+step('defects OK — only true-fail is filed, once, with the run it came from');
+
 await qase.close();
 
 // Earlier steps ran the suite, so the report exists. Remove it to isolate the coverage-only branch —
@@ -590,14 +754,7 @@ for (const file of ['env/environments.json', 'env/environments.example.json']) {
   }
 }
 const scriptsAfter = readJson(path.join(dir, 'package.json')).scripts;
-for (const name of [
-  'tms:doctor',
-  'tms:sync',
-  'tms:trace',
-  'tms:gate',
-  'tms:run:create',
-  'tms:run:complete',
-]) {
+for (const name of SCRIPTS) {
   assert(scriptsAfter[name] === undefined, `the ${name} script survived removal`);
 }
 
@@ -605,5 +762,6 @@ step('removal OK — add and remove are symmetric');
 
 fs.rmSync(dir, { recursive: true, force: true });
 console.log(
-  '\n[smoke] OK — tms injects, stays inert until asked, refuses half-configured, syncs idempotently,\n  traces requirements to three distinct verdicts, and removes cleanly.',
+  '\n[smoke] OK — tms injects, stays inert until asked, refuses half-configured, syncs idempotently,\n' +
+    '  files only real failures, traces requirements to three distinct verdicts, and removes cleanly.',
 );

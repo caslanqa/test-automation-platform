@@ -53,6 +53,9 @@ function recorder(existing: TmsCase[] = [], nextId = 100): Recorder {
       updates.push({ id: caseId, patch });
       return Promise.resolve();
     },
+    listOpenDefects: () => Promise.resolve([]),
+    createDefect: () => Promise.resolve('1'),
+    setCaseFlaky: () => Promise.resolve(),
     createReporter: () => null,
   };
   return { provider, calls, updates };

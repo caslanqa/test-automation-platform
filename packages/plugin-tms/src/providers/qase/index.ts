@@ -25,6 +25,7 @@ import * as cases from './cases.js';
 import { QaseClient, type QaseClientOptions } from './client.js';
 import { missingQaseConfig, readQaseConfig, type QaseConfig } from './config.js';
 import { DEFAULT_REQUIREMENT_FIELD, requirementField } from './customFields.js';
+import { createDefect, listOpenDefects, setCaseFlaky } from './defects.js';
 import { createQaseReporter } from './reporter.js';
 import { completeRun, createRun } from './runs.js';
 import { loadSuites, type SuiteIndex } from './suites.js';
@@ -129,6 +130,18 @@ export function createQaseProvider(
 
     async updateCase(id: string, patch: TmsCasePatch): Promise<void> {
       return cases.updateCase(client, await suiteIndex(), id, patch);
+    },
+
+    listOpenDefects(): Promise<Array<{ id: string; title: string }>> {
+      return listOpenDefects(client);
+    },
+
+    createDefect(defect: { title: string; actualResult: string }): Promise<string> {
+      return createDefect(client, defect);
+    },
+
+    setCaseFlaky(caseId: string, flaky: boolean): Promise<void> {
+      return setCaseFlaky(client, caseId, flaky);
     },
 
     /**
